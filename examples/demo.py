@@ -36,11 +36,11 @@ def print_forecast(title: str, customer: Customer, reference) -> None:
 def main() -> None:
     reference = load_reference_data()
 
-    # กรณีที่ 1: ทราบทั้งประเภทธุรกิจและอัตรา และ KVA (คล้ายผู้ใช้ไฟในภาพที่ 1: โรงแรม รหัสอัตรา 50, KVA 2000)
-    # แต่สมมติว่าผู้ใช้ไฟรายนี้ "ไม่มี AMR" ของตัวเอง จึงต้องพยากรณ์จากโปรไฟล์กลุ่มโรงแรม
+    # กรณีที่ 1: ทราบทั้งประเภทธุรกิจและอัตรา และ KVA (ลูกค้าโรงแรมสมมติ รหัสอัตรา 50, KVA 2000)
+    # สมมติว่าผู้ใช้ไฟรายนี้ "ไม่มี AMR" ของตัวเอง จึงต้องพยากรณ์จากโปรไฟล์กลุ่มโรงแรม
     hotel_customer = Customer(
-        account_no="020024424275",
-        name="บจก. พิพัฒน์ ดีเวลลอปเมนท์ (โนโวเทล ฟิวเจอร์พาร์ค รังสิต)",
+        account_no="DEMO-HOTEL-001",
+        name="ลูกค้าโรงแรมตัวอย่าง (สมมติ)",
         business_type_code="63201",
         rate_code="50",
         contract_kva=2000,
@@ -50,8 +50,8 @@ def main() -> None:
 
     # กรณีที่ 2: ทราบอัตรา (3224) แต่ยังไม่ได้จัดประเภทธุรกิจ -> fallback เป็น RATE_ONLY
     unclassified_customer = Customer(
-        account_no="9029 020029174637",
-        name="ห้างหุ้นส่วนบริษัท ศรีนเฟิล เฮลท์แคร์-กำแพงเพชร จำกัด",
+        account_no="DEMO-UNCLASSIFIED-001",
+        name="ลูกค้าตัวอย่างที่ยังไม่จัดประเภทธุรกิจ (สมมติ)",
         business_type_code=None,
         rate_code="3224",
         contract_kva=None,

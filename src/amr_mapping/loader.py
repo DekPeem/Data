@@ -68,6 +68,57 @@ def _load_load_profiles(path: Path) -> List[LoadProfile]:
     return profiles
 
 
+_LOAD_PROFILE_FIELDNAMES = [
+    "business_type_code",
+    "rate_code",
+    "billing_method",
+    "demand_p_kw",
+    "demand_op_kw",
+    "demand_h_kw",
+    "energy_p_kwh",
+    "energy_op_kwh",
+    "energy_h_kwh",
+    "contract_kva_ref",
+    "sample_size",
+    "notes",
+]
+
+
+def save_load_profiles(profiles: List[LoadProfile], path: Path) -> None:
+    """เขียนรายการ LoadProfile กลับเป็นไฟล์ load_profiles.csv (เขียนทับทั้งไฟล์)"""
+
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=_LOAD_PROFILE_FIELDNAMES)
+        writer.writeheader()
+        for p in profiles:
+            writer.writerow(
+                {
+                    "business_type_code": p.business_type_code,
+                    "rate_code": p.rate_code,
+                    "billing_method": p.billing_method,
+                    "demand_p_kw": p.demand_kw["P"],
+                    "demand_op_kw": p.demand_kw["OP"],
+                    "demand_h_kw": p.demand_kw["H"],
+                    "energy_p_kwh": p.energy_kwh["P"],
+                    "energy_op_kwh": p.energy_kwh["OP"],
+                    "energy_h_kwh": p.energy_kwh["H"],
+                    "contract_kva_ref": "" if p.contract_kva_ref is None else p.contract_kva_ref,
+                    "sample_size": p.sample_size,
+                    "notes": p.notes,
+                }
+            )
+
+
+def upsert_load_profile(profiles: List[LoadProfile], new_profile: LoadProfile) -> List[LoadProfile]:
+    """แทนที่โปรไฟล์ที่มี key (business_type_code, rate_code) ตรงกัน ด้วยโปรไฟล์ใหม่
+    หรือเพิ่มต่อท้ายถ้ายังไม่มีคู่นี้อยู่ (คืน list ใหม่ ไม่แก้ของเดิม)
+    """
+
+    result = [p for p in profiles if p.key() != new_profile.key()]
+    result.append(new_profile)
+    return result
+
+
 @dataclass
 class ReferenceData:
     business_types: Dict[str, BusinessType]

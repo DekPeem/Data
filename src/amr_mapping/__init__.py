@@ -16,7 +16,7 @@ from .models import (
     MatchResult,
     ForecastResult,
 )
-from .loader import ReferenceData, load_reference_data
+from .loader import ReferenceData, load_reference_data, save_load_profiles, upsert_load_profile
 from .mapping import find_load_profile, estimate_customer_load
 
 __all__ = [
@@ -29,6 +29,8 @@ __all__ = [
     "ForecastResult",
     "ReferenceData",
     "load_reference_data",
+    "save_load_profiles",
+    "upsert_load_profile",
     "find_load_profile",
     "estimate_customer_load",
 ]

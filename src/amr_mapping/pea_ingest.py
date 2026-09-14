@@ -1,0 +1,195 @@
+"""ตัวอ่านไฟล์ export จากระบบ PEA (รูปแบบ HTML table ที่นามสกุลไฟล์เป็น .xls)
+
+รองรับ 2 รูปแบบไฟล์หลัก:
+
+1. "แบบฟอร์มการอ่านหน่วยมิเตอร์ AMR" (register history)
+   ตารางประวัติค่ามิเตอร์สะสมรายเดือน (Rate A/B/C ตามรอบ Reset) — ใช้คำนวณ
+   พลังงานไฟฟ้า (kWh) และกำลังไฟฟ้าสูงสุด (kW) ต่อเดือน แยกตามช่วง P/OP/H
+   โดยหา "ผลต่าง" ของค่าสะสมระหว่างเดือน (สำหรับพลังงาน) และอ่านค่าตรงๆ
+   (สำหรับกำลังไฟฟ้าสูงสุด) แล้วคูณด้วยตัวคูณมิเตอร์ (CT ratio x VT ratio)
+
+2. "รายงานข้อมูลกิโลวัตต์ชั่วโมงแบบช่วงเวลา" (15-minute interval report)
+   ข้อมูลละเอียดราย 15 นาที แยกคอลัมน์ RATE A / RATE B / RATE C
+
+⚠️ หมายเหตุสำคัญ: ไฟล์ดิบจาก PEA มีข้อมูลระบุตัวตนลูกค้า (ชื่อบริษัท,
+เลขบัญชีผู้ใช้ไฟ, เลขมิเตอร์) — โมดูลนี้อ่านเฉพาะตัวเลขการใช้ไฟฟ้าเพื่อนำไป
+คำนวณ "ค่าเฉลี่ย" แบบไม่ระบุตัวตน (anonymized aggregate) เท่านั้น ไม่ควร
+commit ไฟล์ดิบเหล่านี้เข้า repository ที่เป็น public
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import List, Optional, Union
+
+try:
+    from bs4 import BeautifulSoup
+except ImportError as exc:  # pragma: no cover
+    raise ImportError(
+        "ต้องติดตั้ง beautifulsoup4 และ lxml ก่อนใช้งาน pea_ingest: "
+        "pip install beautifulsoup4 lxml"
+    ) from exc
+
+# ช่วงเวลาตามระบบอัตรา TOU ของ PEA:
+#   RATE A = ช่วง Peak (P)      -> วันทำการ 09:00-22:00
+#   RATE B = ช่วง Off-Peak (OP) -> วันทำการ 22:00-09:00
+#   RATE C = ช่วง Holiday (H)   -> วันหยุด/วันเสาร์-อาทิตย์ ตลอดวัน
+RATE_TO_PERIOD = {"a": "P", "b": "OP", "c": "H"}
+
+
+def _read_html(path: Union[str, Path]) -> BeautifulSoup:
+    with open(path, encoding="utf-8", errors="replace") as f:
+        content = f.read()
+    return BeautifulSoup(content, "lxml")
+
+
+def _to_float(text: str) -> Optional[float]:
+    text = (text or "").replace(",", "").strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+@dataclass(frozen=True)
+class MonthlyRegisterReading:
+    """แถวดิบ 1 แถวจากตาราง "ประวัติการอ่านหน่วยมิเตอร์ AMR" (ค่าสะสม ยังไม่คูณตัวคูณ)"""
+
+    month: str  # เช่น "08/2026"
+    kwh_total_raw: float
+    kwh_a_raw: float
+    kwh_b_raw: float
+    kwh_c_raw: float
+    demand_a_raw: float
+    demand_b_raw: float
+    demand_c_raw: float
+
+
+@dataclass(frozen=True)
+class MonthlyPeriodProfile:
+    """โปรไฟล์ P/OP/H ของเดือนหนึ่ง (คูณตัวคูณมิเตอร์แล้ว = ค่าจริง)"""
+
+    month: str
+    demand_kw: dict  # {"P": .., "OP": .., "H": ..}
+    energy_kwh: dict  # {"P": .., "OP": .., "H": ..}
+
+
+def parse_register_history(path: Union[str, Path]) -> List[MonthlyRegisterReading]:
+    """อ่านตาราง "แบบฟอร์มการอ่านหน่วยมิเตอร์ AMR" (ประวัติหลายเดือน)
+
+    คืนค่าดิบ (ยังไม่คูณตัวคูณมิเตอร์ CT/VT) เรียงตามเดือน
+    """
+
+    soup = _read_html(path)
+    tables = soup.find_all("table")
+
+    history_table = None
+    for t in tables:
+        first_row = t.find("tr")
+        if first_row is None:
+            continue
+        header_cells = [c.get_text(strip=True) for c in first_row.find_all(["td", "th"])]
+        if header_cells and header_cells[0] == "No.":
+            history_table = t
+            break
+
+    if history_table is None:
+        raise ValueError(
+            f"ไม่พบตารางประวัติการอ่านหน่วยมิเตอร์ (header ขึ้นต้นด้วย 'No.') ในไฟล์ {path}"
+        )
+
+    rows = history_table.find_all("tr")
+    readings: List[MonthlyRegisterReading] = []
+    for r in rows[1:]:
+        cells = [c.get_text(strip=True) for c in r.find_all("td")]
+        if len(cells) < 11 or not cells[1]:
+            continue
+        # ลำดับคอลัมน์: No., เดือน/ปี, ครั้งที่Reset, วันที่Reset, 111, 010, 020, 030, 050, 060, 070, ...
+        month = cells[1]
+        kwh_total = _to_float(cells[4])
+        kwh_a = _to_float(cells[5])
+        kwh_b = _to_float(cells[6])
+        kwh_c = _to_float(cells[7])
+        demand_a = _to_float(cells[8])
+        demand_b = _to_float(cells[9])
+        demand_c = _to_float(cells[10])
+        if None in (kwh_total, kwh_a, kwh_b, kwh_c, demand_a, demand_b, demand_c):
+            continue
+        readings.append(
+            MonthlyRegisterReading(
+                month=month,
+                kwh_total_raw=kwh_total,
+                kwh_a_raw=kwh_a,
+                kwh_b_raw=kwh_b,
+                kwh_c_raw=kwh_c,
+                demand_a_raw=demand_a,
+                demand_b_raw=demand_b,
+                demand_c_raw=demand_c,
+            )
+        )
+    return readings
+
+
+def compute_monthly_profiles(
+    readings: List[MonthlyRegisterReading], multiplier: float
+) -> List[MonthlyPeriodProfile]:
+    """แปลงค่าดิบ (ต่อเนื่อง, สะสม) เป็นโปรไฟล์ P/OP/H รายเดือน (คูณตัวคูณมิเตอร์แล้ว)
+
+    พลังงาน (energy) = ผลต่างของค่าสะสมระหว่างเดือนถัดไปกับเดือนก่อนหน้า x ตัวคูณ
+    กำลังไฟฟ้าสูงสุด (demand) = ค่าที่อ่านได้ในเดือนนั้นตรงๆ x ตัวคูณ (เป็นค่าพีคที่เกิดขึ้นในรอบนั้นอยู่แล้ว)
+
+    ต้องมีข้อมูลอย่างน้อย 2 เดือนติดกันจึงจะคำนวณพลังงานของเดือนที่ 2 เป็นต้นไปได้
+    (เดือนแรกสุดไม่มีเดือนก่อนหน้าให้หักลบ จึงถูกข้าม)
+    """
+
+    profiles: List[MonthlyPeriodProfile] = []
+    for prev, curr in zip(readings, readings[1:]):
+        energy_kwh = {
+            "P": (curr.kwh_a_raw - prev.kwh_a_raw) * multiplier,
+            "OP": (curr.kwh_b_raw - prev.kwh_b_raw) * multiplier,
+            "H": (curr.kwh_c_raw - prev.kwh_c_raw) * multiplier,
+        }
+        demand_kw = {
+            "P": curr.demand_a_raw * multiplier,
+            "OP": curr.demand_b_raw * multiplier,
+            "H": curr.demand_c_raw * multiplier,
+        }
+        profiles.append(MonthlyPeriodProfile(month=curr.month, demand_kw=demand_kw, energy_kwh=energy_kwh))
+    return profiles
+
+
+def average_profiles(profiles: List[MonthlyPeriodProfile]) -> dict:
+    """เฉลี่ยโปรไฟล์รายเดือนหลายๆ เดือน เป็นโปรไฟล์ตัวแทน (representative) เดียว
+
+    คืนค่า dict: {"demand_kw": {...}, "energy_kwh": {...}, "n_months": int}
+    ใช้ค่าเฉลี่ย (mean) ของกำลังไฟฟ้าสูงสุดและพลังงานไฟฟ้า แยกตาม P/OP/H
+    """
+
+    if not profiles:
+        raise ValueError("ไม่มีข้อมูลโปรไฟล์รายเดือนให้เฉลี่ย")
+
+    n = len(profiles)
+    demand_kw = {
+        period: round(sum(p.demand_kw[period] for p in profiles) / n, 2) for period in ("P", "OP", "H")
+    }
+    energy_kwh = {
+        period: round(sum(p.energy_kwh[period] for p in profiles) / n, 2) for period in ("P", "OP", "H")
+    }
+    return {"demand_kw": demand_kw, "energy_kwh": energy_kwh, "n_months": n}
+
+
+def compute_meter_multiplier(ct_ratio: str, vt_ratio: str) -> float:
+    """คำนวณตัวคูณมิเตอร์จากอัตราส่วน CT/VT เช่น "50:5 A." และ "22000:110 V."
+
+    ตัวคูณ = (CT primary / CT secondary) x (VT primary / VT secondary)
+    """
+
+    def parse_ratio(text: str) -> float:
+        text = text.split()[0]  # ตัดหน่วย (A./V.) ออก
+        num, den = text.split(":")
+        return float(num) / float(den)
+
+    return parse_ratio(ct_ratio) * parse_ratio(vt_ratio)
