@@ -47,9 +47,11 @@
     <main class="body-wrap">
 
       <div class="warn-box">
-        ⚠️ ต้องรันเว็บนี้ในเครื่องที่มี Google Chrome ติดตั้งอยู่ และตั้งค่าตัวแปรสภาพแวดล้อม
-        <code>PEA_AMR_USERNAME</code> / <code>PEA_AMR_PASSWORD</code> ไว้แล้ว (ดู README) —
-        ระบบจะไม่รับ username/password ผ่านหน้าเว็บนี้โดยตรง เพื่อไม่ให้หลุดไปที่ไหน
+        ⚠️ ต้องรันเว็บนี้ในเครื่องที่มี Google Chrome ติดตั้งอยู่ กรอก username/password
+        เข้าเว็บ AMR ของ PEA ในฟอร์มด้านล่างได้โดยตรง (เหมาะถ้ามีหลายบัญชี คนละรหัสผ่านกัน)
+        — ใช้แค่ครั้งเดียวสำหรับงานนี้แล้วทิ้งทันที <b>ไม่ถูกบันทึกลงดิสก์/log ที่ไหนเลย</b>
+        (หรือจะตั้งค่าตัวแปรสภาพแวดล้อม <code>PEA_AMR_USERNAME</code> /
+        <code>PEA_AMR_PASSWORD</code> ไว้เป็นค่า default แทนก็ได้ ดู README)
         ไฟล์ดิบที่ดาวน์โหลดมา (มีเลขบัญชี/เลขมิเตอร์) จะถูก<b>ลบทิ้งทันที</b>หลังคำนวณเสร็จ
         เหลือแค่ค่าเฉลี่ย P/OP/H ที่ไม่ระบุตัวตนบันทึกลง <code>load_profiles.csv</code>
       </div>
@@ -58,8 +60,20 @@
         <div style="font-size: 15px; font-weight: 700;">ตั้งค่าการนำเข้า</div>
 
         <div class="form-grid">
+          <div class="form-field">
+            <label for="f-username">Username เข้าเว็บ AMR ของ PEA</label>
+            <input id="f-username" type="text" autocomplete="off" placeholder="เช่น เลขบัญชีผู้ใช้ไฟที่ใช้ login">
+            <div class="hint">เว้นว่างได้ถ้าตั้งค่า PEA_AMR_USERNAME ไว้ในเครื่องแล้ว</div>
+          </div>
+
+          <div class="form-field">
+            <label for="f-password">Password เข้าเว็บ AMR ของ PEA</label>
+            <input id="f-password" type="password" autocomplete="off" placeholder="เว้นว่างได้ถ้าตั้งค่าไว้ในเครื่องแล้ว">
+            <div class="hint">ใช้ครั้งเดียวสำหรับงานนี้เท่านั้น ไม่ถูกบันทึกลงที่ใดทั้งสิ้น</div>
+          </div>
+
           <div class="form-field" style="grid-column: 1 / -1;">
-            <label for="f-accounts">เลขบัญชีผู้ใช้ไฟ (คั่นด้วย , ถ้ามีหลายราย)</label>
+            <label for="f-accounts">เลขบัญชีผู้ใช้ไฟที่จะดึงข้อมูล (คั่นด้วย , ถ้ามีหลายราย)</label>
             <input id="f-accounts" type="text" placeholder="เช่น 019900000001, 019900000002">
             <div class="hint">ทุกมิเตอร์ในบัญชีเหล่านี้จะถูกดาวน์โหลดและนำมาเฉลี่ยรวมกัน</div>
           </div>

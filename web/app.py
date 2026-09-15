@@ -176,22 +176,27 @@ def _run_import_job(job_id: str, username: str, password: str, params: dict) -> 
 def api_start_import():
     """เริ่ม job ดาวน์โหลด + นำเข้า AMR จริงจากเว็บ PEA (รันเป็น background thread)
 
-    อ่าน username/password จากตัวแปรสภาพแวดล้อม PEA_AMR_USERNAME / PEA_AMR_PASSWORD
-    เท่านั้น (ไม่รับจาก request body) — ตั้งค่าที่เครื่องที่รันเซิร์ฟเวอร์นี้ ดู README
+    username/password รับได้ 2 ทาง (ฟอร์มมีความสำคัญกว่า):
+      1. กรอกในฟอร์มเว็บโดยตรง (เหมาะเมื่อมีหลายบัญชี คนละ username/password กัน) —
+         ใช้แค่ครั้งเดียวสำหรับ job นี้ ไม่ถูกบันทึกลงดิสก์/log ที่ไหนเลย
+      2. ตัวแปรสภาพแวดล้อม PEA_AMR_USERNAME / PEA_AMR_PASSWORD (ใช้เป็นค่า default เมื่อ
+         ไม่ได้กรอกในฟอร์ม — สะดวกถ้ามีบัญชีหลักบัญชีเดียวที่ใช้บ่อย)
     """
 
-    username = os.environ.get("PEA_AMR_USERNAME")
-    password = os.environ.get("PEA_AMR_PASSWORD")
+    body = request.get_json(force=True, silent=True) or {}
+
+    username = (body.get("username") or "").strip() or os.environ.get("PEA_AMR_USERNAME")
+    password = body.get("password") or os.environ.get("PEA_AMR_PASSWORD")
     if not username or not password:
         return jsonify(
             {
                 "error": "missing_credentials",
-                "message": "ยังไม่ได้ตั้งค่า PEA_AMR_USERNAME / PEA_AMR_PASSWORD ในเครื่องนี้ "
+                "message": "ยังไม่ได้กรอก username/password ในฟอร์ม และยังไม่ได้ตั้งค่า "
+                "PEA_AMR_USERNAME / PEA_AMR_PASSWORD ในเครื่องนี้ด้วย "
                 "(ดูวิธีตั้งค่าในไฟล์ README หัวข้อ 'นำเข้า AMR อัตโนมัติผ่านเว็บ')",
             }
         ), 400
 
-    body = request.get_json(force=True, silent=True) or {}
     accounts_raw = body.get("accounts") or body.get("account_no") or ""
     accounts = [a.strip() for a in str(accounts_raw).split(",") if a.strip()]
     business_type_code = (body.get("business_type_code") or "").strip()

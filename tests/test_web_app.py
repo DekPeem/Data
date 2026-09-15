@@ -88,6 +88,56 @@ def test_start_import_missing_credentials(client, monkeypatch):
     assert res.get_json()["error"] == "missing_credentials"
 
 
+def test_start_import_credentials_from_form_without_env(client, monkeypatch):
+    """หลายบัญชีคนละ username/password กัน ต้องกรอกในฟอร์มได้โดยไม่ต้องตั้ง env var"""
+    monkeypatch.delenv("PEA_AMR_USERNAME", raising=False)
+    monkeypatch.delenv("PEA_AMR_PASSWORD", raising=False)
+
+    received = {}
+
+    def fake_import_amr_for_business(**kwargs):
+        received["username"] = kwargs["username"]
+        received["password"] = kwargs["password"]
+        from amr_mapping.models import LoadProfile
+
+        return LoadProfile(
+            business_type_code=kwargs["business_type_code"], rate_code=kwargs["rate_code"],
+            billing_method="TOU", demand_kw={"P": 0, "OP": 0, "H": 0},
+            energy_kwh={"P": 0, "OP": 0, "H": 0}, contract_kva_ref=None,
+            sample_size=1, notes="fake",
+        )
+
+    monkeypatch.setattr(app_module, "import_amr_for_business", fake_import_amr_for_business)
+
+    res = client.post(
+        "/api/admin/import",
+        json={
+            "username": "form-user",
+            "password": "form-pass",
+            "accounts": "TEST-001",
+            "business_type_code": "63201",
+            "rate_code": "50",
+            "start_date": "2026-01-01",
+            "end_date": "2026-01-31",
+        },
+    )
+    assert res.status_code == 200
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/import/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    assert received["username"] == "form-user"
+    assert received["password"] == "form-pass"
+    # password ต้องไม่หลุดเข้าไปใน job logs ที่ client เห็นได้
+    assert "form-pass" not in " ".join(status["logs"])
+
+
 def test_start_import_invalid_request(client, monkeypatch):
     monkeypatch.setenv("PEA_AMR_USERNAME", "u")
     monkeypatch.setenv("PEA_AMR_PASSWORD", "p")

@@ -74,6 +74,8 @@ async function pollJob(jobId) {
 async function startImport() {
   formHint.textContent = "";
 
+  const username = document.getElementById("f-username").value.trim();
+  const password = document.getElementById("f-password").value;
   const accounts = document.getElementById("f-accounts").value.trim();
   const business_type_code = businessTypeSelect.value;
   const rate_code = document.getElementById("f-rate-code").value.trim();
@@ -98,6 +100,8 @@ async function startImport() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        username,
+        password,
         accounts,
         business_type_code,
         rate_code,
@@ -107,6 +111,10 @@ async function startImport() {
         end_date,
       }),
     });
+
+    // ล้างช่อง password ออกจากหน้าจอทันทีหลังส่งไปแล้ว (ไม่ให้ค้างอยู่บนจอโดยไม่จำเป็น)
+    document.getElementById("f-password").value = "";
+
     const data = await res.json();
 
     if (!res.ok) {
