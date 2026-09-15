@@ -406,6 +406,61 @@ def _handle_popup(driver, main_handle, download_dir: str, log: ProgressCallback)
     return downloaded
 
 
+_DOWNLOAD_KEYWORDS = ("excel", "download", "ดาวน์โหลด", "ส่งออก", "export")
+
+
+def _try_download_from_show_page(
+    driver, main_handle, download_dir: str, log: ProgressCallback
+) -> Optional[str]:
+    """กรณีกด "ตกลง" แล้วเว็บไม่เปิด popup แต่ redirect ไปหน้า showPeriodProfile.aspx ตรงๆ
+    แทน (พบจริงจากผู้ใช้ — เว็บ PEA มีพฤติกรรมนี้ได้บางครั้ง ไม่ใช่แค่ทาง popup เท่านั้น)
+
+    ไล่หาปุ่ม/ลิงก์ที่มีคำว่า download/excel/ดาวน์โหลด/ส่งออก บนหน้านี้ กดแล้วดูว่ามี
+    popup เปิดขึ้นตามมา (เรียก _handle_popup ต่อ) หรือดาวน์โหลดไฟล์ลงมาตรงๆ เลย
+    """
+
+    from selenium.webdriver.common.by import By
+
+    initial_handles = set(driver.window_handles)
+
+    def click_and_wait(element) -> Optional[str]:
+        handles_before = set(driver.window_handles)
+        element.click()
+
+        for _ in range(20):
+            time.sleep(0.25)
+            if set(driver.window_handles) - handles_before:
+                log("✅ มี popup เปิดขึ้นหลังกดปุ่มดาวน์โหลดในหน้านี้")
+                return _handle_popup(driver, main_handle, download_dir, log)
+
+        log("⏳ ไม่มี popup หลังกดปุ่ม — รอดาวน์โหลดไฟล์ตรงๆ ...")
+        random_delay(1, 2)
+        return _wait_for_download(download_dir, timeout=60)
+
+    try:
+        for b in driver.find_elements(By.TAG_NAME, "input"):
+            value = (b.get_attribute("value") or "").lower()
+            if any(kw in value for kw in _DOWNLOAD_KEYWORDS):
+                log(f"👉 กดปุ่มดาวน์โหลดในหน้า showPeriodProfile: {value}")
+                result = click_and_wait(b)
+                if result:
+                    return result
+
+        for a in driver.find_elements(By.TAG_NAME, "a"):
+            text = (a.text or "").strip().lower()
+            if any(kw in text for kw in _DOWNLOAD_KEYWORDS):
+                log(f"👉 กดลิงก์ดาวน์โหลดในหน้า showPeriodProfile: {a.text.strip()}")
+                result = click_and_wait(a)
+                if result:
+                    return result
+
+        log("⚠️ ไม่พบปุ่ม/ลิงก์ดาวน์โหลดในหน้า showPeriodProfile.aspx")
+    except Exception as e:  # noqa: BLE001
+        log(f"⚠️ สแกนหาปุ่มดาวน์โหลดผิดพลาด: {e}")
+
+    return None
+
+
 def download_month(
     driver, cust_code: str, meter_point: str, meter_text: str, date_from: str, date_to: str,
     download_dir: str, log: ProgressCallback = _noop,
@@ -442,7 +497,12 @@ def download_month(
     if popup_opened:
         return _handle_popup(driver, main_handle, download_dir, log)
 
-    log(f"❌ ไม่มี popup เปิดขึ้น (url={driver.current_url})")
+    if "showPeriodProfile" in driver.current_url:
+        log("↪️ ไม่มี popup — เว็บ redirect ไปหน้า showPeriodProfile.aspx แทน กำลังหาปุ่มดาวน์โหลดในหน้านั้น ...")
+        random_delay(1, 2)
+        return _try_download_from_show_page(driver, main_handle, download_dir, log)
+
+    log(f"❌ ไม่มี popup และไม่ได้ redirect ไปหน้า showPeriodProfile (url={driver.current_url})")
     return None
 
 

@@ -3,6 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import amr_mapping.amr_downloader as amr_downloader
 from amr_mapping.amr_downloader import (
     build_dashboard_url,
     build_profile_url,
@@ -150,3 +151,71 @@ def test_get_customer_profile_maps_fields_and_splits_business_type():
     assert profile["phone"] == ""
     assert profile["email"] == ""
     assert any(logs)  # มี log อย่างน้อย 1 บรรทัด
+
+
+class _FakeClickable:
+    def __init__(self, value=None, text=""):
+        self._value = value
+        self.text = text
+        self.clicked = False
+
+    def get_attribute(self, name):
+        return self._value if name == "value" else None
+
+    def click(self):
+        self.clicked = True
+
+
+class _FakeShowPageDriver:
+    """ตัวแทน driver สำหรับทดสอบ _try_download_from_show_page (ไม่มี popup เปิดขึ้นเลย
+    ในทุกเทสต์นี้ — window_handles คงที่ตลอด)"""
+
+    def __init__(self, inputs=None, anchors=None):
+        self._inputs = inputs or []
+        self._anchors = anchors or []
+        self.window_handles = ["main"]
+
+    def find_elements(self, by, tag):
+        if tag == "input":
+            return self._inputs
+        if tag == "a":
+            return self._anchors
+        return []
+
+
+def test_try_download_from_show_page_clicks_matching_input_button(monkeypatch):
+    btn = _FakeClickable(value="Download Excel")
+    driver = _FakeShowPageDriver(inputs=[btn])
+
+    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60: "/tmp/fake_downloaded.xls")
+    monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)  # ข้าม sleep จริงตอนเทสต์
+
+    result = amr_downloader._try_download_from_show_page(driver, "main", "/tmp/dl", log=lambda m: None)
+
+    assert btn.clicked is True
+    assert result == "/tmp/fake_downloaded.xls"
+
+
+def test_try_download_from_show_page_clicks_matching_anchor_link(monkeypatch):
+    link = _FakeClickable(text="ดาวน์โหลดข้อมูล")
+    driver = _FakeShowPageDriver(anchors=[link])
+
+    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60: "/tmp/fake2.xls")
+    monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
+
+    result = amr_downloader._try_download_from_show_page(driver, "main", "/tmp/dl", log=lambda m: None)
+
+    assert link.clicked is True
+    assert result == "/tmp/fake2.xls"
+
+
+def test_try_download_from_show_page_no_matching_element_returns_none(monkeypatch):
+    unrelated = _FakeClickable(value="Cancel")
+    driver = _FakeShowPageDriver(inputs=[unrelated])
+
+    monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
+
+    result = amr_downloader._try_download_from_show_page(driver, "main", "/tmp/dl", log=lambda m: None)
+
+    assert unrelated.clicked is False
+    assert result is None
