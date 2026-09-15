@@ -79,6 +79,7 @@ def test_import_amr_for_business_updates_load_profiles(monkeypatch, data_dir):
         contract_kva=1000,
         source_label="unit test",
         data_dir=data_dir,
+        download_dir=data_dir.parent / "downloads",
         log=logs.append,
     )
 
@@ -101,7 +102,10 @@ def test_import_amr_for_business_updates_load_profiles(monkeypatch, data_dir):
     assert "test-pass" not in joined_logs
 
 
-def test_import_amr_for_business_cleans_up_download_dir(monkeypatch, data_dir, tmp_path):
+def test_import_amr_for_business_keeps_download_dir_for_reuse(monkeypatch, data_dir, tmp_path):
+    """เปลี่ยนพฤติกรรมจากเดิม (เคยลบไฟล์ดิบทิ้งเสมอ) — ตอนนี้ต้อง "เก็บไว้" แทน เพื่อให้
+    รันซ้ำ/นำเข้าเดือนเพิ่มไม่ต้องดาวน์โหลดของเดิมใหม่ (ตามที่ผู้ใช้ขอ)"""
+
     captured_dirs = []
 
     def spy_download(username, password, accounts, start_date, end_date, download_dir, log, headless=True):
@@ -110,15 +114,25 @@ def test_import_amr_for_business_cleans_up_download_dir(monkeypatch, data_dir, t
 
     monkeypatch.setattr(amr_import, "download_amr_kw_reports", spy_download)
 
+    download_dir = tmp_path / "downloads"
     amr_import.import_amr_for_business(
         username="u", password="p", accounts=["123"],
         start_date="2026-07-01", end_date="2026-08-31",
         business_type_code="TESTBIZ", rate_code="50", contract_kva=None,
-        source_label="", data_dir=data_dir,
+        source_label="", data_dir=data_dir, download_dir=download_dir,
     )
 
     assert len(captured_dirs) == 1
-    assert not os.path.exists(captured_dirs[0]), "ไฟล์ดิบที่ดาวน์โหลดมาต้องถูกลบทิ้งหลังประมวลผลเสร็จ"
+    assert os.path.exists(captured_dirs[0]), "ไฟล์ดิบที่ดาวน์โหลดมาต้องถูกเก็บไว้ (ไม่ลบทิ้ง) เพื่อใช้ซ้ำได้"
+    assert os.listdir(captured_dirs[0]), "โฟลเดอร์ดาวน์โหลดต้องยังมีไฟล์อยู่จริง ไม่ใช่แค่โฟลเดอร์เปล่า"
+
+
+def test_import_amr_for_business_default_download_dir_is_gitignored_amr_downloads():
+    """ค่า default ของ download_dir ต้องชี้ไปที่ amr_downloads/ ที่ root ของ repo (มี
+    .gitignore คุ้มครองอยู่แล้ว) ไม่ใช่ temp dir ที่หายไปเมื่อรีบูตเหมือนเดิม"""
+
+    assert amr_import.DEFAULT_DOWNLOAD_DIR.name == "amr_downloads"
+    assert amr_import.DEFAULT_DOWNLOAD_DIR.parent == Path(amr_import.__file__).resolve().parents[2]
 
 
 def test_import_amr_for_business_raises_when_no_files_downloaded(monkeypatch, data_dir):
@@ -132,7 +146,7 @@ def test_import_amr_for_business_raises_when_no_files_downloaded(monkeypatch, da
             username="u", password="p", accounts=["123"],
             start_date="2026-07-01", end_date="2026-08-31",
             business_type_code="TESTBIZ", rate_code="50", contract_kva=None,
-            source_label="", data_dir=data_dir,
+            source_label="", data_dir=data_dir, download_dir=data_dir.parent / "downloads",
         )
 
 
@@ -163,7 +177,7 @@ def test_import_amr_auto_detects_and_saves_new_business_type(monkeypatch, data_d
         username="019900000001", password="secret-pass",
         start_date="2026-07-01", end_date="2026-08-31",
         source_label="unit test auto",
-        data_dir=data_dir, log=logs.append,
+        data_dir=data_dir, download_dir=data_dir.parent / "downloads", log=logs.append,
     )
 
     assert profile.business_type_code == "34111"
@@ -205,12 +219,48 @@ def test_import_amr_auto_does_not_overwrite_existing_business_type(monkeypatch, 
     amr_import.import_amr_auto(
         username="TESTBIZ-ACC", password="p",
         start_date="2026-07-01", end_date="2026-08-31",
-        data_dir=data_dir,
+        data_dir=data_dir, download_dir=data_dir.parent / "downloads",
     )
 
     reference = load_reference_data(data_dir)
     # ชื่อเดิม ("ธุรกิจทดสอบ" จาก fixture) ต้องไม่ถูกเขียนทับด้วยชื่อที่ scrape มาใหม่
     assert reference.business_types["TESTBIZ"].name_th == "ธุรกิจทดสอบ"
+
+
+def test_import_amr_auto_calls_on_profile_callback_with_raw_scraped_data(monkeypatch, data_dir):
+    """on_profile ต้องถูกเรียกพร้อม dict ดิบที่ scrape มาได้ (รวมชื่อจริง) ก่อนเริ่มประมวลผล
+    ไฟล์ — ใช้โดย web/app.py เพื่อแสดงชื่อบริษัทจริงในหน้า Admin (ไม่เขียนลงไฟล์ที่ไหน)"""
+
+    def fake_download(username, password, start_date, end_date, download_dir, log, headless=True):
+        profile_info = {
+            "name": "บริษัท ทดสอบ ออโต้ จำกัด",
+            "account_no": username,
+            "meter_no": "22222222",
+            "rate_code": "40",
+            "billing_method": "TOU",
+            "business_type_code": "34111",
+            "business_type_name": "การผลิตเยื่อกระดาษ (ตัวอย่าง)",
+            "kva": "15,000",
+        }
+        path = os.path.join(download_dir, "amr_auto.xls")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(_SYNTHETIC_INTERVAL_HTML)
+        results = [DownloadResult(account_no=username, meter_text="M1", date_from=start_date, date_to=end_date, file_path=path, success=True)]
+        return profile_info, results
+
+    monkeypatch.setattr(amr_import, "download_amr_with_profile", fake_download)
+
+    received_profiles = []
+    amr_import.import_amr_auto(
+        username="019900000099", password="p",
+        start_date="2026-07-01", end_date="2026-08-31",
+        data_dir=data_dir, download_dir=data_dir.parent / "downloads",
+        on_profile=received_profiles.append,
+    )
+
+    assert len(received_profiles) == 1
+    assert received_profiles[0]["name"] == "บริษัท ทดสอบ ออโต้ จำกัด"
+    assert received_profiles[0]["account_no"] == "019900000099"
 
 
 def test_import_amr_auto_raises_when_detection_incomplete(monkeypatch, data_dir):
@@ -226,5 +276,6 @@ def test_import_amr_auto_raises_when_detection_incomplete(monkeypatch, data_dir)
 
     with pytest.raises(RuntimeError):
         amr_import.import_amr_auto(
-            username="u", password="p", start_date="2026-07-01", end_date="2026-08-31", data_dir=data_dir,
+            username="u", password="p", start_date="2026-07-01", end_date="2026-08-31",
+            data_dir=data_dir, download_dir=data_dir.parent / "downloads",
         )

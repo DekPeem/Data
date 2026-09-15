@@ -53,8 +53,12 @@
         ให้เปิด "ตัวเลือกขั้นสูง" ด้านล่าง) — ใช้แค่ครั้งเดียวสำหรับงานนี้แล้วทิ้งทันที
         <b>ไม่ถูกบันทึกลงดิสก์/log ที่ไหนเลย</b> (หรือจะตั้งค่าตัวแปรสภาพแวดล้อม
         <code>PEA_AMR_USERNAME</code> / <code>PEA_AMR_PASSWORD</code> ไว้เป็นค่า default แทนก็ได้
-        ดู README) ไฟล์ดิบที่ดาวน์โหลดมา (มีเลขบัญชี/เลขมิเตอร์) จะถูก<b>ลบทิ้งทันที</b>หลัง
-        คำนวณเสร็จ เหลือแค่ค่าเฉลี่ย P/OP/H ที่ไม่ระบุตัวตนบันทึกลง <code>load_profiles.csv</code>
+        ดู README) ไฟล์ดิบที่ดาวน์โหลดมา (มีเลขบัญชี/เลขมิเตอร์) จะถูก<b>เก็บไว้ในเครื่องนี้ที่
+        โฟลเดอร์ <code>amr_downloads/</code></b> เพื่อให้รันซ้ำ/นำเข้าเดือนเพิ่มไม่ต้องดาวน์โหลด
+        ของเดิมใหม่ — โฟลเดอร์นี้อยู่ใน <code>.gitignore</code> แล้ว <b>ไม่มีทางหลุดเข้า repo
+        public ได้เด็ดขาด</b> เหมือนหลักการเดียวกับ <code>customers_local.csv</code> ส่วนไฟล์
+        <code>load_profiles.csv</code>/<code>business_types.csv</code> ที่ commit เข้า repo
+        ยังคงมีแค่ค่าเฉลี่ย P/OP/H แบบไม่ระบุตัวตนเหมือนเดิม
       </div>
 
       <div class="card" style="padding: 28px; display: flex; flex-direction: column; gap: 20px;">

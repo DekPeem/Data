@@ -246,6 +246,48 @@ def test_start_import_auto_mode_when_business_type_and_rate_omitted(client, monk
     assert "accounts" not in received  # import_amr_auto ไม่รับพารามิเตอร์นี้
 
 
+def test_start_import_auto_mode_surfaces_scraped_customer_name(client, monkeypatch):
+    """ชื่อบริษัทจริงที่ scrape มาได้ตอนโหมดอัตโนมัติ ต้องถูกส่งกลับมาในสถานะ job (ผ่าน
+    on_profile callback) ให้หน้า Admin แสดงผลได้ — อยู่ใน memory ของ job นี้เท่านั้น"""
+
+    monkeypatch.setenv("PEA_AMR_USERNAME", "u")
+    monkeypatch.setenv("PEA_AMR_PASSWORD", "p")
+
+    def fake_import_amr_auto(**kwargs):
+        on_profile = kwargs.get("on_profile")
+        if on_profile:
+            on_profile({"name": "บริษัท ทดสอบ เว็บแอป จำกัด", "account_no": "019900000099", "meter_no": "33333333"})
+
+        from amr_mapping.models import LoadProfile
+
+        return LoadProfile(
+            business_type_code="34111", rate_code="40", billing_method="TOU",
+            demand_kw={"P": 1.0, "OP": 2.0, "H": 3.0},
+            energy_kwh={"P": 10.0, "OP": 20.0, "H": 30.0},
+            contract_kva_ref=15000.0, sample_size=2, notes="fake-auto",
+        )
+
+    monkeypatch.setattr(app_module, "import_amr_auto", fake_import_amr_auto)
+
+    res = client.post(
+        "/api/admin/import",
+        json={"start_date": "2026-01-01", "end_date": "2026-02-28"},
+    )
+    assert res.status_code == 200
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/import/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    assert status["customer_profile"]["name"] == "บริษัท ทดสอบ เว็บแอป จำกัด"
+    assert status["customer_profile"]["account_no"] == "019900000099"
+
+
 def test_start_import_manual_mode_when_only_business_type_given(client, monkeypatch):
     """ระบุ business_type_code มาแม้จะไม่มี rate_code -> ต้องถือเป็นโหมดกรอกเอง (manual)
     ไม่ใช่ auto จึงต้อง validate ครบทุกฟิลด์ตามเดิม (จะ error เพราะ rate_code หาย)"""

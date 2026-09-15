@@ -48,8 +48,17 @@ function setStatusPill(status) {
   jobStatusPill.style.color = s.color;
 }
 
-function renderResult(result) {
+function renderResult(result, customerProfile) {
+  const nameBlock =
+    customerProfile && customerProfile.name
+      ? `<div class="field-item" style="margin-bottom:12px;">
+          <div class="field-label">ชื่อบริษัทจริงที่ตรวจพบ (แสดงในเครื่องนี้เท่านั้น — ไม่ถูกบันทึกลงไฟล์ใดๆ)</div>
+          <div class="field-value" style="font-size:16px;">${customerProfile.name}${customerProfile.account_no ? ` · บัญชี ${customerProfile.account_no}` : ""}</div>
+        </div>`
+      : "";
+
   jobResult.innerHTML = `
+    ${nameBlock}
     <div class="field-grid" style="grid-template-columns: repeat(3, minmax(0,1fr));">
       ${["P", "OP", "H"]
         .map(
@@ -81,7 +90,7 @@ async function pollJob(jobId) {
   submitBtn.disabled = false;
 
   if (data.status === "success") {
-    renderResult(data.result);
+    renderResult(data.result, data.customer_profile);
   } else if (data.status === "error") {
     jobResult.innerHTML = `<div class="search-hint" style="min-height:auto;">${data.error || "เกิดข้อผิดพลาด"}</div>`;
   }

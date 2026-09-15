@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -207,6 +208,58 @@ def test_try_download_from_show_page_clicks_matching_anchor_link(monkeypatch):
 
     assert link.clicked is True
     assert result == "/tmp/fake2.xls"
+
+
+def test_cache_key_is_deterministic_and_filesystem_safe():
+    key = amr_downloader._cache_key("019900000001", "M/1", "01/07/2026", "31/07/2026")
+    assert key == "019900000001_M-1_01-07-2026_31-07-2026"
+    # เรียกซ้ำด้วยอินพุตเดิมต้องได้ผลเหมือนเดิมเป๊ะ (deterministic) — จุดสำคัญของการทำ cache
+    assert amr_downloader._cache_key("019900000001", "M/1", "01/07/2026", "31/07/2026") == key
+
+
+def test_find_cached_file_returns_none_when_missing(tmp_path):
+    assert amr_downloader._find_cached_file(str(tmp_path), "no-such-key") is None
+
+
+def test_find_cached_file_finds_existing_file_ignoring_extension(tmp_path):
+    (tmp_path / "some-key.xls").write_text("data", encoding="utf-8")
+    found = amr_downloader._find_cached_file(str(tmp_path), "some-key")
+    assert found == str(tmp_path / "some-key.xls")
+
+
+def test_download_reports_for_account_skips_redownload_on_cache_hit(monkeypatch, tmp_path):
+    """ดาวน์โหลดบัญชี+มิเตอร์+ช่วงวันที่เดิมซ้ำสองรอบ — รอบสองต้องไม่เรียก download_month
+    อีกเลย (ใช้ไฟล์ที่แคชไว้จากรอบแรกแทน) ตามที่ผู้ใช้ขอ (ไม่ต้องดาวน์โหลดซ้ำ)"""
+
+    download_dir = str(tmp_path)
+    monkeypatch.setattr(
+        amr_downloader, "get_meter_options",
+        lambda driver, account, log=lambda m: None: [{"value": "M1", "text": "มิเตอร์ 1"}],
+    )
+    monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
+
+    call_count = {"n": 0}
+
+    def fake_download_month(driver, cust_code, meter_point, meter_text, date_from, date_to, dl_dir, log):
+        call_count["n"] += 1
+        path = os.path.join(dl_dir, f"raw_download_{call_count['n']}.xls")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("ข้อมูลดิบจำลอง")
+        return path
+
+    monkeypatch.setattr(amr_downloader, "download_month", fake_download_month)
+
+    month_ranges = [("01/07/2026", "31/07/2026")]
+
+    results1 = amr_downloader._download_reports_for_account(None, "ACC1", month_ranges, download_dir, log=lambda m: None)
+    assert call_count["n"] == 1
+    assert results1[0].success
+    assert results1[0].file_path is not None
+
+    results2 = amr_downloader._download_reports_for_account(None, "ACC1", month_ranges, download_dir, log=lambda m: None)
+    assert call_count["n"] == 1, "รอบสองต้องไม่ดาวน์โหลดซ้ำ ต้องใช้ไฟล์แคชจากรอบแรกแทน"
+    assert results2[0].success
+    assert results2[0].file_path == results1[0].file_path
 
 
 def test_try_download_from_show_page_no_matching_element_returns_none(monkeypatch):

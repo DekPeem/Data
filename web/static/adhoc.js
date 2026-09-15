@@ -76,6 +76,42 @@ function renderBarChart(title, values, unit) {
     </div>`;
 }
 
+function renderLineChart(title, values, unit) {
+  const periods = ["P", "OP", "H"];
+  const max = Math.max(...periods.map((p) => values[p]), 1);
+  const width = 280;
+  const height = 170;
+  const padX = 34;
+  const padY = 28;
+  const stepX = (width - padX * 2) / (periods.length - 1);
+
+  const points = periods.map((period, i) => {
+    const x = padX + stepX * i;
+    const y = padY + (1 - values[period] / max) * (height - padY * 2 - 12);
+    return { x, y, period, value: values[period] };
+  });
+  const pointsAttr = points.map((pt) => `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`).join(" ");
+
+  const dots = points
+    .map(
+      (pt) => `
+      <text x="${pt.x.toFixed(1)}" y="${(pt.y - 10).toFixed(1)}" text-anchor="middle" font-size="11" font-weight="700" fill="#0f1b2d">${formatNumber(pt.value, unit === "kWh" ? 0 : 2)}</text>
+      <circle cx="${pt.x.toFixed(1)}" cy="${pt.y.toFixed(1)}" r="4.5" fill="${PERIOD_COLOR[pt.period]}" stroke="#ffffff" stroke-width="2"/>
+      <text x="${pt.x.toFixed(1)}" y="${height - 6}" text-anchor="middle" font-size="12" fill="#8996ab">${pt.period}</text>`
+    )
+    .join("");
+
+  return `
+    <div class="card chart-card">
+      <div class="chart-title">${title}</div>
+      <svg viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;" preserveAspectRatio="xMidYMid meet">
+        <line x1="${padX}" y1="${height - 18}" x2="${width - padX}" y2="${height - 18}" stroke="#e1e0d9" stroke-width="1"/>
+        <polyline points="${pointsAttr}" fill="none" stroke="#2a78d6" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+        ${dots}
+      </svg>
+    </div>`;
+}
+
 function renderStatTiles(demand, energy) {
   const ordered = [
     ...["P", "OP", "H"].map((p) => ({ period: p, value: demand[p], unit: "kW", label: "กำลังไฟฟ้าสูงสุด", digits: 2 })),
@@ -163,6 +199,10 @@ function renderResult(data, displayName, typedBusinessTypeCode, typedRateCode, t
       <div class="charts-grid">
         ${renderBarChart("กำลังไฟฟ้าสูงสุด (kW)", f.demand_kw, "kW")}
         ${renderBarChart("พลังงานไฟฟ้า (kWh / เดือน)", f.energy_kwh, "kWh")}
+      </div>
+      <div class="charts-grid" style="margin-top:16px;">
+        ${renderLineChart("แนวโน้มกำลังไฟฟ้าสูงสุด (kW)", f.demand_kw, "kW")}
+        ${renderLineChart("แนวโน้มพลังงานไฟฟ้า (kWh / เดือน)", f.energy_kwh, "kWh")}
       </div>
     </div>
 

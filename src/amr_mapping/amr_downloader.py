@@ -296,6 +296,35 @@ def get_meter_options(driver, cust_code: str, log: ProgressCallback = _noop) -> 
     return meters
 
 
+def _sanitize_for_filename(value: str) -> str:
+    """แทนอักขระที่ใช้เป็นชื่อไฟล์ไม่ได้ (เช่น "/" ในวันที่ dd/mm/yyyy) ด้วย "-" """
+
+    return re.sub(r"[^\w.-]", "-", value or "")
+
+
+def _cache_key(account: str, meter_value: str, date_from: str, date_to: str) -> str:
+    """ชื่อไฟล์แบบระบุตัวตนได้แน่นอน (deterministic) สำหรับ 1 บัญชี + 1 มิเตอร์ + 1 ช่วงวันที่
+
+    ใช้เช็คว่าเคยดาวน์โหลดไฟล์นี้ไว้ใน download_dir แล้วหรือยัง (cache) — ไฟล์ที่ดาวน์โหลด
+    จากเว็บ PEA จริงมีชื่อที่เว็บตั้งให้เอง ไม่ deterministic จึงต้อง rename เป็นชื่อนี้ทุกครั้ง
+    หลังดาวน์โหลดสำเร็จ (ดู _download_reports_for_account)
+    """
+
+    parts = [account, meter_value, date_from, date_to]
+    return "_".join(_sanitize_for_filename(p) for p in parts)
+
+
+def _find_cached_file(download_dir: str, cache_key: str) -> Optional[str]:
+    """หาไฟล์ที่เคยดาวน์โหลด+ตั้งชื่อด้วย cache_key นี้ไว้แล้วใน download_dir (ไม่สนนามสกุล)"""
+
+    if not os.path.isdir(download_dir):
+        return None
+    for name in os.listdir(download_dir):
+        if os.path.splitext(name)[0] == cache_key:
+            return os.path.join(download_dir, name)
+    return None
+
+
 def _wait_for_download(download_dir: str, timeout: int = 180) -> Optional[str]:
     end_time = time.time() + timeout
     while time.time() < end_time:
@@ -511,7 +540,13 @@ def _download_reports_for_account(
 ) -> List[DownloadResult]:
     """ดาวน์โหลดรายงาน kW ราย 15 นาทีของทุกมิเตอร์ในบัญชีเดียว ครอบคลุมทุกเดือนใน
     month_ranges — ใช้ driver ที่ login อยู่แล้ว (เรียกจาก download_amr_kw_reports และ
-    download_amr_with_profile ทั้งคู่ เพื่อไม่ให้ต้องเขียน loop ซ้ำ)"""
+    download_amr_with_profile ทั้งคู่ เพื่อไม่ให้ต้องเขียน loop ซ้ำ)
+
+    ไฟล์ที่เคยดาวน์โหลดไว้แล้วใน download_dir (บัญชี+มิเตอร์+ช่วงวันที่เดียวกัน) จะถูกใช้ซ้ำ
+    แทนการดาวน์โหลดใหม่ (ดู _cache_key/_find_cached_file) — เหมาะกับกรณีรันซ้ำ (เช่น import
+    เดือนเพิ่มจากช่วงเดิม หรือ retry หลังพังกลางคัน) โดยไม่ต้องรอดาวน์โหลดของเดิมใหม่ทุกครั้ง
+    ต้องเรียกจาก amr_import.py ที่ส่ง download_dir แบบถาวร (ไม่ใช่โฟลเดอร์ temp ที่ลบทิ้งหลัง
+    เสร็จ) การ cache นี้ถึงจะมีประโยชน์จริง"""
 
     results: List[DownloadResult] = []
     meters = get_meter_options(driver, account, log=log)
@@ -521,11 +556,34 @@ def _download_reports_for_account(
 
     for meter in meters:
         for date_from, date_to in month_ranges:
+            cache_key = _cache_key(account, meter["value"], date_from, date_to)
+            cached_path = _find_cached_file(download_dir, cache_key)
+            if cached_path:
+                log(f"♻️ ใช้ไฟล์ที่เคยดาวน์โหลดไว้แล้ว (ข้ามการโหลดซ้ำ): {os.path.basename(cached_path)}")
+                results.append(
+                    DownloadResult(
+                        account_no=account, meter_text=meter["text"],
+                        date_from=date_from, date_to=date_to,
+                        file_path=cached_path, success=True,
+                    )
+                )
+                continue
+
             try:
                 path = download_month(
                     driver, account, meter["value"], meter["text"], date_from, date_to,
                     download_dir, log=log,
                 )
+                if path:
+                    # เว็บ PEA ตั้งชื่อไฟล์ที่ดาวน์โหลดมาเอง (ไม่ deterministic) — เปลี่ยนชื่อเป็น
+                    # cache_key ก่อนเก็บไว้ เพื่อให้รอบถัดไปหาไฟล์แคชนี้เจอ
+                    ext = os.path.splitext(path)[1]
+                    cached_target = os.path.join(download_dir, cache_key + ext)
+                    try:
+                        os.replace(path, cached_target)
+                        path = cached_target
+                    except OSError as e:  # noqa: BLE001
+                        log(f"⚠️ เปลี่ยนชื่อไฟล์เป็นชื่อแคชไม่ได้ (ใช้ไฟล์เดิมต่อได้ปกติ แค่รอบหน้าจะหาไม่เจอ): {e}")
                 results.append(
                     DownloadResult(
                         account_no=account, meter_text=meter["text"],

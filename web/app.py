@@ -226,6 +226,17 @@ def _run_import_job(job_id: str, username: str, password: str, params: dict) -> 
         with _JOBS_LOCK:
             _JOBS[job_id]["logs"].append(msg)
 
+    def on_profile(info: dict) -> None:
+        # เก็บข้อมูลลูกค้าจริงที่สแกนมาได้ (ชื่อ/เลขบัญชี/เลขมิเตอร์) ไว้ใน job แสดงผลในหน้า
+        # Admin ของเครื่องนี้เท่านั้น — อยู่ใน memory ของ process ชั่วคราว (หาย
+        # เมื่อรีสตาร์ทเซิร์ฟเวอร์) ไม่เคยถูกเขียนลงไฟล์ใดๆ ทั้งสิ้น
+        with _JOBS_LOCK:
+            _JOBS[job_id]["customer_profile"] = {
+                "name": info.get("name") or "",
+                "account_no": info.get("account_no") or "",
+                "meter_no": info.get("meter_no") or "",
+            }
+
     try:
         if params["mode"] == "auto":
             log("🤖 ไม่ได้ระบุประเภทธุรกิจ/อัตรา — ให้ระบบตรวจจับอัตโนมัติจากหน้าข้อมูลผู้ใช้ไฟของ PEA")
@@ -235,6 +246,7 @@ def _run_import_job(job_id: str, username: str, password: str, params: dict) -> 
                 start_date=params["start_date"],
                 end_date=params["end_date"],
                 source_label=params.get("source_label", ""),
+                on_profile=on_profile,
                 log=log,
             )
         else:
@@ -324,7 +336,7 @@ def api_start_import():
 
     job_id = uuid.uuid4().hex
     with _JOBS_LOCK:
-        _JOBS[job_id] = {"status": "running", "logs": [], "result": None, "error": None}
+        _JOBS[job_id] = {"status": "running", "logs": [], "result": None, "error": None, "customer_profile": None}
 
     params = {
         "mode": mode,
