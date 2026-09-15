@@ -7,6 +7,22 @@ const jobArea = document.getElementById("job-area");
 const jobStatusPill = document.getElementById("job-status-pill");
 const jobLog = document.getElementById("job-log");
 const jobResult = document.getElementById("job-result");
+const usernameInput = document.getElementById("f-username");
+const accountsInput = document.getElementById("f-accounts");
+
+// username ที่ใช้ login เข้าเว็บ AMR ของ PEA ส่วนใหญ่คือเลขบัญชีผู้ใช้ไฟนั้นเอง (login
+// แบบลูกค้ารายบุคคล 1 login = 1 บัญชี) — เติมช่องเลขบัญชีให้อัตโนมัติเมื่อพิมพ์ username
+// เสร็จ (ออกจากช่อง) ถ้าช่องเลขบัญชียังว่างอยู่ หรือผู้ใช้ยังไม่เคยแก้เอง
+let accountsEditedByUser = false;
+accountsInput.addEventListener("input", () => {
+  accountsEditedByUser = true;
+});
+usernameInput.addEventListener("blur", () => {
+  const username = usernameInput.value.trim();
+  if (username && !accountsEditedByUser) {
+    accountsInput.value = username;
+  }
+});
 
 async function loadBusinessTypes() {
   try {
