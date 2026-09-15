@@ -61,40 +61,104 @@ function renderBarChart(title, values, unit) {
     </div>`;
 }
 
-function renderLineChart(title, values, unit) {
-  const periods = ["P", "OP", "H"];
-  const max = Math.max(...periods.map((p) => values[p]), 1);
-  const width = 280;
-  const height = 170;
-  const padX = 34;
-  const padY = 28;
-  const stepX = (width - padX * 2) / (periods.length - 1);
+// ── กราฟเส้น "การใช้ไฟฟ้ารายชั่วโมงใน 1 วัน" แยกดูตามวันในสัปดาห์ได้ (จันทร์-อาทิตย์ หรือ
+//    เฉลี่ยทั้งเดือน) พร้อมชี้ช่วง Peak (09:00-22:00 วันทำการ) บนกราฟ ──
 
-  const points = periods.map((period, i) => {
-    const x = padX + stepX * i;
-    const y = padY + (1 - values[period] / max) * (height - padY * 2 - 12);
-    return { x, y, period, value: values[period] };
-  });
-  const pointsAttr = points.map((pt) => `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`).join(" ");
+const DAY_TYPE_TH = {
+  all: "เฉลี่ยทั้งเดือน",
+  mon: "จันทร์",
+  tue: "อังคาร",
+  wed: "พุธ",
+  thu: "พฤหัสบดี",
+  fri: "ศุกร์",
+  sat: "เสาร์",
+  sun: "อาทิตย์",
+};
+const DAY_TYPE_ORDER = ["all", "mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+const WEEKDAY_DAY_TYPES = new Set(["all", "mon", "tue", "wed", "thu", "fri"]);
 
-  const dots = points
+function renderDailyCurveSVG(hours, dayType) {
+  const width = 640;
+  const height = 220;
+  const padX = 40;
+  const padY = 30;
+  const chartW = width - padX * 2;
+  const chartH = height - padY * 2 - 16;
+  const hourW = chartW / 24;
+  const hourX = (h) => padX + hourW * h;
+
+  const known = hours.filter((v) => v !== null && v !== undefined);
+  if (!known.length) {
+    return `<div style="padding:36px 0;text-align:center;color:#8996ab;font-size:13px;">ไม่มีข้อมูลสำหรับวันนี้ในช่วงที่นำเข้า AMR ไว้</div>`;
+  }
+  const max = Math.max(...known, 1);
+
+  const peakRect = WEEKDAY_DAY_TYPES.has(dayType)
+    ? `<rect x="${hourX(9).toFixed(1)}" y="${padY}" width="${(hourX(22) - hourX(9)).toFixed(1)}" height="${chartH.toFixed(1)}" fill="#2a78d6" opacity="0.08"/>
+       <text x="${((hourX(9) + hourX(22)) / 2).toFixed(1)}" y="${padY - 10}" text-anchor="middle" font-size="11" font-weight="700" fill="#184f95">ช่วง Peak (09:00-22:00)</text>`
+    : "";
+
+  const points = hours
+    .map((v, h) => (v === null || v === undefined ? null : { x: hourX(h) + hourW / 2, y: padY + (1 - v / max) * chartH, v }))
+    .filter(Boolean);
+
+  const polyline =
+    points.length > 1
+      ? `<polyline points="${points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")}" fill="none" stroke="#2a78d6" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`
+      : "";
+  const dots = points.map((p) => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3" fill="#2a78d6"/>`).join("");
+
+  const hourLabels = [0, 3, 6, 9, 12, 15, 18, 21]
     .map(
-      (pt) => `
-      <text x="${pt.x.toFixed(1)}" y="${(pt.y - 10).toFixed(1)}" text-anchor="middle" font-size="11" font-weight="700" fill="#0f1b2d">${formatNumber(pt.value, unit === "kWh" ? 0 : 2)}</text>
-      <circle cx="${pt.x.toFixed(1)}" cy="${pt.y.toFixed(1)}" r="4.5" fill="${PERIOD_COLOR[pt.period]}" stroke="#ffffff" stroke-width="2"/>
-      <text x="${pt.x.toFixed(1)}" y="${height - 6}" text-anchor="middle" font-size="12" fill="#8996ab">${pt.period}</text>`
+      (h) =>
+        `<text x="${(hourX(h) + hourW / 2).toFixed(1)}" y="${height - 4}" text-anchor="middle" font-size="11" fill="#8996ab">${String(h).padStart(2, "0")}:00</text>`
     )
     .join("");
+  const baseline = `<line x1="${padX}" y1="${(padY + chartH).toFixed(1)}" x2="${width - padX}" y2="${(padY + chartH).toFixed(1)}" stroke="#e1e0d9" stroke-width="1"/>`;
 
   return `
-    <div class="card chart-card">
-      <div class="chart-title">${title}</div>
-      <svg viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;" preserveAspectRatio="xMidYMid meet">
-        <line x1="${padX}" y1="${height - 18}" x2="${width - padX}" y2="${height - 18}" stroke="#e1e0d9" stroke-width="1"/>
-        <polyline points="${pointsAttr}" fill="none" stroke="#2a78d6" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
-        ${dots}
-      </svg>
-    </div>`;
+    <svg viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;" preserveAspectRatio="xMidYMid meet">
+      ${peakRect}${baseline}${polyline}${dots}${hourLabels}
+    </svg>`;
+}
+
+function initDailyCurveSection(container, curveData) {
+  if (!curveData || !curveData.available) {
+    container.innerHTML = `
+      <div class="card" style="padding:24px;color:#8996ab;font-size:13px;">
+        ยังไม่มีข้อมูลกราฟการใช้ไฟฟ้ารายชั่วโมงสำหรับกลุ่มนี้ — ต้องนำเข้า AMR จริงที่มีข้อมูลราย 15 นาทีก่อน (ผ่านหน้า <a href="/admin">นำเข้า AMR (Admin)</a>)
+      </div>`;
+    return;
+  }
+
+  const availableDayTypes = DAY_TYPE_ORDER.filter((d) => curveData.day_types[d]);
+  let selected = availableDayTypes.includes("all") ? "all" : availableDayTypes[0];
+
+  function render() {
+    const buttons = availableDayTypes
+      .map((d) => `<button type="button" data-day="${d}" class="day-type-btn${d === selected ? " active" : ""}">${DAY_TYPE_TH[d]}</button>`)
+      .join("");
+    const caption = WEEKDAY_DAY_TYPES.has(selected)
+      ? `<div class="chart-caption">แถบสีฟ้าอ่อนคือช่วง Peak (วันทำการ 09:00-22:00) — นอกแถบเป็น Off-Peak</div>`
+      : `<div class="chart-caption">วันหยุดสุดสัปดาห์ — ทั้งวันเป็นอัตรา Holiday (H) ไม่มีช่วง Peak</div>`;
+
+    container.innerHTML = `
+      <div class="card chart-card">
+        <div class="chart-title">การใช้ไฟฟ้าเฉลี่ยรายชั่วโมงใน 1 วัน (kW)</div>
+        <div class="day-type-row">${buttons}</div>
+        ${renderDailyCurveSVG(curveData.day_types[selected] || [], selected)}
+        ${caption}
+      </div>`;
+
+    container.querySelectorAll(".day-type-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        selected = btn.dataset.day;
+        render();
+      });
+    });
+  }
+
+  render();
 }
 
 function renderStatTiles(demand, energy) {
@@ -191,11 +255,9 @@ function renderResult(data) {
         ${renderBarChart("กำลังไฟฟ้าสูงสุด (kW)", f.demand_kw, "kW")}
         ${renderBarChart("พลังงานไฟฟ้า (kWh / เดือน)", f.energy_kwh, "kWh")}
       </div>
-      <div class="charts-grid" style="margin-top:16px;">
-        ${renderLineChart("แนวโน้มกำลังไฟฟ้าสูงสุด (kW)", f.demand_kw, "kW")}
-        ${renderLineChart("แนวโน้มพลังงานไฟฟ้า (kWh / เดือน)", f.energy_kwh, "kWh")}
-      </div>
     </div>
+
+    <div id="daily-curve-root" style="margin-top:4px;"></div>
 
     <div class="disclaimer">
       ${iconInfo("#55647a")}
@@ -205,6 +267,8 @@ function renderResult(data) {
 
   emptyState.style.display = "none";
   resultArea.style.display = "flex";
+
+  initDailyCurveSection(document.getElementById("daily-curve-root"), data.curve);
 }
 
 async function runSearch() {

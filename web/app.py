@@ -23,7 +23,7 @@ from flask import Flask, jsonify, request
 
 from amr_mapping import estimate_customer_load, load_reference_data
 from amr_mapping.amr_import import import_amr_auto, import_amr_for_business
-from amr_mapping.mapping import MatchLevel
+from amr_mapping.mapping import MatchLevel, find_load_curve
 from amr_mapping.models import Customer
 
 app = Flask(__name__, static_folder="static", static_url_path="")
@@ -60,6 +60,29 @@ def _customer_to_dict(customer) -> dict:
     }
 
 
+_NO_CURVE = {"available": False, "day_types": {}, "sample_size": 0}
+
+
+def _curve_response(reference, business_type_code: str, rate_code: str, scale_factor: float) -> dict:
+    """หาเส้นโค้งรายชั่วโมง (exact match กับคู่ business_type_code/rate_code ที่จับคู่ได้
+    แล้วจาก find_load_profile) แล้วปรับสเกลด้วย scale_factor เดียวกับที่ใช้กับ P/OP/H
+    คืน {"available": False, ...} เฉยๆ ถ้ายังไม่มีข้อมูลเส้นโค้งของคู่นี้เลย (เช่น ยังไม่เคย
+    นำเข้า AMR จริงที่มีข้อมูลราย 15 นาทีมาก่อน — ไม่ใช่ error)"""
+
+    curve = find_load_curve(reference.load_curves, business_type_code, rate_code)
+    if curve is None:
+        return _NO_CURVE
+
+    def scale(v):
+        return None if v is None else round(v * scale_factor, 2)
+
+    return {
+        "available": True,
+        "day_types": {day_type: [scale(v) for v in hours] for day_type, hours in curve.hours.items()},
+        "sample_size": curve.sample_size,
+    }
+
+
 @app.route("/")
 def index():
     return app.send_static_file("index.html")
@@ -92,6 +115,26 @@ def api_list_rate_schedules():
         [
             {"code": rs.code, "billing_method": rs.billing_method, "voltage_level": rs.voltage_level, "description": rs.description}
             for rs in get_reference().rate_schedules.values()
+        ]
+    )
+
+
+@app.route("/api/load-profile-keys")
+def api_list_load_profile_keys():
+    """รายการคู่ (ประเภทธุรกิจ, รหัสอัตรา) ที่ "มีโปรไฟล์อ้างอิงจริง" อยู่ใน load_profiles.csv
+    เท่านั้น (ไม่รวมแถว DEFAULT/DEFAULT ซึ่งเป็นแค่ค่ากลาง fallback ไม่ใช่ธุรกิจจริง)
+
+    ใช้โดยหน้าพยากรณ์แบบไม่บันทึกข้อมูล เพื่อจำกัดตัวเลือกประเภทธุรกิจ/รหัสอัตราให้เลือกได้
+    เฉพาะคู่ที่ "มีข้อมูลจริงรองรับ" เท่านั้น (ตรงตาม exact match เสมอ) แทนที่จะให้พิมพ์/เลือก
+    ค่าที่ไม่มีข้อมูลจริงมาคู่กัน แล้วได้ผลลัพธ์แบบ fallback (BUSINESS_ONLY/RATE_ONLY) ซึ่งอาจดู
+    เหมือนระบบจับคู่ผิดทั้งที่จริงๆ คือไม่มีข้อมูลของคู่นั้นให้จับคู่แบบตรงเป๊ะได้ตั้งแต่แรก
+    """
+
+    return jsonify(
+        [
+            {"business_type_code": p.business_type_code, "rate_code": p.rate_code, "sample_size": p.sample_size}
+            for p in get_reference().load_profiles
+            if not (p.business_type_code == "DEFAULT" and p.rate_code == "DEFAULT")
         ]
     )
 
@@ -140,6 +183,9 @@ def api_forecast(account_no: str):
                 "demand_kw": result.demand_kw,
                 "energy_kwh": result.energy_kwh,
             },
+            "curve": _curve_response(
+                reference, result.matched_profile.business_type_code, result.matched_profile.rate_code, result.scale_factor
+            ),
         }
     )
 
@@ -212,6 +258,9 @@ def api_forecast_adhoc():
                 "demand_kw": result.demand_kw,
                 "energy_kwh": result.energy_kwh,
             },
+            "curve": _curve_response(
+                reference, result.matched_profile.business_type_code, result.matched_profile.rate_code, result.scale_factor
+            ),
         }
     )
 

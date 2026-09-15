@@ -10,9 +10,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 PERIODS = ("P", "OP", "H")
+
+# วันในสัปดาห์ที่ใช้แยกเส้นโค้งการใช้ไฟฟ้ารายชั่วโมง — "all" คือค่าเฉลี่ยรวมทุกวัน
+# (ตรงกับ amr_mapping.pea_ingest.DAY_TYPE_CODES)
+DAY_TYPES = ("all", "mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 
 @dataclass(frozen=True)
@@ -47,6 +51,25 @@ class LoadProfile:
     billing_method: str
     demand_kw: Dict[str, float]     # กำลังไฟฟ้าสูงสุด {"P": .., "OP": .., "H": ..}
     energy_kwh: Dict[str, float]    # พลังงานไฟฟ้า {"P": .., "OP": .., "H": ..}
+    contract_kva_ref: Optional[float] = None
+    sample_size: int = 0
+    notes: str = ""
+
+    def key(self) -> tuple:
+        return (self.business_type_code, self.rate_code)
+
+
+@dataclass(frozen=True)
+class LoadCurve:
+    """เส้นโค้งกำลังไฟฟ้าเฉลี่ยรายชั่วโมง (kW) ของธุรกิจ + อัตรา คู่หนึ่ง แยกตามวันในสัปดาห์
+
+    ต่างจาก LoadProfile (ยอดรวม/พีคของทั้งคาบ P/OP/H) — ตัวนี้ละเอียดระดับชั่วโมง ใช้แสดง
+    กราฟเส้น "ช่วงเวลาไหนของวันใช้ไฟเยอะ/น้อย" พร้อมเลือกดูแยกตามวันในสัปดาห์ได้
+    """
+
+    business_type_code: str
+    rate_code: str
+    hours: Dict[str, List[Optional[float]]]  # day_type -> [ชม.0..23] (None = ไม่มีข้อมูล)
     contract_kva_ref: Optional[float] = None
     sample_size: int = 0
     notes: str = ""

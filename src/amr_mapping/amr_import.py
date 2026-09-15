@@ -24,12 +24,19 @@ from .loader import (
     ReferenceData,
     load_reference_data,
     save_business_types,
+    save_load_curves,
     save_load_profiles,
     upsert_business_type,
+    upsert_load_curve,
     upsert_load_profile,
 )
-from .models import BusinessType, LoadProfile
-from .pea_ingest import aggregate_interval_readings, average_profiles, parse_interval_report
+from .models import BusinessType, LoadCurve, LoadProfile
+from .pea_ingest import (
+    aggregate_interval_readings,
+    average_profiles,
+    compute_hourly_curve,
+    parse_interval_report,
+)
 
 # โฟลเดอร์เก็บไฟล์ AMR ดิบที่ดาวน์โหลดมาแบบถาวร (ไม่ใช่ temp dir ที่ลบทิ้งหลังเสร็จเหมือนเดิม)
 # อยู่ที่ root ของ repo นี้ — มี .gitignore คุ้มครองแล้ว (amr_downloads/) ไม่มีทางหลุดเข้า
@@ -56,6 +63,7 @@ def _build_profile_from_downloads(
 
     log(f"📊 ประมวลผล {len(downloaded_files)} ไฟล์ ...")
     monthly_profiles = []
+    all_readings = []  # รวม interval readings ของทุกไฟล์ ไว้คำนวณเส้นโค้งรายชั่วโมงด้วย (ดูด้านล่าง)
     for path in downloaded_files:
         try:
             readings = parse_interval_report(path)
@@ -63,6 +71,7 @@ def _build_profile_from_downloads(
                 log(f"⚠️ ไม่มีข้อมูลใน {Path(path).name}")
                 continue
             monthly_profiles.append(aggregate_interval_readings(readings, label=Path(path).name))
+            all_readings.extend(readings)
         except Exception as e:  # noqa: BLE001
             log(f"⚠️ อ่านไฟล์ {Path(path).name} ไม่สำเร็จ: {e}")
 
@@ -87,6 +96,22 @@ def _build_profile_from_downloads(
     updated_profiles = upsert_load_profile(reference.load_profiles, new_profile)
     save_load_profiles(updated_profiles, data_dir / "load_profiles.csv")
     log(f"💾 บันทึกลง {data_dir / 'load_profiles.csv'} แล้ว (key: {business_type_code}, {rate_code})")
+
+    # เส้นโค้งกำลังไฟฟ้าเฉลี่ยรายชั่วโมง (ใช้ raw interval readings ทั้งหมดที่รวมมาจากทุกไฟล์
+    # โดยตรง ไม่ใช่ค่าเฉลี่ยรายเดือน — ละเอียดกว่า P/OP/H ที่เป็นแค่ยอดรวม/พีค ใช้แสดงกราฟว่า
+    # ช่วงเวลาไหนของวันใช้ไฟเยอะ/น้อย แยกตามวันในสัปดาห์ได้)
+    hourly = compute_hourly_curve(all_readings)
+    new_curve = LoadCurve(
+        business_type_code=business_type_code,
+        rate_code=rate_code,
+        hours=hourly,
+        contract_kva_ref=contract_kva,
+        sample_size=agg["n_months"],
+        notes=notes,
+    )
+    updated_curves = upsert_load_curve(reference.load_curves, new_curve)
+    save_load_curves(updated_curves, data_dir / "load_curves.csv")
+    log(f"💾 บันทึกเส้นโค้งรายชั่วโมงลง {data_dir / 'load_curves.csv'} แล้ว")
 
     return new_profile
 

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from .models import BusinessType, Customer, LoadProfile, RateSchedule, PERIODS
+from .models import DAY_TYPES, BusinessType, Customer, LoadCurve, LoadProfile, RateSchedule, PERIODS
 
 DEFAULT_DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "reference"
 
@@ -87,6 +87,90 @@ def _load_load_profiles(path: Path) -> List[LoadProfile]:
                 )
             )
     return profiles
+
+
+_CURVE_HOUR_FIELDNAMES = [f"h{h:02d}" for h in range(24)]
+_LOAD_CURVE_FIELDNAMES = [
+    "business_type_code",
+    "rate_code",
+    "day_type",
+    "contract_kva_ref",
+    "sample_size",
+    "notes",
+] + _CURVE_HOUR_FIELDNAMES
+
+
+def _load_load_curves(path: Path) -> List[LoadCurve]:
+    """โหลด load_curves.csv (เส้นโค้งรายชั่วโมง แยกตามวัน) — ไฟล์นี้เป็นฟีเจอร์เสริมที่เพิ่ม
+    เข้ามาทีหลัง ถ้ายังไม่มีไฟล์ (data dir เก่า) ให้ถือว่าไม่มีข้อมูลเส้นโค้งเลย ไม่ error"""
+
+    if not path.exists():
+        return []
+
+    curves_by_key: Dict[tuple, dict] = {}
+    with path.open(encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            business_type_code = row["business_type_code"].strip()
+            rate_code = row["rate_code"].strip()
+            day_type = row["day_type"].strip()
+            key = (business_type_code, rate_code)
+            entry = curves_by_key.setdefault(
+                key,
+                {
+                    "business_type_code": business_type_code,
+                    "rate_code": rate_code,
+                    "hours": {},
+                    "contract_kva_ref": _to_float(row.get("contract_kva_ref", "")),
+                    "sample_size": int((row.get("sample_size") or "0").strip() or 0),
+                    "notes": row.get("notes", "").strip(),
+                },
+            )
+            entry["hours"][day_type] = [_to_float(row.get(f"h{h:02d}", "")) for h in range(24)]
+
+    return [
+        LoadCurve(
+            business_type_code=e["business_type_code"],
+            rate_code=e["rate_code"],
+            hours=e["hours"],
+            contract_kva_ref=e["contract_kva_ref"],
+            sample_size=e["sample_size"],
+            notes=e["notes"],
+        )
+        for e in curves_by_key.values()
+    ]
+
+
+def save_load_curves(curves: List[LoadCurve], path: Path) -> None:
+    """เขียนรายการ LoadCurve กลับเป็นไฟล์ load_curves.csv (เขียนทับทั้งไฟล์) — 1 curve
+    เขียนเป็นหลายแถว (แถวละ 1 day_type) เท่าจำนวน day_type ที่มีข้อมูลจริงเท่านั้น"""
+
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=_LOAD_CURVE_FIELDNAMES)
+        writer.writeheader()
+        for curve in curves:
+            for day_type in DAY_TYPES:
+                if day_type not in curve.hours:
+                    continue
+                row = {
+                    "business_type_code": curve.business_type_code,
+                    "rate_code": curve.rate_code,
+                    "day_type": day_type,
+                    "contract_kva_ref": "" if curve.contract_kva_ref is None else curve.contract_kva_ref,
+                    "sample_size": curve.sample_size,
+                    "notes": curve.notes,
+                }
+                for h, val in enumerate(curve.hours[day_type]):
+                    row[f"h{h:02d}"] = "" if val is None else val
+                writer.writerow(row)
+
+
+def upsert_load_curve(curves: List[LoadCurve], new_curve: LoadCurve) -> List[LoadCurve]:
+    """แทนที่เส้นโค้งที่มี key (business_type_code, rate_code) ตรงกัน ด้วยเส้นโค้งใหม่
+    หรือเพิ่มต่อท้ายถ้ายังไม่มีคู่นี้อยู่ (คืน list ใหม่ ไม่แก้ของเดิม)"""
+
+    result = [c for c in curves if c.key() != new_curve.key()]
+    result.append(new_curve)
+    return result
 
 
 def _load_customers(path: Path) -> List[Customer]:
@@ -174,6 +258,7 @@ class ReferenceData:
     business_types: Dict[str, BusinessType]
     rate_schedules: Dict[str, RateSchedule]
     load_profiles: List[LoadProfile]
+    load_curves: List[LoadCurve]
     customers: List[Customer]
 
 
@@ -205,5 +290,6 @@ def load_reference_data(data_dir: Optional[Path] = None) -> ReferenceData:
         business_types=_load_business_types(data_dir / "business_types.csv"),
         rate_schedules=_load_rate_schedules(data_dir / "rate_schedules.csv"),
         load_profiles=_load_load_profiles(data_dir / "load_profiles.csv"),
+        load_curves=_load_load_curves(data_dir / "load_curves.csv"),
         customers=list(customers_by_account.values()),
     )

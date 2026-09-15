@@ -10,6 +10,9 @@ from amr_mapping import amr_import
 from amr_mapping.amr_downloader import DownloadResult
 from amr_mapping.loader import load_reference_data
 
+# 01/08/2026 = วันเสาร์, 02/08/2026 = วันอาทิตย์ — ใช้เช็คว่า compute_hourly_curve ทำงานถูกต้อง
+# เวลาถูกเรียกผ่าน pipeline เต็ม (import_amr_for_business/import_amr_auto)
+
 _SYNTHETIC_INTERVAL_HTML = """
 <html><body>
 <table>
@@ -100,6 +103,12 @@ def test_import_amr_for_business_updates_load_profiles(monkeypatch, data_dir):
     # ต้องไม่มี username/password รั่วไหลออกมาใน log
     joined_logs = " ".join(logs)
     assert "test-pass" not in joined_logs
+
+    # ต้องบันทึกเส้นโค้งรายชั่วโมงลง load_curves.csv ด้วย (ไม่ใช่แค่ load_profiles.csv)
+    curve = next(c for c in reference.load_curves if c.key() == ("TESTBIZ", "50"))
+    # ข้อมูล synthetic มีจุดเดียวที่ชม.9 (RATE A 20.00 -> 80 kW) ในวันเสาร์ (01/08/2026)
+    assert curve.hours["sat"][9] == pytest.approx(80.0)
+    assert curve.hours["all"][9] == pytest.approx(80.0)
 
 
 def test_import_amr_for_business_keeps_download_dir_for_reuse(monkeypatch, data_dir, tmp_path):

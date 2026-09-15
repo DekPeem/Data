@@ -19,9 +19,10 @@ commit ไฟล์ดิบเหล่านี้เข้า repository ท�
 
 from __future__ import annotations
 
+import datetime as _dt
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 try:
     from bs4 import BeautifulSoup
@@ -257,6 +258,54 @@ def aggregate_interval_readings(
     demand_kw = {p: round(v * factor, 2) for p, v in peak_interval_kwh.items()}
     energy_kwh = {p: round(v, 2) for p, v in energy_kwh.items()}
     return MonthlyPeriodProfile(month=label, demand_kw=demand_kw, energy_kwh=energy_kwh)
+
+
+# รหัสวันในสัปดาห์ ตาม datetime.weekday() (0 = จันทร์ ... 6 = อาทิตย์) — ใช้เป็น key ของ
+# เส้นโค้งการใช้ไฟฟ้ารายวัน แยกตามวัน (ดู compute_hourly_curve) "all" = เฉลี่ยรวมทุกวัน
+DAY_TYPE_CODES = ("all", "mon", "tue", "wed", "thu", "fri", "sat", "sun")
+_WEEKDAY_TO_CODE = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
+def _parse_interval_timestamp(timestamp: str) -> Optional[_dt.datetime]:
+    """แปลง timestamp ดิบจากรายงานราย 15 นาที (เช่น "01/08/2026 09.15") เป็น datetime
+
+    รูปแบบ PEA ใช้ "." คั่นชั่วโมงกับนาที (ไม่ใช่ ":") — คืนค่า None ถ้า parse ไม่ได้
+    (กันไฟล์แปลกๆ ไม่ให้ทำให้ทั้งการคำนวณพัง แค่ข้ามจุดข้อมูลนั้นไป)
+    """
+
+    try:
+        return _dt.datetime.strptime(timestamp.strip(), "%d/%m/%Y %H.%M")
+    except (ValueError, AttributeError):
+        return None
+
+
+def compute_hourly_curve(
+    readings: List[IntervalReading], interval_minutes: float = 15
+) -> Dict[str, List[Optional[float]]]:
+    """คำนวณเส้นโค้งกำลังไฟฟ้าเฉลี่ยรายชั่วโมง (kW) จาก interval readings ดิบ แยกตามวันใน
+    สัปดาห์ (ใช้ดูว่าช่วงเวลาไหนของวันใช้ไฟเยอะ/น้อย ต่างจาก P/OP/H ที่เป็นแค่ยอดรวม/พีคของ
+    ทั้งคาบ) — ค่า kwh แต่ละจุดถูกแปลงเป็นกำลังไฟฟ้าเฉลี่ย (kW) ของช่วงนั้นก่อน (kwh x 60/
+    interval_minutes) แล้วนำไปเฉลี่ยรวมกับจุดอื่นๆ ที่ตรงชั่วโมงเดียวกัน (ข้ามหลายวัน/หลายไฟล์)
+
+    คืนค่า dict: {"all": [ชม.0..23], "mon": [...], "tue": [...], ..., "sun": [...]}
+    ชั่วโมงที่ไม่มีข้อมูลเลยในกลุ่มนั้นเป็น None (เช่น "mon" ถ้าช่วงที่ดาวน์โหลดไม่มีวันจันทร์เลย)
+    """
+
+    factor = 60.0 / interval_minutes
+    buckets: Dict[str, List[List[float]]] = {code: [[] for _ in range(24)] for code in DAY_TYPE_CODES}
+
+    for r in readings:
+        dt = _parse_interval_timestamp(r.timestamp)
+        if dt is None:
+            continue
+        power_kw = r.kwh * factor
+        buckets["all"][dt.hour].append(power_kw)
+        buckets[_WEEKDAY_TO_CODE[dt.weekday()]][dt.hour].append(power_kw)
+
+    return {
+        code: [round(sum(vals) / len(vals), 2) if vals else None for vals in hours]
+        for code, hours in buckets.items()
+    }
 
 
 def compute_meter_multiplier(ct_ratio: str, vt_ratio: str) -> float:

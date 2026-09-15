@@ -6,7 +6,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from amr_mapping import Customer, MatchLevel, estimate_customer_load, load_reference_data
-from amr_mapping.mapping import find_load_profile
+from amr_mapping.mapping import find_load_curve, find_load_profile
+from amr_mapping.models import LoadCurve
 
 
 @pytest.fixture(scope="module")
@@ -79,3 +80,18 @@ def test_has_amr_raises(reference):
     customer = Customer(account_no="X", name="มี AMR อยู่แล้ว", has_amr=True)
     with pytest.raises(ValueError):
         estimate_customer_load(customer, reference)
+
+
+def test_find_load_curve_exact_match_only_no_fallback():
+    curves = [
+        LoadCurve(business_type_code="63201", rate_code="50", hours={"all": [1.0] * 24}),
+        LoadCurve(business_type_code="DEFAULT", rate_code="DEFAULT", hours={"all": [0.0] * 24}),
+    ]
+
+    found = find_load_curve(curves, "63201", "50")
+    assert found is not None
+    assert found.hours["all"][0] == 1.0
+
+    # ต่างจาก find_load_profile — ไม่มี fallback tier ใดๆ ทั้งสิ้น ไม่ตกไปที่ DEFAULT เอง
+    assert find_load_curve(curves, "63201", "9999") is None
+    assert find_load_curve(curves, "NOPE", "50") is None

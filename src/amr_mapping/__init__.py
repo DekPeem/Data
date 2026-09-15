@@ -11,6 +11,8 @@ from .models import (
     BusinessType,
     RateSchedule,
     LoadProfile,
+    LoadCurve,
+    DAY_TYPES,
     Customer,
     MatchLevel,
     MatchResult,
@@ -21,15 +23,19 @@ from .loader import (
     load_reference_data,
     save_business_types,
     save_load_profiles,
+    save_load_curves,
     upsert_business_type,
     upsert_load_profile,
+    upsert_load_curve,
 )
-from .mapping import find_load_profile, estimate_customer_load
+from .mapping import find_load_profile, find_load_curve, estimate_customer_load
 
 __all__ = [
     "BusinessType",
     "RateSchedule",
     "LoadProfile",
+    "LoadCurve",
+    "DAY_TYPES",
     "Customer",
     "MatchLevel",
     "MatchResult",
@@ -38,8 +44,11 @@ __all__ = [
     "load_reference_data",
     "save_load_profiles",
     "upsert_load_profile",
+    "save_load_curves",
+    "upsert_load_curve",
     "save_business_types",
     "upsert_business_type",
     "find_load_profile",
+    "find_load_curve",
     "estimate_customer_load",
 ]

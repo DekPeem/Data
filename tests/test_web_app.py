@@ -1,5 +1,6 @@
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -50,11 +51,79 @@ def test_forecast_rate_only_fallback(client):
     assert len(data["match"]["warnings"]) > 0
 
 
+def test_forecast_curve_not_available_by_default(client):
+    """data/reference/load_curves.csv ที่ commit ไว้ยังไม่มีข้อมูลจริง (ต้องนำเข้า AMR ใหม่
+    ก่อนถึงจะมี) — curve.available ต้องเป็น False ไม่ใช่ error"""
+
+    res = client.get("/api/forecast/DEMO-HOTEL-001")
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["curve"] == {"available": False, "day_types": {}, "sample_size": 0}
+
+
+def test_forecast_curve_available_and_scaled_when_present(client, monkeypatch):
+    from amr_mapping.models import LoadCurve
+
+    original = app_module.load_reference_data()
+    curve = LoadCurve(
+        business_type_code="63201",
+        rate_code="50",
+        hours={"all": [10.0 if h == 9 else None for h in range(24)]},
+        contract_kva_ref=2000.0,  # เท่ากับ contract_kva ของ DEMO-HOTEL-001 -> scale_factor เป็น 1.0
+        sample_size=3,
+    )
+    patched = replace(original, load_curves=[curve])
+    monkeypatch.setattr(app_module, "get_reference", lambda: patched)
+
+    res = client.get("/api/forecast/DEMO-HOTEL-001")
+    data = res.get_json()
+    assert data["curve"]["available"] is True
+    assert data["curve"]["sample_size"] == 3
+    assert data["curve"]["day_types"]["all"][9] == pytest.approx(10.0)
+    assert data["curve"]["day_types"]["all"][0] is None
+
+
 def test_forecast_not_found(client):
     res = client.get("/api/forecast/NOT-A-REAL-ACCOUNT")
     assert res.status_code == 404
     data = res.get_json()
     assert data["error"] == "not_found"
+
+
+def test_list_load_profile_keys_excludes_default_fallback_row(client):
+    res = client.get("/api/load-profile-keys")
+    assert res.status_code == 200
+    data = res.get_json()
+    assert {"business_type_code": "63201", "rate_code": "50", "sample_size": 12} in data
+    # แถว DEFAULT/DEFAULT เป็นแค่ fallback ไม่ใช่ธุรกิจจริง ต้องไม่อยู่ในรายการนี้
+    assert not any(k["business_type_code"] == "DEFAULT" and k["rate_code"] == "DEFAULT" for k in data)
+
+
+def test_forecast_adhoc_exact_match(client):
+    res = client.post("/api/forecast-adhoc", json={"business_type_code": "63201", "rate_code": "50"})
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["match"]["level"] == "exact_business_and_rate"
+    assert "customer" not in data  # ไม่มี account_no/name จริงให้คืน — ไม่ควรมี key นี้เลย
+    assert data["curve"] == {"available": False, "day_types": {}, "sample_size": 0}
+
+
+def test_forecast_adhoc_missing_both_fields(client):
+    res = client.post("/api/forecast-adhoc", json={})
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+
+def test_forecast_adhoc_never_receives_a_name_field(client):
+    """ยืนยันว่า endpoint นี้ใช้งานได้ปกติแม้ไม่ส่ง name มาเลย (ไม่มี parameter นี้อยู่จริง) —
+    ส่ง name มาด้วยก็ต้องถูกเพิกเฉย ไม่มีทางไปโผล่ในคำตอบหรือถูกใช้คำนวณอะไรทั้งสิ้น"""
+
+    res = client.post(
+        "/api/forecast-adhoc",
+        json={"business_type_code": "63201", "rate_code": "50", "name": "ชื่อบริษัทที่ไม่ควรถูกใช้เลย"},
+    )
+    assert res.status_code == 200
+    assert "ชื่อบริษัทที่ไม่ควรถูกใช้เลย" not in res.get_data(as_text=True)
 
 
 def test_admin_page_serves_html(client):

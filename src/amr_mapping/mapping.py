@@ -16,7 +16,7 @@ from __future__ import annotations
 from typing import Iterable, List, Optional
 
 from .loader import ReferenceData
-from .models import Customer, ForecastResult, LoadProfile, MatchLevel, MatchResult, PERIODS
+from .models import Customer, ForecastResult, LoadCurve, LoadProfile, MatchLevel, MatchResult, PERIODS
 
 DEFAULT_BUSINESS_CODE = "DEFAULT"
 DEFAULT_RATE_CODE = "DEFAULT"
@@ -61,6 +61,20 @@ def find_load_profile(
     raise LookupError(
         "ไม่พบโปรไฟล์ที่ตรงกัน และไม่มีค่า DEFAULT ใน load_profiles.csv "
         "(ต้องมีแถวที่ business_type_code=DEFAULT, rate_code=DEFAULT เป็นอย่างน้อย)"
+    )
+
+
+def find_load_curve(curves: Iterable[LoadCurve], business_type_code: str, rate_code: str) -> Optional[LoadCurve]:
+    """หาเส้นโค้งรายชั่วโมงของ (business_type_code, rate_code) คู่หนึ่งแบบ exact เท่านั้น
+
+    ไม่ต้องทำ fallback tier แบบ find_load_profile เพราะฟังก์ชันนี้ถูกเรียกด้วยคู่ค่าที่
+    find_load_profile จับคู่ (แก้ fallback) ให้แล้วเสมอ (ดู web/app.py) — คืน None ถ้ายังไม่มี
+    ข้อมูลเส้นโค้งของคู่นี้เลย (เช่น ยังไม่เคยนำเข้า AMR จริงที่มีข้อมูลราย 15 นาทีมาก่อน)
+    """
+
+    return next(
+        (c for c in curves if c.business_type_code == business_type_code and c.rate_code == rate_code),
+        None,
     )
 
 

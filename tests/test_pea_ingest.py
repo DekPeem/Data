@@ -10,6 +10,7 @@ from amr_mapping.pea_ingest import (
     MonthlyRegisterReading,
     aggregate_interval_readings,
     average_profiles,
+    compute_hourly_curve,
     compute_meter_multiplier,
     compute_monthly_profiles,
     parse_interval_report,
@@ -108,6 +109,36 @@ def test_parse_interval_report(tmp_path):
     assert IntervalReading(timestamp="01/08/2026 09.30", period="P", kwh=30.0) in readings
     assert IntervalReading(timestamp="01/08/2026 22.15", period="OP", kwh=5.0) in readings
     assert IntervalReading(timestamp="01/08/2026 00.15", period="H", kwh=10.0) in readings
+
+
+def test_compute_hourly_curve_buckets_by_hour_and_weekday():
+    # 01/08/2026 = วันเสาร์ (sat), 03/08/2026 = วันจันทร์ (mon)
+    readings = [
+        IntervalReading("01/08/2026 09.15", "H", 10.0),  # เสาร์ ชม.9 -> 40 kW
+        IntervalReading("01/08/2026 09.30", "H", 20.0),  # เสาร์ ชม.9 -> 80 kW
+        IntervalReading("03/08/2026 09.15", "P", 5.0),  # จันทร์ ชม.9 -> 20 kW
+    ]
+
+    curve = compute_hourly_curve(readings, interval_minutes=15)
+
+    # "all" ต้องเฉลี่ยรวมทุกวัน: (40+80+20)/3 = 46.666... -> ปัด 2 ตำแหน่ง
+    assert curve["all"][9] == pytest.approx(46.67)
+    # "sat" เฉลี่ยเฉพาะของวันเสาร์: (40+80)/2 = 60
+    assert curve["sat"][9] == pytest.approx(60.0)
+    # "mon" มีแค่จุดเดียว = 20
+    assert curve["mon"][9] == pytest.approx(20.0)
+    # ชั่วโมงอื่นที่ไม่มีข้อมูลเลยต้องเป็น None ไม่ใช่ 0
+    assert curve["all"][0] is None
+    assert curve["tue"][9] is None
+    # โครงสร้างต้องมีครบทุก day_type ที่นิยามไว้ (8 กลุ่ม x 24 ชม.)
+    assert set(curve.keys()) == {"all", "mon", "tue", "wed", "thu", "fri", "sat", "sun"}
+    assert all(len(hours) == 24 for hours in curve.values())
+
+
+def test_compute_hourly_curve_skips_unparseable_timestamps():
+    readings = [IntervalReading("ไม่ใช่วันที่", "P", 100.0)]
+    curve = compute_hourly_curve(readings)
+    assert all(v is None for v in curve["all"])
 
 
 def test_aggregate_interval_readings():

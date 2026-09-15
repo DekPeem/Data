@@ -60,12 +60,13 @@
           <div class="form-field">
             <label for="f-business-type">ประเภทธุรกิจ</label>
             <select id="f-business-type"></select>
+            <div class="hint">แสดงเฉพาะประเภทที่มีโปรไฟล์อ้างอิงจริงรองรับแล้วเท่านั้น</div>
           </div>
 
           <div class="form-field">
             <label for="f-rate-code">รหัสอัตรา</label>
-            <input id="f-rate-code" list="rate-code-list" type="text" placeholder="เช่น 50">
-            <datalist id="rate-code-list"></datalist>
+            <select id="f-rate-code"></select>
+            <div class="hint">ตัวเลือกจะเปลี่ยนตามประเภทธุรกิจที่เลือก — มีเฉพาะคู่ที่มีข้อมูลจริงรองรับ (จับคู่ตรง exact match เสมอ)</div>
           </div>
 
           <div class="form-field">

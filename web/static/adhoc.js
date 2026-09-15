@@ -7,8 +7,7 @@ const PERIOD_TH = { P: "Peak (P)", OP: "Off-Peak (OP)", H: "Holiday (H)" };
 
 const nameInput = document.getElementById("f-name");
 const businessTypeSelect = document.getElementById("f-business-type");
-const rateCodeInput = document.getElementById("f-rate-code");
-const rateCodeList = document.getElementById("rate-code-list");
+const rateCodeSelect = document.getElementById("f-rate-code");
 const kvaInput = document.getElementById("f-kva");
 const submitBtn = document.getElementById("submit-btn");
 const formHint = document.getElementById("form-hint");
@@ -34,27 +33,47 @@ function iconBuilding(color) {
   </svg>`;
 }
 
-async function loadBusinessTypes() {
+// ── ประเภทธุรกิจ/รหัสอัตราที่เลือกได้ในหน้านี้ ต้อง "มีโปรไฟล์อ้างอิงจริงรองรับ" เท่านั้น
+//    (มาจาก /api/load-profile-keys ซึ่งอ่านตรงจาก load_profiles.csv) — กันไม่ให้เลือกคู่ที่
+//    ไม่มีข้อมูลจริงมาจับกัน แล้วได้ผลแบบ fallback (BUSINESS_ONLY/RATE_ONLY) ที่ดูเหมือนจับคู่
+//    ผิดพลาดทั้งที่จริงๆ คือยังไม่มีข้อมูลของคู่นั้นให้จับแบบตรงเป๊ะได้ตั้งแต่แรก ──
+
+let PROFILE_KEYS = []; // [{business_type_code, rate_code, sample_size}, ...]
+let BUSINESS_TYPE_NAMES = {}; // code -> name_th
+
+async function loadBusinessTypesAndKeys() {
   try {
-    const res = await fetch("/api/business-types");
-    const types = await res.json();
+    const [typesRes, keysRes] = await Promise.all([fetch("/api/business-types"), fetch("/api/load-profile-keys")]);
+    const types = await typesRes.json();
+    PROFILE_KEYS = await keysRes.json();
+    BUSINESS_TYPE_NAMES = Object.fromEntries(types.map((t) => [t.code, t.name_th]));
+
+    const businessCodesWithData = [...new Set(PROFILE_KEYS.map((k) => k.business_type_code))];
     businessTypeSelect.innerHTML =
       `<option value="">-- ไม่ระบุ (จับคู่จากอัตราอย่างเดียว) --</option>` +
-      types.map((t) => `<option value="${t.code}">${t.name_th} · ${t.code}</option>`).join("");
+      businessCodesWithData
+        .map((code) => `<option value="${code}">${BUSINESS_TYPE_NAMES[code] || code} · ${code}</option>`)
+        .join("");
+
+    updateRateCodeOptions();
   } catch (err) {
-    console.warn("โหลดรายชื่อประเภทธุรกิจไม่สำเร็จ", err);
+    console.warn("โหลดประเภทธุรกิจ/รหัสอัตราที่มีข้อมูลจริงไม่สำเร็จ", err);
   }
 }
 
-async function loadRateSchedules() {
-  try {
-    const res = await fetch("/api/rate-schedules");
-    const rates = await res.json();
-    rateCodeList.innerHTML = rates.map((r) => `<option value="${r.code}">${r.description || ""}</option>`).join("");
-  } catch (err) {
-    console.warn("โหลดรายชื่อประเภทอัตราไม่สำเร็จ", err);
+function updateRateCodeOptions() {
+  const businessTypeCode = businessTypeSelect.value;
+  const relevant = businessTypeCode ? PROFILE_KEYS.filter((k) => k.business_type_code === businessTypeCode) : PROFILE_KEYS;
+  const rateCodes = [...new Set(relevant.map((k) => k.rate_code))];
+
+  const previousValue = rateCodeSelect.value;
+  rateCodeSelect.innerHTML = rateCodes.map((code) => `<option value="${code}">${code}</option>`).join("");
+  if (rateCodes.includes(previousValue)) {
+    rateCodeSelect.value = previousValue;
   }
 }
+
+businessTypeSelect.addEventListener("change", updateRateCodeOptions);
 
 function renderBarChart(title, values, unit) {
   const max = Math.max(...Object.values(values), 1);
@@ -76,40 +95,104 @@ function renderBarChart(title, values, unit) {
     </div>`;
 }
 
-function renderLineChart(title, values, unit) {
-  const periods = ["P", "OP", "H"];
-  const max = Math.max(...periods.map((p) => values[p]), 1);
-  const width = 280;
-  const height = 170;
-  const padX = 34;
-  const padY = 28;
-  const stepX = (width - padX * 2) / (periods.length - 1);
+// ── กราฟเส้น "การใช้ไฟฟ้ารายชั่วโมงใน 1 วัน" แยกดูตามวันในสัปดาห์ได้ (จันทร์-อาทิตย์ หรือ
+//    เฉลี่ยทั้งเดือน) พร้อมชี้ช่วง Peak (09:00-22:00 วันทำการ) บนกราฟ ──
 
-  const points = periods.map((period, i) => {
-    const x = padX + stepX * i;
-    const y = padY + (1 - values[period] / max) * (height - padY * 2 - 12);
-    return { x, y, period, value: values[period] };
-  });
-  const pointsAttr = points.map((pt) => `${pt.x.toFixed(1)},${pt.y.toFixed(1)}`).join(" ");
+const DAY_TYPE_TH = {
+  all: "เฉลี่ยทั้งเดือน",
+  mon: "จันทร์",
+  tue: "อังคาร",
+  wed: "พุธ",
+  thu: "พฤหัสบดี",
+  fri: "ศุกร์",
+  sat: "เสาร์",
+  sun: "อาทิตย์",
+};
+const DAY_TYPE_ORDER = ["all", "mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+const WEEKDAY_DAY_TYPES = new Set(["all", "mon", "tue", "wed", "thu", "fri"]);
 
-  const dots = points
+function renderDailyCurveSVG(hours, dayType) {
+  const width = 640;
+  const height = 220;
+  const padX = 40;
+  const padY = 30;
+  const chartW = width - padX * 2;
+  const chartH = height - padY * 2 - 16;
+  const hourW = chartW / 24;
+  const hourX = (h) => padX + hourW * h;
+
+  const known = hours.filter((v) => v !== null && v !== undefined);
+  if (!known.length) {
+    return `<div style="padding:36px 0;text-align:center;color:#8996ab;font-size:13px;">ไม่มีข้อมูลสำหรับวันนี้ในช่วงที่นำเข้า AMR ไว้</div>`;
+  }
+  const max = Math.max(...known, 1);
+
+  const peakRect = WEEKDAY_DAY_TYPES.has(dayType)
+    ? `<rect x="${hourX(9).toFixed(1)}" y="${padY}" width="${(hourX(22) - hourX(9)).toFixed(1)}" height="${chartH.toFixed(1)}" fill="#2a78d6" opacity="0.08"/>
+       <text x="${((hourX(9) + hourX(22)) / 2).toFixed(1)}" y="${padY - 10}" text-anchor="middle" font-size="11" font-weight="700" fill="#184f95">ช่วง Peak (09:00-22:00)</text>`
+    : "";
+
+  const points = hours
+    .map((v, h) => (v === null || v === undefined ? null : { x: hourX(h) + hourW / 2, y: padY + (1 - v / max) * chartH, v }))
+    .filter(Boolean);
+
+  const polyline =
+    points.length > 1
+      ? `<polyline points="${points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")}" fill="none" stroke="#2a78d6" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`
+      : "";
+  const dots = points.map((p) => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3" fill="#2a78d6"/>`).join("");
+
+  const hourLabels = [0, 3, 6, 9, 12, 15, 18, 21]
     .map(
-      (pt) => `
-      <text x="${pt.x.toFixed(1)}" y="${(pt.y - 10).toFixed(1)}" text-anchor="middle" font-size="11" font-weight="700" fill="#0f1b2d">${formatNumber(pt.value, unit === "kWh" ? 0 : 2)}</text>
-      <circle cx="${pt.x.toFixed(1)}" cy="${pt.y.toFixed(1)}" r="4.5" fill="${PERIOD_COLOR[pt.period]}" stroke="#ffffff" stroke-width="2"/>
-      <text x="${pt.x.toFixed(1)}" y="${height - 6}" text-anchor="middle" font-size="12" fill="#8996ab">${pt.period}</text>`
+      (h) =>
+        `<text x="${(hourX(h) + hourW / 2).toFixed(1)}" y="${height - 4}" text-anchor="middle" font-size="11" fill="#8996ab">${String(h).padStart(2, "0")}:00</text>`
     )
     .join("");
+  const baseline = `<line x1="${padX}" y1="${(padY + chartH).toFixed(1)}" x2="${width - padX}" y2="${(padY + chartH).toFixed(1)}" stroke="#e1e0d9" stroke-width="1"/>`;
 
   return `
-    <div class="card chart-card">
-      <div class="chart-title">${title}</div>
-      <svg viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;" preserveAspectRatio="xMidYMid meet">
-        <line x1="${padX}" y1="${height - 18}" x2="${width - padX}" y2="${height - 18}" stroke="#e1e0d9" stroke-width="1"/>
-        <polyline points="${pointsAttr}" fill="none" stroke="#2a78d6" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
-        ${dots}
-      </svg>
-    </div>`;
+    <svg viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;" preserveAspectRatio="xMidYMid meet">
+      ${peakRect}${baseline}${polyline}${dots}${hourLabels}
+    </svg>`;
+}
+
+function initDailyCurveSection(container, curveData) {
+  if (!curveData || !curveData.available) {
+    container.innerHTML = `
+      <div class="card" style="padding:24px;color:#8996ab;font-size:13px;">
+        ยังไม่มีข้อมูลกราฟการใช้ไฟฟ้ารายชั่วโมงสำหรับกลุ่มนี้ — ต้องนำเข้า AMR จริงที่มีข้อมูลราย 15 นาทีก่อน (ผ่านหน้า <a href="/admin">นำเข้า AMR (Admin)</a>)
+      </div>`;
+    return;
+  }
+
+  const availableDayTypes = DAY_TYPE_ORDER.filter((d) => curveData.day_types[d]);
+  let selected = availableDayTypes.includes("all") ? "all" : availableDayTypes[0];
+
+  function render() {
+    const buttons = availableDayTypes
+      .map((d) => `<button type="button" data-day="${d}" class="day-type-btn${d === selected ? " active" : ""}">${DAY_TYPE_TH[d]}</button>`)
+      .join("");
+    const caption = WEEKDAY_DAY_TYPES.has(selected)
+      ? `<div class="chart-caption">แถบสีฟ้าอ่อนคือช่วง Peak (วันทำการ 09:00-22:00) — นอกแถบเป็น Off-Peak</div>`
+      : `<div class="chart-caption">วันหยุดสุดสัปดาห์ — ทั้งวันเป็นอัตรา Holiday (H) ไม่มีช่วง Peak</div>`;
+
+    container.innerHTML = `
+      <div class="card chart-card">
+        <div class="chart-title">การใช้ไฟฟ้าเฉลี่ยรายชั่วโมงใน 1 วัน (kW)</div>
+        <div class="day-type-row">${buttons}</div>
+        ${renderDailyCurveSVG(curveData.day_types[selected] || [], selected)}
+        ${caption}
+      </div>`;
+
+    container.querySelectorAll(".day-type-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        selected = btn.dataset.day;
+        render();
+      });
+    });
+  }
+
+  render();
 }
 
 function renderStatTiles(demand, energy) {
@@ -200,11 +283,9 @@ function renderResult(data, displayName, typedBusinessTypeCode, typedRateCode, t
         ${renderBarChart("กำลังไฟฟ้าสูงสุด (kW)", f.demand_kw, "kW")}
         ${renderBarChart("พลังงานไฟฟ้า (kWh / เดือน)", f.energy_kwh, "kWh")}
       </div>
-      <div class="charts-grid" style="margin-top:16px;">
-        ${renderLineChart("แนวโน้มกำลังไฟฟ้าสูงสุด (kW)", f.demand_kw, "kW")}
-        ${renderLineChart("แนวโน้มพลังงานไฟฟ้า (kWh / เดือน)", f.energy_kwh, "kWh")}
-      </div>
     </div>
+
+    <div id="daily-curve-root" style="margin-top:4px;"></div>
 
     <div class="disclaimer">
       ${iconInfo("#55647a")}
@@ -213,13 +294,15 @@ function renderResult(data, displayName, typedBusinessTypeCode, typedRateCode, t
   `;
 
   resultArea.style.display = "flex";
+
+  initDailyCurveSection(document.getElementById("daily-curve-root"), data.curve);
 }
 
 async function runForecast() {
   formHint.textContent = "";
   const displayName = nameInput.value.trim(); // ใช้แสดงผลเท่านั้น — ไม่ส่งไป server
   const businessTypeCode = businessTypeSelect.value.trim();
-  const rateCode = rateCodeInput.value.trim();
+  const rateCode = rateCodeSelect.value.trim();
   const kvaRaw = kvaInput.value.trim();
 
   if (!businessTypeCode && !rateCode) {
@@ -256,5 +339,4 @@ async function runForecast() {
 
 submitBtn.addEventListener("click", runForecast);
 
-loadBusinessTypes();
-loadRateSchedules();
+loadBusinessTypesAndKeys();
