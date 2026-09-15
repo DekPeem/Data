@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from amr_mapping import Customer, MatchLevel, estimate_customer_load, load_reference_data
 from amr_mapping.mapping import find_load_curve, find_load_profile
-from amr_mapping.models import LoadCurve
+from amr_mapping.models import BusinessType, LoadCurve, LoadProfile
 
 
 @pytest.fixture(scope="module")
@@ -80,6 +80,72 @@ def test_has_amr_raises(reference):
     customer = Customer(account_no="X", name="มี AMR อยู่แล้ว", has_amr=True)
     with pytest.raises(ValueError):
         estimate_customer_load(customer, reference)
+
+
+def test_find_load_profile_falls_back_to_same_tsic_division():
+    """ไม่มีโปรไฟล์ของ "17012" ตรงๆ เลย แต่มีโปรไฟล์ของ "17011" ซึ่งอยู่ division "17"
+    เดียวกัน (ทั้งคู่ระบุไว้ใน business_types) — ต้องได้ DIVISION_ONLY แทนที่จะตกไป DEFAULT"""
+
+    business_types = {
+        "17011": BusinessType(code="17011", name_th="ผลิตเยื่อกระดาษ", category="paper", division_code="17"),
+        "17012": BusinessType(code="17012", name_th="ผลิตกระดาษแข็ง", category="paper", division_code="17"),
+    }
+    profiles = [
+        LoadProfile(
+            business_type_code="17011", rate_code="40", billing_method="TOU",
+            demand_kw={"P": 1, "OP": 1, "H": 1}, energy_kwh={"P": 1, "OP": 1, "H": 1},
+        ),
+        LoadProfile(
+            business_type_code="DEFAULT", rate_code="DEFAULT", billing_method="TOU",
+            demand_kw={"P": 0, "OP": 0, "H": 0}, energy_kwh={"P": 0, "OP": 0, "H": 0},
+        ),
+    ]
+
+    match = find_load_profile(profiles, business_type_code="17012", rate_code="40", business_types=business_types)
+    assert match.level == MatchLevel.DIVISION_ONLY
+    assert match.profile.business_type_code == "17011"
+
+
+def test_find_load_profile_division_fallback_requires_business_types_dict():
+    """ถ้าไม่ส่ง business_types มาเลย ต้องข้ามชั้น DIVISION_ONLY ไปตกที่ DEFAULT ตามปกติ
+    (backward compatible กับโค้ดเก่าที่ยังไม่รู้จักพารามิเตอร์นี้)"""
+
+    profiles = [
+        LoadProfile(
+            business_type_code="17011", rate_code="40", billing_method="TOU",
+            demand_kw={"P": 1, "OP": 1, "H": 1}, energy_kwh={"P": 1, "OP": 1, "H": 1},
+        ),
+        LoadProfile(
+            business_type_code="DEFAULT", rate_code="DEFAULT", billing_method="TOU",
+            demand_kw={"P": 0, "OP": 0, "H": 0}, energy_kwh={"P": 0, "OP": 0, "H": 0},
+        ),
+    ]
+
+    match = find_load_profile(profiles, business_type_code="17012", rate_code="999")
+    assert match.level == MatchLevel.DEFAULT
+
+
+def test_find_load_profile_division_fallback_requires_known_division_on_target():
+    """ถ้า business type เป้าหมายเองไม่ทราบ division_code (ยังไม่ตรวจสอบ) ต้องข้ามชั้น
+    DIVISION_ONLY ไปเลย ไม่เดาสุ่ม"""
+
+    business_types = {
+        "17011": BusinessType(code="17011", name_th="ผลิตเยื่อกระดาษ", category="paper", division_code="17"),
+        "99999": BusinessType(code="99999", name_th="ยังไม่ตรวจสอบ", category="unverified"),  # ไม่มี division_code
+    }
+    profiles = [
+        LoadProfile(
+            business_type_code="17011", rate_code="40", billing_method="TOU",
+            demand_kw={"P": 1, "OP": 1, "H": 1}, energy_kwh={"P": 1, "OP": 1, "H": 1},
+        ),
+        LoadProfile(
+            business_type_code="DEFAULT", rate_code="DEFAULT", billing_method="TOU",
+            demand_kw={"P": 0, "OP": 0, "H": 0}, energy_kwh={"P": 0, "OP": 0, "H": 0},
+        ),
+    ]
+
+    match = find_load_profile(profiles, business_type_code="99999", rate_code="999", business_types=business_types)
+    assert match.level == MatchLevel.DEFAULT
 
 
 def test_find_load_curve_exact_match_only_no_fallback():

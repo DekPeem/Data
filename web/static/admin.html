@@ -136,6 +136,30 @@
         <div id="job-result"></div>
       </div>
 
+      <div class="card" style="padding: 28px; display: flex; flex-direction: column; gap: 16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+          <div>
+            <div style="font-size: 15px; font-weight: 700;">หมวดหมู่ธุรกิจทั้งหมดในระบบ</div>
+            <div class="hint">สรุปทุกประเภทธุรกิจใน business_types.csv พร้อมสถานะ TSIC (Section/Division) และโปรไฟล์อ้างอิงที่มี — อัปเดตอัตโนมัติทุกครั้งที่นำเข้า AMR ใหม่</div>
+          </div>
+          <button type="button" id="business-types-refresh-btn" class="day-type-btn">🔄 รีเฟรช</button>
+        </div>
+        <div style="overflow-x:auto;">
+          <table id="business-types-table" style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead>
+              <tr style="text-align:left;border-bottom:2px solid rgba(15,23,42,0.1);">
+                <th style="padding:8px 10px;">รหัส</th>
+                <th style="padding:8px 10px;">ชื่อประเภทธุรกิจ</th>
+                <th style="padding:8px 10px;">Section (TSIC)</th>
+                <th style="padding:8px 10px;">Division (TSIC)</th>
+                <th style="padding:8px 10px;">โปรไฟล์อ้างอิงที่มี (รหัสอัตรา · จำนวนตัวอย่าง)</th>
+              </tr>
+            </thead>
+            <tbody id="business-types-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
     </main>
   </div>
 

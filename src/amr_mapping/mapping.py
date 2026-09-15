@@ -3,8 +3,12 @@
 ลำดับความสำคัญของการจับคู่ (จากแม่นยำสุดไปหาประมาณการสุด):
     1. EXACT           ตรงทั้งประเภทธุรกิจ และประเภทอัตรา
     2. BUSINESS_ONLY   ตรงประเภทธุรกิจ แต่ไม่ตรงอัตรา (หรือไม่ทราบอัตรา)
-    3. RATE_ONLY       ไม่ทราบ/ไม่ตรงประเภทธุรกิจ แต่ตรงประเภทอัตรา
-    4. DEFAULT         ไม่พบข้อมูลที่ตรงกันเลย ใช้ค่ากลาง (business_type_code == "DEFAULT")
+    3. DIVISION_ONLY   ไม่มีโปรไฟล์ของธุรกิจนี้ตรงๆ แต่มีโปรไฟล์ของธุรกิจ "อื่น" ใน TSIC
+                       division เดียวกัน (ต้องทราบ division ของทั้งสองฝั่งจาก business_types.csv)
+                       — เช่น ยังไม่มีโปรไฟล์ AMR จริงของธุรกิจนี้ แต่มีของธุรกิจอื่นในกลุ่ม
+                       อุตสาหกรรมเดียวกัน (เช่น การผลิตกระดาษ) ก็ยังดีกว่าตกไปที่ DEFAULT เปล่าๆ
+    4. RATE_ONLY       ไม่ทราบ/ไม่ตรงประเภทธุรกิจ แต่ตรงประเภทอัตรา
+    5. DEFAULT         ไม่พบข้อมูลที่ตรงกันเลย ใช้ค่ากลาง (business_type_code == "DEFAULT")
 
 เมื่อจับคู่โปรไฟล์ได้แล้ว จะปรับสเกลตามขนาดสัญญา (KVA) ของลูกค้าเทียบกับ
 KVA อ้างอิงของโปรไฟล์ (ถ้าทราบทั้งคู่) เพื่อไม่ให้ยกค่าดิบมาใช้ตรงๆ
@@ -13,10 +17,10 @@ KVA อ้างอิงของโปรไฟล์ (ถ้าทราบ�
 
 from __future__ import annotations
 
-from typing import Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 from .loader import ReferenceData
-from .models import Customer, ForecastResult, LoadCurve, LoadProfile, MatchLevel, MatchResult, PERIODS
+from .models import BusinessType, Customer, ForecastResult, LoadCurve, LoadProfile, MatchLevel, MatchResult, PERIODS
 
 DEFAULT_BUSINESS_CODE = "DEFAULT"
 DEFAULT_RATE_CODE = "DEFAULT"
@@ -26,8 +30,13 @@ def find_load_profile(
     profiles: Iterable[LoadProfile],
     business_type_code: Optional[str] = None,
     rate_code: Optional[str] = None,
+    business_types: Optional[Dict[str, BusinessType]] = None,
 ) -> MatchResult:
-    """จับคู่โปรไฟล์ที่เหมาะสมที่สุดตามลำดับความสำคัญ (ดู docstring ของโมดูล)"""
+    """จับคู่โปรไฟล์ที่เหมาะสมที่สุดตามลำดับความสำคัญ (ดู docstring ของโมดูล)
+
+    business_types (ถ้าระบุ) ใช้สำหรับชั้น DIVISION_ONLY เท่านั้น — เป็น dict เดียวกับ
+    ReferenceData.business_types (code -> BusinessType) เพื่อดู section_code/division_code
+    """
 
     profiles = list(profiles)
 
@@ -45,6 +54,24 @@ def find_load_profile(
                 if preferred:
                     return MatchResult(preferred[0], MatchLevel.EXACT)
             return MatchResult(candidates[0], MatchLevel.BUSINESS_ONLY)
+
+        # ไม่มีโปรไฟล์ของ business_type_code นี้ตรงๆ เลย — ลองหาโปรไฟล์ของธุรกิจอื่นที่อยู่ใน
+        # TSIC division เดียวกัน (ต้องทราบ division_code ของทั้งเป้าหมายและผู้สมัครทุกตัว)
+        if business_types:
+            target_bt = business_types.get(business_type_code)
+            if target_bt and target_bt.division_code:
+                division_candidates = [
+                    p
+                    for p in profiles
+                    if business_types.get(p.business_type_code) is not None
+                    and business_types[p.business_type_code].division_code == target_bt.division_code
+                ]
+                if division_candidates:
+                    if rate_code:
+                        preferred = [p for p in division_candidates if p.rate_code == rate_code]
+                        if preferred:
+                            return MatchResult(preferred[0], MatchLevel.DIVISION_ONLY)
+                    return MatchResult(division_candidates[0], MatchLevel.DIVISION_ONLY)
 
     if rate_code:
         candidates = [p for p in profiles if p.rate_code == rate_code]
@@ -96,6 +123,7 @@ def estimate_customer_load(customer: Customer, reference: ReferenceData) -> Fore
         reference.load_profiles,
         business_type_code=customer.business_type_code,
         rate_code=customer.rate_code,
+        business_types=reference.business_types,
     )
     profile = match.profile
     warnings: List[str] = []

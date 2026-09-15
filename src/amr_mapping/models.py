@@ -21,12 +21,27 @@ DAY_TYPES = ("all", "mon", "tue", "wed", "thu", "fri", "sat", "sun")
 
 @dataclass(frozen=True)
 class BusinessType:
-    """ประเภทธุรกิจของผู้ใช้ไฟ (เช่น TSIC code)."""
+    """ประเภทธุรกิจของผู้ใช้ไฟ (เช่น TSIC code)
+
+    section_code/division_code (ถ้าทราบ) คือตำแหน่งใน "หมวดหมู่ธุรกิจ" ตามมาตรฐาน TSIC
+    ของไทย (อิงตาม ISIC) แบบลำดับชั้น:
+        Section  (หมวดใหญ่ เช่น "C" = การผลิต)      — 1 ตัวอักษร A-U
+        Division (หมวดย่อย เช่น "17" = การผลิตกระดาษ) — 2 หลัก
+    ใช้เป็นชั้นสำรองในการจับคู่โปรไฟล์ (ดู mapping.find_load_profile) เมื่อไม่มีโปรไฟล์ของ
+    business_type_code นี้ตรงๆ แต่มีโปรไฟล์ของธุรกิจอื่นใน division/section เดียวกัน —
+    ปล่อยว่าง (None) ได้ถ้ายังไม่ได้ตรวจสอบว่า code นี้ตรงกับ TSIC จริงแค่ไหน (โค้ดที่ scrape
+    มาจากหน้า PEA เช่น "34111" ไม่ใช่รูปแบบ TSIC มาตรฐานเสมอไป — ดู notes ของแต่ละแถวใน
+    business_types.csv)
+    """
 
     code: str
     name_th: str
     category: str
     notes: str = ""
+    section_code: Optional[str] = None
+    section_name_th: str = ""
+    division_code: Optional[str] = None
+    division_name_th: str = ""
 
 
 @dataclass(frozen=True)
@@ -83,6 +98,7 @@ class MatchLevel(str, Enum):
 
     EXACT = "exact_business_and_rate"
     BUSINESS_ONLY = "business_type_only"
+    DIVISION_ONLY = "same_tsic_division"  # ธุรกิจไม่ตรงเป๊ะ แต่อยู่ TSIC division เดียวกัน
     RATE_ONLY = "rate_only"
     DEFAULT = "default_fallback"
 

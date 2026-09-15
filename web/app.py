@@ -23,6 +23,7 @@ from flask import Flask, jsonify, redirect, request
 
 from amr_mapping import estimate_customer_load, load_reference_data
 from amr_mapping.amr_import import import_amr_auto, import_amr_for_business
+from amr_mapping.dbd_lookup import find_exact_match, lookup_business_type_for_company
 from amr_mapping.mapping import MatchLevel, find_load_curve
 from amr_mapping.models import Customer
 
@@ -44,6 +45,7 @@ _JOBS_LOCK = threading.Lock()
 MATCH_LEVEL_LABEL_TH = {
     MatchLevel.EXACT: "ตรงตามธุรกิจและอัตรา (Exact Match)",
     MatchLevel.BUSINESS_ONLY: "ตรงตามประเภทธุรกิจ (ไม่ทราบ/ไม่ตรงอัตรา)",
+    MatchLevel.DIVISION_ONLY: "ไม่มีข้อมูลธุรกิจนี้ตรงๆ แต่อยู่ในกลุ่มอุตสาหกรรม (TSIC) เดียวกับที่มีข้อมูล",
     MatchLevel.RATE_ONLY: "ตรงตามประเภทอัตรา (ยังไม่จัดประเภทธุรกิจ)",
     MatchLevel.DEFAULT: "ไม่พบข้อมูลที่ตรงกัน (ใช้ค่ากลาง)",
 }
@@ -103,6 +105,37 @@ def api_list_business_types():
         [
             {"code": bt.code, "name_th": bt.name_th, "category": bt.category}
             for bt in get_reference().business_types.values()
+        ]
+    )
+
+
+@app.route("/api/business-types-full")
+def api_list_business_types_full():
+    """รายชื่อประเภทธุรกิจทั้งหมดแบบละเอียด (รวม TSIC section/division + ว่ามีโปรไฟล์อ้างอิง
+    จริงรองรับอยู่แล้วกี่อัตรา) — ใช้โดยตาราง "หมวดหมู่ธุรกิจทั้งหมดในระบบ" ในหน้า Admin เพื่อดูภาพ
+    รวมของข้อมูลอ้างอิงทั้งหมดในเครื่องนี้ในที่เดียว ไม่ต้องเปิดไฟล์ CSV ดูเอง"""
+
+    reference = get_reference()
+    profiles_by_business: dict = {}
+    for p in reference.load_profiles:
+        profiles_by_business.setdefault(p.business_type_code, []).append(
+            {"rate_code": p.rate_code, "sample_size": p.sample_size}
+        )
+
+    return jsonify(
+        [
+            {
+                "code": bt.code,
+                "name_th": bt.name_th,
+                "category": bt.category,
+                "notes": bt.notes,
+                "section_code": bt.section_code,
+                "section_name_th": bt.section_name_th,
+                "division_code": bt.division_code,
+                "division_name_th": bt.division_name_th,
+                "profiles": profiles_by_business.get(bt.code, []),
+            }
+            for bt in reference.business_types.values()
         ]
     )
 
@@ -266,6 +299,95 @@ def api_forecast_adhoc():
             ),
         }
     )
+
+
+def _run_business_type_lookup_job(job_id: str, company_name: str) -> None:
+    """ค้นหาประเภทธุรกิจ (TSIC) ของบริษัทจากชื่อ ผ่าน DBD DataWarehouse (ดู dbd_lookup.py) —
+    รันเป็น background job แบบเดียวกับ AMR import เพราะเปิดเบราว์เซอร์จริงใช้เวลาหลายวินาที
+
+    ⚠️ ชื่อบริษัทที่พิมพ์ในหน้านี้ "ถูกส่งออกไปค้นหาที่เว็บ DBD จริง" (ต่างจาก /api/forecast-adhoc
+    ที่ไม่ส่งชื่อไปไหนเลย) เพราะไม่มีทางค้นหาบริษัทจากชื่อได้โดยไม่ส่งชื่อไปที่แหล่งข้อมูลนั้น —
+    หน้าเว็บต้องแจ้งผู้ใช้ให้ชัดเจนก่อนกดใช้ฟีเจอร์นี้ (ดู index.html)
+    """
+
+    def log(msg: str) -> None:
+        with _JOBS_LOCK:
+            _JOBS[job_id]["logs"].append(msg)
+
+    try:
+        results = lookup_business_type_for_company(company_name, log=log)
+        reference = get_reference()
+
+        # หา business_type_code ของเราที่ "อยู่ TSIC division เดียวกัน" กับที่เจอจาก DBD (ถ้ามี
+        # และเคยตรวจสอบ/บันทึก division_code ไว้แล้วใน business_types.csv) — แค่แนะนำเฉยๆ
+        # ผู้ใช้ยังต้องกดยืนยัน/เลือกเองในหน้าเว็บ ไม่ auto-apply ให้ทันที
+        division_to_business: dict = {}
+        for p in reference.load_profiles:
+            bt = reference.business_types.get(p.business_type_code)
+            if bt and bt.division_code and bt.division_code not in division_to_business:
+                division_to_business[bt.division_code] = p.business_type_code
+
+        candidates = []
+        for r in results:
+            suggested_code = division_to_business.get(r.tsic_division_code)
+            suggested_bt = reference.business_types.get(suggested_code) if suggested_code else None
+            candidates.append(
+                {
+                    "registration_no": r.registration_no,
+                    "juristic_name": r.juristic_name,
+                    "juristic_type": r.juristic_type,
+                    "status": r.status,
+                    "tsic_code": r.tsic_code,
+                    "tsic_name_th": r.tsic_name_th,
+                    "tsic_division_code": r.tsic_division_code,
+                    "suggested_business_type_code": suggested_code,
+                    "suggested_business_type_name": suggested_bt.name_th if suggested_bt else None,
+                }
+            )
+
+        exact = find_exact_match(results, company_name)
+        exact_index = results.index(exact) if exact is not None else None
+
+        with _JOBS_LOCK:
+            _JOBS[job_id]["status"] = "success"
+            _JOBS[job_id]["result"] = {
+                "query": company_name,
+                "candidates": candidates,
+                "exact_match_index": exact_index,
+            }
+    except Exception as e:  # noqa: BLE001 — ต้อง catch ทุก error เพื่อรายงานสถานะ job ให้ถูกต้อง
+        with _JOBS_LOCK:
+            _JOBS[job_id]["status"] = "error"
+            _JOBS[job_id]["error"] = str(e)
+
+
+@app.route("/api/business-type-lookup", methods=["POST"])
+def api_start_business_type_lookup():
+    """เริ่ม job ค้นหาประเภทธุรกิจ (TSIC) จากชื่อบริษัท ผ่าน DBD DataWarehouse (background job
+    เพราะต้องเปิดเบราว์เซอร์จริง ใช้เวลาหลายวินาที — เหมือน /api/admin/import)"""
+
+    body = request.get_json(force=True, silent=True) or {}
+    company_name = (body.get("company_name") or "").strip()
+    if not company_name:
+        return jsonify({"error": "invalid_request", "message": "กรุณาระบุชื่อบริษัท"}), 400
+
+    job_id = uuid.uuid4().hex
+    with _JOBS_LOCK:
+        _JOBS[job_id] = {"status": "running", "logs": [], "result": None, "error": None}
+
+    thread = threading.Thread(target=_run_business_type_lookup_job, args=(job_id, company_name), daemon=True)
+    thread.start()
+
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/business-type-lookup/<job_id>")
+def api_get_business_type_lookup_status(job_id: str):
+    with _JOBS_LOCK:
+        job = _JOBS.get(job_id)
+        if job is None:
+            return jsonify({"error": "not_found", "message": "ไม่พบ job นี้"}), 404
+        return jsonify(dict(job))
 
 
 @app.route("/admin")

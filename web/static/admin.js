@@ -36,6 +36,42 @@ async function loadBusinessTypes() {
   }
 }
 
+// ── ตาราง "หมวดหมู่ธุรกิจทั้งหมดในระบบ" (business_types.csv แบบเต็ม + สถานะ TSIC/โปรไฟล์) ──
+
+const businessTypesRefreshBtn = document.getElementById("business-types-refresh-btn");
+const businessTypesTbody = document.getElementById("business-types-tbody");
+
+async function loadBusinessTypesTable() {
+  businessTypesTbody.innerHTML = `<tr><td colspan="5" style="padding:12px 10px;color:#8996ab;">กำลังโหลด...</td></tr>`;
+  try {
+    const res = await fetch("/api/business-types-full");
+    const types = await res.json();
+
+    businessTypesTbody.innerHTML = types
+      .map((t) => {
+        const profilesText = t.profiles.length
+          ? t.profiles.map((p) => `${p.rate_code} · ${p.sample_size} ตัวอย่าง`).join(", ")
+          : `<span style="color:#8996ab;">ยังไม่มี</span>`;
+        const sectionText = t.section_code ? `${t.section_code} (${t.section_name_th})` : `<span style="color:#8996ab;">ยังไม่ตรวจสอบ</span>`;
+        const divisionText = t.division_code ? `${t.division_code} (${t.division_name_th})` : `<span style="color:#8996ab;">ยังไม่ตรวจสอบ</span>`;
+        return `
+          <tr style="border-bottom:1px solid rgba(15,23,42,0.06);">
+            <td style="padding:8px 10px;font-weight:600;">${t.code}</td>
+            <td style="padding:8px 10px;">${t.name_th}</td>
+            <td style="padding:8px 10px;">${sectionText}</td>
+            <td style="padding:8px 10px;">${divisionText}</td>
+            <td style="padding:8px 10px;">${profilesText}</td>
+          </tr>`;
+      })
+      .join("");
+  } catch (err) {
+    businessTypesTbody.innerHTML = `<tr><td colspan="5" style="padding:12px 10px;color:#d03b3b;">โหลดไม่สำเร็จ</td></tr>`;
+    console.error("โหลดตารางหมวดหมู่ธุรกิจไม่สำเร็จ", err);
+  }
+}
+
+businessTypesRefreshBtn.addEventListener("click", loadBusinessTypesTable);
+
 function setStatusPill(status) {
   const map = {
     running: { text: "⏳ กำลังทำงาน...", bg: "#eef3fa", color: "#184f95" },
@@ -91,6 +127,7 @@ async function pollJob(jobId) {
 
   if (data.status === "success") {
     renderResult(data.result, data.customer_profile);
+    loadBusinessTypesTable(); // นำเข้าเสร็จอาจมีประเภทธุรกิจ/โปรไฟล์ใหม่ รีเฟรชตารางให้เห็นทันที
   } else if (data.status === "error") {
     jobResult.innerHTML = `<div class="search-hint" style="min-height:auto;">${data.error || "เกิดข้อผิดพลาด"}</div>`;
   }
@@ -168,3 +205,4 @@ async function startImport() {
 
 submitBtn.addEventListener("click", startImport);
 loadBusinessTypes();
+loadBusinessTypesTable();

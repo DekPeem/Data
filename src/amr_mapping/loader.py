@@ -23,17 +23,34 @@ def _load_business_types(path: Path) -> Dict[str, BusinessType]:
     result: Dict[str, BusinessType] = {}
     with path.open(encoding="utf-8-sig", newline="") as f:
         for row in csv.DictReader(f):
+            # section_code/division_code เป็นคอลัมน์ที่เพิ่มเข้ามาทีหลัง — ไฟล์เก่าที่ยังไม่มี
+            # คอลัมน์นี้เลย (row.get คืน None) ต้องโหลดได้ตามปกติ ไม่ error
+            section_code = (row.get("section_code") or "").strip() or None
+            division_code = (row.get("division_code") or "").strip() or None
             bt = BusinessType(
                 code=row["code"].strip(),
                 name_th=row["name_th"].strip(),
                 category=row["category"].strip(),
                 notes=row.get("notes", "").strip(),
+                section_code=section_code,
+                section_name_th=(row.get("section_name_th") or "").strip(),
+                division_code=division_code,
+                division_name_th=(row.get("division_name_th") or "").strip(),
             )
             result[bt.code] = bt
     return result
 
 
-_BUSINESS_TYPE_FIELDNAMES = ["code", "name_th", "category", "notes"]
+_BUSINESS_TYPE_FIELDNAMES = [
+    "code",
+    "name_th",
+    "category",
+    "notes",
+    "section_code",
+    "section_name_th",
+    "division_code",
+    "division_name_th",
+]
 
 
 def save_business_types(business_types: Dict[str, BusinessType], path: Path) -> None:
@@ -43,7 +60,18 @@ def save_business_types(business_types: Dict[str, BusinessType], path: Path) -> 
         writer = csv.DictWriter(f, fieldnames=_BUSINESS_TYPE_FIELDNAMES)
         writer.writeheader()
         for bt in business_types.values():
-            writer.writerow({"code": bt.code, "name_th": bt.name_th, "category": bt.category, "notes": bt.notes})
+            writer.writerow(
+                {
+                    "code": bt.code,
+                    "name_th": bt.name_th,
+                    "category": bt.category,
+                    "notes": bt.notes,
+                    "section_code": bt.section_code or "",
+                    "section_name_th": bt.section_name_th,
+                    "division_code": bt.division_code or "",
+                    "division_name_th": bt.division_name_th,
+                }
+            )
 
 
 def upsert_business_type(business_types: Dict[str, BusinessType], new_bt: BusinessType) -> Dict[str, BusinessType]:
