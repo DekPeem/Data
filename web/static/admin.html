@@ -26,6 +26,20 @@
       background: #fff7e6; border: 1px solid rgba(250, 178, 25, 0.4); border-radius: 10px;
       padding: 14px 18px; font-size: 13px; color: #7a5a00; line-height: 1.6;
     }
+    .verify-panel {
+      background: #f7f9fc; border: 1px solid rgba(15,23,42,0.08); border-radius: 10px;
+      padding: 16px; display: flex; flex-direction: column; gap: 12px;
+    }
+    .verify-row-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+    .verify-row-fields .form-field label { font-size: 12px; }
+    .verify-row-fields .form-field input {
+      height: 38px; font-size: 13px; border-radius: 8px; border: 1px solid rgba(15,23,42,0.14);
+      padding: 0 10px; font-family: inherit; background: #fff; color: #0f1b2d;
+    }
+    .verify-candidate {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      background: #fff; border: 1px solid rgba(15,23,42,0.08); border-radius: 8px; padding: 10px 12px;
+    }
   </style>
 </head>
 <body>
@@ -139,8 +153,32 @@
       <div class="card" style="padding: 28px; display: flex; flex-direction: column; gap: 16px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
           <div>
+            <div style="font-size: 15px; font-weight: 700;">ประวัติการนำเข้า AMR ในเครื่องนี้</div>
+            <div class="hint">ชื่อบริษัท/นิติบุคคลและเลขบัญชีจริงที่เคยนำเข้าแบบอัตโนมัติจากเครื่องนี้ — ไว้ดูว่า "ทำอะไรไปแล้วบ้าง มีข้อมูลของใครบ้าง" เท่านั้น อ่านจากไฟล์ <code>import_log_local.csv</code> ซึ่งอยู่ใน <code>.gitignore</code> แล้ว <b>ไม่ถูก commit เข้า repo public เด็ดขาด</b> เหมือนหลักการเดียวกับ <code>customers_local.csv</code></div>
+          </div>
+          <button type="button" id="import-log-refresh-btn" class="day-type-btn">🔄 รีเฟรช</button>
+        </div>
+        <div style="overflow-x:auto;">
+          <table id="import-log-table" style="width:100%;border-collapse:collapse;font-size:13px;">
+            <thead>
+              <tr style="text-align:left;border-bottom:2px solid rgba(15,23,42,0.1);">
+                <th style="padding:8px 10px;">นำเข้าเมื่อ</th>
+                <th style="padding:8px 10px;">ชื่อบริษัท/นิติบุคคล</th>
+                <th style="padding:8px 10px;">เลขบัญชี</th>
+                <th style="padding:8px 10px;">ประเภทธุรกิจ</th>
+                <th style="padding:8px 10px;">รหัสอัตรา</th>
+              </tr>
+            </thead>
+            <tbody id="import-log-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card" style="padding: 28px; display: flex; flex-direction: column; gap: 16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+          <div>
             <div style="font-size: 15px; font-weight: 700;">หมวดหมู่ธุรกิจทั้งหมดในระบบ</div>
-            <div class="hint">สรุปทุกประเภทธุรกิจใน business_types.csv พร้อมสถานะ TSIC (Section/Division) และโปรไฟล์อ้างอิงที่มี — อัปเดตอัตโนมัติทุกครั้งที่นำเข้า AMR ใหม่</div>
+            <div class="hint">สรุปทุกประเภทธุรกิจใน business_types.csv พร้อมสถานะ TSIC (Section/Division) และโปรไฟล์อ้างอิงที่มี — อัปเดตอัตโนมัติทุกครั้งที่นำเข้า AMR ใหม่ กดปุ่ม "ตรวจสอบ" ในแถวที่ยังไม่ได้ตรวจ เพื่อค้นหา TSIC จากชื่อบริษัทที่เคยนำเข้าและบันทึกผลได้เลย</div>
           </div>
           <button type="button" id="business-types-refresh-btn" class="day-type-btn">🔄 รีเฟรช</button>
         </div>
@@ -153,6 +191,7 @@
                 <th style="padding:8px 10px;">Section (TSIC)</th>
                 <th style="padding:8px 10px;">Division (TSIC)</th>
                 <th style="padding:8px 10px;">โปรไฟล์อ้างอิงที่มี (รหัสอัตรา · จำนวนตัวอย่าง)</th>
+                <th style="padding:8px 10px;">ตรวจสอบ TSIC</th>
               </tr>
             </thead>
             <tbody id="business-types-tbody"></tbody>

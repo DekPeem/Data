@@ -164,6 +164,71 @@ def test_list_business_types_full_includes_hierarchy_and_profiles(client):
     assert office["profiles"] == []  # 68100 ยังไม่มีโปรไฟล์อ้างอิงเลย
 
 
+def test_import_log_local_empty_when_file_missing(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    res = client.get("/api/import-log-local")
+    assert res.status_code == 200
+    assert res.get_json() == []
+
+
+def test_import_log_local_returns_newest_first(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    (tmp_path / "import_log_local.csv").write_text(
+        "imported_at,business_type_code,rate_code,company_name,account_no\n"
+        "2026-01-01T00:00:00+00:00,34111,40,บริษัท เอ จำกัด,111\n"
+        "2026-02-01T00:00:00+00:00,34120,30,บริษัท บี จำกัด,222\n",
+        encoding="utf-8",
+    )
+    res = client.get("/api/import-log-local")
+    data = res.get_json()
+    assert len(data) == 2
+    assert data[0]["company_name"] == "บริษัท บี จำกัด"  # ใหม่สุดขึ้นก่อน
+
+
+def test_business_type_hierarchy_update_success(client, monkeypatch, tmp_path):
+    import shutil
+
+    from amr_mapping.loader import DEFAULT_DATA_DIR as REAL_DATA_DIR, _load_business_types
+
+    # คัดลอกไฟล์จริงไปไว้ที่ tmp ก่อน กัน test เขียนทับ business_types.csv จริงในการทดสอบนี้
+    tmp_data_dir = tmp_path / "reference"
+    tmp_data_dir.mkdir()
+    shutil.copy(REAL_DATA_DIR / "business_types.csv", tmp_data_dir / "business_types.csv")
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_data_dir)
+
+    res = client.post(
+        "/api/business-types/68100/hierarchy",
+        json={
+            "section_code": "L",
+            "section_name_th": "กิจกรรมด้านอสังหาริมทรัพย์",
+            "division_code": "68",
+            "division_name_th": "กิจกรรมด้านอสังหาริมทรัพย์",
+        },
+    )
+    assert res.status_code == 200
+    assert res.get_json()["division_code"] == "68"
+
+    updated_bts = _load_business_types(tmp_data_dir / "business_types.csv")
+    assert updated_bts["68100"].division_code == "68"
+    assert updated_bts["68100"].section_name_th == "กิจกรรมด้านอสังหาริมทรัพย์"
+    # ต้องไม่กระทบประเภทธุรกิจอื่นที่มีอยู่แล้ว (34111 ต้องยัง verified เหมือนเดิม)
+    assert updated_bts["34111"].division_code == "17"
+
+
+def test_business_type_hierarchy_update_unknown_code_404(client, monkeypatch, tmp_path):
+    import shutil
+
+    from amr_mapping.loader import DEFAULT_DATA_DIR as REAL_DATA_DIR
+
+    tmp_data_dir = tmp_path / "reference"
+    tmp_data_dir.mkdir()
+    shutil.copy(REAL_DATA_DIR / "business_types.csv", tmp_data_dir / "business_types.csv")
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_data_dir)
+
+    res = client.post("/api/business-types/NOPE/hierarchy", json={"division_code": "99"})
+    assert res.status_code == 404
+
+
 def test_start_import_missing_credentials(client, monkeypatch):
     monkeypatch.delenv("PEA_AMR_USERNAME", raising=False)
     monkeypatch.delenv("PEA_AMR_PASSWORD", raising=False)

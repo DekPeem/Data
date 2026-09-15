@@ -321,3 +321,30 @@ def load_reference_data(data_dir: Optional[Path] = None) -> ReferenceData:
         load_curves=_load_load_curves(data_dir / "load_curves.csv"),
         customers=list(customers_by_account.values()),
     )
+
+
+_IMPORT_LOG_FIELDNAMES = ["imported_at", "business_type_code", "rate_code", "company_name", "account_no"]
+
+
+def append_import_log_local(entry: dict, path: Path) -> None:
+    """บันทึก 1 แถวประวัติการนำเข้า AMR จริง (มีชื่อบริษัท/เลขบัญชีจริง) ต่อท้ายไฟล์
+    import_log_local.csv — ไฟล์นี้อยู่ใน .gitignore แล้ว (ห้าม commit เด็ดขาด) ใช้ดูในเครื่อง
+    ตัวเองเท่านั้นว่า "ทำอะไรไปแล้วบ้าง มีข้อมูลของใครบ้าง" (หลักการเดียวกับ
+    customers_local.csv) — สร้างไฟล์ใหม่พร้อม header ถ้ายังไม่มี ไม่งั้น append ต่อท้าย
+    """
+
+    file_exists = path.exists()
+    with path.open("a", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=_IMPORT_LOG_FIELDNAMES)
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow({k: entry.get(k, "") for k in _IMPORT_LOG_FIELDNAMES})
+
+
+def load_import_log_local(path: Path) -> List[dict]:
+    """อ่านประวัติการนำเข้า AMR จริงทั้งหมด (ไฟล์นี้ไม่บังคับต้องมี — คืน list ว่างถ้ายังไม่มี)"""
+
+    if not path.exists():
+        return []
+    with path.open(encoding="utf-8-sig", newline="") as f:
+        return list(csv.DictReader(f))

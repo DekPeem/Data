@@ -27,6 +27,8 @@ from .loader import (
     upsert_business_type,
     upsert_load_profile,
     upsert_load_curve,
+    append_import_log_local,
+    load_import_log_local,
 )
 from .mapping import find_load_profile, find_load_curve, estimate_customer_load
 
@@ -48,6 +50,8 @@ __all__ = [
     "upsert_load_curve",
     "save_business_types",
     "upsert_business_type",
+    "append_import_log_local",
+    "load_import_log_local",
     "find_load_profile",
     "find_load_curve",
     "estimate_customer_load",

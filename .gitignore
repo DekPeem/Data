@@ -18,3 +18,7 @@ debug_noPopup_*.html
 # ทะเบียนผู้ใช้ไฟจริงสำหรับดูในเครื่องตัวเองเท่านั้น — ห้าม commit เด็ดขาด
 # (ดู data/reference/customers_local.csv.example สำหรับรูปแบบไฟล์)
 data/reference/customers_local.csv
+
+# ประวัติการนำเข้า AMR จริง (มีชื่อบริษัท/เลขบัญชีจริง) สำหรับดูในเครื่องตัวเองเท่านั้น
+# — ห้าม commit เด็ดขาด (เขียนอัตโนมัติโดย amr_import.import_amr_auto ทุกครั้งที่นำเข้าสำเร็จ)
+data/reference/import_log_local.csv

@@ -162,6 +162,8 @@ def test_import_amr_for_business_raises_when_no_files_downloaded(monkeypatch, da
 def _fake_download_amr_with_profile(username, password, start_date, end_date, download_dir, log, headless=True):
     """แทนที่ login+scrape+download จริงด้วยค่า profile สมมติ + ไฟล์ synthetic"""
     profile_info = {
+        "name": "บริษัท ทดสอบออโต้ จำกัด",
+        "account_no": username,
         "rate_code": "40",
         "billing_method": "TOU",
         "business_type_code": "34111",
@@ -205,6 +207,15 @@ def test_import_amr_auto_detects_and_saves_new_business_type(monkeypatch, data_d
 
     saved = next(p for p in reference.load_profiles if p.business_type_code == "34111")
     assert saved.rate_code == "40"
+
+    # ต้องบันทึกประวัติ (ชื่อบริษัทจริง) ลง import_log_local.csv แยกต่างหาก (gitignored)
+    from amr_mapping.loader import load_import_log_local
+
+    log_entries = load_import_log_local(data_dir / "import_log_local.csv")
+    assert len(log_entries) == 1
+    assert log_entries[0]["company_name"] == "บริษัท ทดสอบออโต้ จำกัด"
+    assert log_entries[0]["account_no"] == "019900000001"
+    assert log_entries[0]["business_type_code"] == "34111"
 
     assert "secret-pass" not in " ".join(logs)
 

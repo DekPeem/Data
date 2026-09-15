@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import sys
 import threading
@@ -24,6 +25,12 @@ from flask import Flask, jsonify, redirect, request
 from amr_mapping import estimate_customer_load, load_reference_data
 from amr_mapping.amr_import import import_amr_auto, import_amr_for_business
 from amr_mapping.dbd_lookup import find_exact_match, lookup_business_type_for_company
+from amr_mapping.loader import (
+    DEFAULT_DATA_DIR,
+    load_import_log_local,
+    save_business_types,
+    upsert_business_type,
+)
 from amr_mapping.mapping import MatchLevel, find_load_curve
 from amr_mapping.models import Customer
 
@@ -138,6 +145,45 @@ def api_list_business_types_full():
             for bt in reference.business_types.values()
         ]
     )
+
+
+@app.route("/api/import-log-local")
+def api_list_import_log_local():
+    """ประวัติการนำเข้า AMR จริงในเครื่องนี้ (ชื่อบริษัท/เลขบัญชีจริง) — อ่านจาก
+    import_log_local.csv ซึ่งอยู่ใน .gitignore แล้ว (หลักการเดียวกับ customers_local.csv)
+    ไฟล์นี้ไม่บังคับต้องมี คืน list ว่างถ้ายังไม่เคย import แบบ auto มาก่อนเลย"""
+
+    entries = load_import_log_local(DEFAULT_DATA_DIR / "import_log_local.csv")
+    return jsonify(list(reversed(entries)))  # ใหม่ล่าสุดขึ้นก่อน
+
+
+@app.route("/api/business-types/<code>/hierarchy", methods=["POST"])
+def api_update_business_type_hierarchy(code: str):
+    """บันทึก TSIC section/division ที่ตรวจสอบแล้วของประเภทธุรกิจตัวหนึ่ง (แก้ business_types.csv
+    ที่ commit เข้า repo ได้ — เป็นแค่รหัส/ชื่อหมวดธุรกิจสาธารณะ ไม่มีชื่อบริษัทเกี่ยวข้องเลย)"""
+
+    body = request.get_json(force=True, silent=True) or {}
+    section_code = (body.get("section_code") or "").strip() or None
+    section_name_th = (body.get("section_name_th") or "").strip()
+    division_code = (body.get("division_code") or "").strip() or None
+    division_name_th = (body.get("division_name_th") or "").strip()
+
+    reference = get_reference()
+    existing = reference.business_types.get(code)
+    if existing is None:
+        return jsonify({"error": "not_found", "message": f"ไม่พบประเภทธุรกิจรหัส {code}"}), 404
+
+    updated = dataclasses.replace(
+        existing,
+        section_code=section_code,
+        section_name_th=section_name_th,
+        division_code=division_code,
+        division_name_th=division_name_th,
+    )
+    updated_bts = upsert_business_type(reference.business_types, updated)
+    save_business_types(updated_bts, DEFAULT_DATA_DIR / "business_types.csv")
+
+    return jsonify({"code": code, "section_code": section_code, "division_code": division_code})
 
 
 @app.route("/api/rate-schedules")

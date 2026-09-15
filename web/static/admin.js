@@ -36,13 +36,95 @@ async function loadBusinessTypes() {
   }
 }
 
+// ── ตาราง "ประวัติการนำเข้า AMR ในเครื่องนี้" (import_log_local.csv — ชื่อจริง ไม่ commit) ──
+
+const importLogRefreshBtn = document.getElementById("import-log-refresh-btn");
+const importLogTbody = document.getElementById("import-log-tbody");
+
+// เก็บ log ล่าสุดไว้ใช้เดา "ชื่อบริษัทที่น่าจะตรงกับหมวดธุรกิจนี้" ตอนเปิดแผงตรวจสอบ TSIC ด้านล่าง
+let importLogEntries = [];
+
+function formatImportedAt(iso) {
+  try {
+    return new Date(iso).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" });
+  } catch (err) {
+    return iso || "";
+  }
+}
+
+async function loadImportLogLocal() {
+  importLogTbody.innerHTML = `<tr><td colspan="5" style="padding:12px 10px;color:#8996ab;">กำลังโหลด...</td></tr>`;
+  try {
+    const res = await fetch("/api/import-log-local");
+    importLogEntries = await res.json();
+
+    importLogTbody.innerHTML = importLogEntries.length
+      ? importLogEntries
+          .map(
+            (e) => `
+          <tr style="border-bottom:1px solid rgba(15,23,42,0.06);">
+            <td style="padding:8px 10px;">${formatImportedAt(e.imported_at)}</td>
+            <td style="padding:8px 10px;font-weight:600;">${e.company_name || "-"}</td>
+            <td style="padding:8px 10px;">${e.account_no || "-"}</td>
+            <td style="padding:8px 10px;">${e.business_type_code}</td>
+            <td style="padding:8px 10px;">${e.rate_code}</td>
+          </tr>`
+          )
+          .join("")
+      : `<tr><td colspan="5" style="padding:12px 10px;color:#8996ab;">ยังไม่เคยนำเข้าแบบอัตโนมัติจากเครื่องนี้เลย</td></tr>`;
+  } catch (err) {
+    importLogTbody.innerHTML = `<tr><td colspan="5" style="padding:12px 10px;color:#d03b3b;">โหลดไม่สำเร็จ</td></tr>`;
+    console.error("โหลดประวัติการนำเข้าไม่สำเร็จ", err);
+  }
+}
+
+importLogRefreshBtn.addEventListener("click", loadImportLogLocal);
+
+// หาชื่อบริษัทล่าสุดในประวัติการนำเข้าที่ตรงกับรหัสประเภทธุรกิจนี้ (ไว้เติมช่องค้นหาให้อัตโนมัติ)
+function guessCompanyNameForBusinessType(businessTypeCode) {
+  const match = importLogEntries.find((e) => e.business_type_code === businessTypeCode && e.company_name);
+  return match ? match.company_name : "";
+}
+
 // ── ตาราง "หมวดหมู่ธุรกิจทั้งหมดในระบบ" (business_types.csv แบบเต็ม + สถานะ TSIC/โปรไฟล์) ──
 
 const businessTypesRefreshBtn = document.getElementById("business-types-refresh-btn");
 const businessTypesTbody = document.getElementById("business-types-tbody");
 
+// โครงสร้าง Section/Division ของ TSIC (อิง ISIC Rev.4 ที่ TSIC ใช้เป็นฐาน) — ใช้แค่เดา Section
+// จาก Division ให้อัตโนมัติตอนตรวจสอบ (แก้ไขเองได้เสมอถ้าไม่ตรง)
+const TSIC_SECTIONS = [
+  { code: "A", from: 1, to: 3, name_th: "เกษตรกรรม การป่าไม้ และการประมง" },
+  { code: "B", from: 5, to: 9, name_th: "การทำเหมืองแร่และเหมืองหิน" },
+  { code: "C", from: 10, to: 33, name_th: "การผลิต" },
+  { code: "D", from: 35, to: 35, name_th: "ไฟฟ้า ก๊าซ ไอน้ำ และระบบปรับอากาศ" },
+  { code: "E", from: 36, to: 39, name_th: "การจัดหาน้ำ การจัดการน้ำเสียและของเสีย" },
+  { code: "F", from: 41, to: 43, name_th: "การก่อสร้าง" },
+  { code: "G", from: 45, to: 47, name_th: "การขายส่งและการขายปลีก การซ่อมยานยนต์และจักรยานยนต์" },
+  { code: "H", from: 49, to: 53, name_th: "การขนส่งและสถานที่เก็บสินค้า" },
+  { code: "I", from: 55, to: 56, name_th: "ที่พักแรมและบริการด้านอาหาร" },
+  { code: "J", from: 58, to: 63, name_th: "ข้อมูลข่าวสารและการสื่อสาร" },
+  { code: "K", from: 64, to: 66, name_th: "กิจกรรมทางการเงินและการประกันภัย" },
+  { code: "L", from: 68, to: 68, name_th: "กิจกรรมเกี่ยวกับอสังหาริมทรัพย์" },
+  { code: "M", from: 69, to: 75, name_th: "กิจกรรมทางวิชาชีพ วิทยาศาสตร์ และเทคนิค" },
+  { code: "N", from: 77, to: 82, name_th: "กิจกรรมการบริหารและบริการสนับสนุน" },
+  { code: "O", from: 84, to: 84, name_th: "การบริหารราชการ การป้องกันประเทศ และการประกันสังคมภาคบังคับ" },
+  { code: "P", from: 85, to: 85, name_th: "การศึกษา" },
+  { code: "Q", from: 86, to: 88, name_th: "กิจกรรมด้านสุขภาพและงานสังคมสงเคราะห์" },
+  { code: "R", from: 90, to: 93, name_th: "ศิลปะ ความบันเทิง และนันทนาการ" },
+  { code: "S", from: 94, to: 96, name_th: "กิจกรรมการบริการอื่นๆ" },
+  { code: "T", from: 97, to: 98, name_th: "กิจกรรมการจ้างงานในครัวเรือน" },
+  { code: "U", from: 99, to: 99, name_th: "กิจกรรมขององค์การระหว่างประเทศ" },
+];
+
+function sectionForDivision(divisionCode) {
+  const n = Number(divisionCode);
+  if (Number.isNaN(n)) return null;
+  return TSIC_SECTIONS.find((s) => n >= s.from && n <= s.to) || null;
+}
+
 async function loadBusinessTypesTable() {
-  businessTypesTbody.innerHTML = `<tr><td colspan="5" style="padding:12px 10px;color:#8996ab;">กำลังโหลด...</td></tr>`;
+  businessTypesTbody.innerHTML = `<tr><td colspan="6" style="padding:12px 10px;color:#8996ab;">กำลังโหลด...</td></tr>`;
   try {
     const res = await fetch("/api/business-types-full");
     const types = await res.json();
@@ -58,19 +140,206 @@ async function loadBusinessTypesTable() {
           <tr style="border-bottom:1px solid rgba(15,23,42,0.06);">
             <td style="padding:8px 10px;font-weight:600;">${t.code}</td>
             <td style="padding:8px 10px;">${t.name_th}</td>
-            <td style="padding:8px 10px;">${sectionText}</td>
-            <td style="padding:8px 10px;">${divisionText}</td>
+            <td style="padding:8px 10px;" id="verify-section-${t.code}">${sectionText}</td>
+            <td style="padding:8px 10px;" id="verify-division-${t.code}">${divisionText}</td>
             <td style="padding:8px 10px;">${profilesText}</td>
+            <td style="padding:8px 10px;">
+              <button type="button" class="day-type-btn verify-toggle-btn" data-code="${t.code}">🔍 ตรวจสอบ</button>
+            </td>
+          </tr>
+          <tr id="verify-row-${t.code}" style="display:none;">
+            <td colspan="6" style="padding:0 10px 14px 10px;"><div id="verify-panel-${t.code}"></div></td>
           </tr>`;
       })
       .join("");
+
+    businessTypesTbody.querySelectorAll(".verify-toggle-btn").forEach((btn) => {
+      btn.addEventListener("click", () => toggleVerifyPanel(btn.dataset.code));
+    });
   } catch (err) {
-    businessTypesTbody.innerHTML = `<tr><td colspan="5" style="padding:12px 10px;color:#d03b3b;">โหลดไม่สำเร็จ</td></tr>`;
+    businessTypesTbody.innerHTML = `<tr><td colspan="6" style="padding:12px 10px;color:#d03b3b;">โหลดไม่สำเร็จ</td></tr>`;
     console.error("โหลดตารางหมวดหมู่ธุรกิจไม่สำเร็จ", err);
   }
 }
 
 businessTypesRefreshBtn.addEventListener("click", loadBusinessTypesTable);
+
+// ── แผงตรวจสอบ TSIC ในแถว (ค้นหาจากชื่อบริษัทที่เคยนำเข้า แล้วบันทึกกลับเข้า business_types.csv) ──
+
+const openVerifyPanels = new Set();
+
+function toggleVerifyPanel(code) {
+  const row = document.getElementById(`verify-row-${code}`);
+  const panel = document.getElementById(`verify-panel-${code}`);
+  if (openVerifyPanels.has(code)) {
+    openVerifyPanels.delete(code);
+    row.style.display = "none";
+    return;
+  }
+  openVerifyPanels.add(code);
+  row.style.display = "";
+  if (!panel.dataset.built) {
+    panel.dataset.built = "1";
+    renderVerifyPanel(code);
+  }
+}
+
+function renderVerifyPanel(code) {
+  const panel = document.getElementById(`verify-panel-${code}`);
+  const guessedName = guessCompanyNameForBusinessType(code);
+  panel.innerHTML = `
+    <div class="verify-panel">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+        <div class="form-field" style="flex:1;min-width:220px;">
+          <label for="verify-name-input-${code}">ชื่อบริษัท/นิติบุคคล (ค้นหาจาก DBD DataWarehouse)</label>
+          <input id="verify-name-input-${code}" type="text" value="${guessedName}" placeholder="เช่น บริษัท ตัวอย่าง จำกัด">
+        </div>
+        <button type="button" class="day-type-btn verify-search-btn" data-code="${code}">ค้นหา TSIC</button>
+      </div>
+      <div id="verify-status-${code}" class="hint"></div>
+    </div>`;
+
+  panel.querySelector(".verify-search-btn").addEventListener("click", () => runVerifyLookup(code));
+}
+
+async function runVerifyLookup(code) {
+  const nameInput = document.getElementById(`verify-name-input-${code}`);
+  const status = document.getElementById(`verify-status-${code}`);
+  const companyName = nameInput.value.trim();
+  if (!companyName) {
+    status.innerHTML = `<span style="color:#d03b3b;">กรุณาพิมพ์ชื่อบริษัทก่อน</span>`;
+    return;
+  }
+
+  status.innerHTML = `⏳ กำลังค้นหา... (เปิดเบราว์เซอร์จริง อาจใช้เวลาสักครู่)`;
+
+  try {
+    const res = await fetch("/api/business-type-lookup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ company_name: companyName }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      status.innerHTML = `<span style="color:#d03b3b;">${data.message || "เกิดข้อผิดพลาด"}</span>`;
+      return;
+    }
+    pollVerifyLookupJob(code, data.job_id);
+  } catch (err) {
+    status.innerHTML = `<span style="color:#d03b3b;">เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ</span>`;
+    console.error(err);
+  }
+}
+
+async function pollVerifyLookupJob(code, jobId) {
+  const status = document.getElementById(`verify-status-${code}`);
+  const res = await fetch(`/api/business-type-lookup/${jobId}`);
+  const data = await res.json();
+
+  if (data.status === "running") {
+    setTimeout(() => pollVerifyLookupJob(code, jobId), 800);
+    return;
+  }
+
+  if (data.status === "error") {
+    status.innerHTML = `<span style="color:#d03b3b;">ค้นหาไม่สำเร็จ: ${data.error || "เกิดข้อผิดพลาด"} (ต้องรันเว็บนี้ในเครื่องที่มี Google Chrome ติดตั้งอยู่)</span>`;
+    return;
+  }
+
+  const { candidates } = data.result;
+  if (!candidates.length) {
+    status.innerHTML = `ไม่พบบริษัทนี้ใน DBD DataWarehouse`;
+    return;
+  }
+
+  status.innerHTML = `<div style="margin-bottom:8px;">เลือกบริษัทที่ใช่ เพื่อดึง TSIC มาเติมด้านล่าง:</div>`;
+  const list = document.createElement("div");
+  list.style.display = "flex";
+  list.style.flexDirection = "column";
+  list.style.gap = "8px";
+  candidates.forEach((c, i) => {
+    const row = document.createElement("div");
+    row.className = "verify-candidate";
+    row.innerHTML = `
+      <div>
+        <div style="font-weight:600;">${c.juristic_name} <span style="font-weight:400;color:#8996ab;">(${c.juristic_type})</span></div>
+        <div class="hint">TSIC ${c.tsic_code} - ${c.tsic_name_th} · ${c.status}</div>
+      </div>
+      <button type="button" class="day-type-btn">ใช้อันนี้</button>`;
+    row.querySelector("button").addEventListener("click", () => showHierarchyFields(code, candidates[i]));
+    list.appendChild(row);
+  });
+  status.appendChild(list);
+}
+
+function showHierarchyFields(code, candidate) {
+  const status = document.getElementById(`verify-status-${code}`);
+  const divisionCode = candidate.tsic_division_code || candidate.tsic_code.slice(0, 2);
+  const section = sectionForDivision(divisionCode);
+
+  const fieldsBox = document.createElement("div");
+  fieldsBox.style.marginTop = "12px";
+  fieldsBox.innerHTML = `
+    <div class="hint" style="margin-bottom:6px;">ตรวจสอบ/แก้ไขได้ก่อนบันทึก (Section เดาให้อัตโนมัติจากโครงสร้าง TSIC — แก้ไขเองได้ถ้าไม่ตรง):</div>
+    <div class="verify-row-fields">
+      <div class="form-field">
+        <label>Section code</label>
+        <input id="verify-section-code-${code}" type="text" value="${section ? section.code : ""}" maxlength="1">
+      </div>
+      <div class="form-field">
+        <label>ชื่อ Section (TH)</label>
+        <input id="verify-section-name-${code}" type="text" value="${section ? section.name_th : ""}">
+      </div>
+      <div class="form-field">
+        <label>Division code</label>
+        <input id="verify-division-code-${code}" type="text" value="${divisionCode}" maxlength="2">
+      </div>
+      <div class="form-field">
+        <label>ชื่อ Division (TH) โดยประมาณ</label>
+        <input id="verify-division-name-${code}" type="text" value="${candidate.tsic_name_th}">
+      </div>
+    </div>
+    <div class="submit-row" style="margin-top:10px;">
+      <button type="button" class="search-button" id="verify-save-btn-${code}">บันทึกเป็นของรหัส ${code} นี้</button>
+    </div>
+    <div id="verify-save-status-${code}" class="hint" style="margin-top:6px;"></div>`;
+
+  // แทนที่กล่อง fields เดิม (ถ้าเคยเลือกผู้สมัครอื่นมาก่อนแล้ว) ด้วยอันใหม่ ไม่ต่อท้ายซ้ำ
+  const prev = document.getElementById(`verify-fields-box-${code}`);
+  if (prev) prev.remove();
+  fieldsBox.id = `verify-fields-box-${code}`;
+  status.appendChild(fieldsBox);
+
+  document.getElementById(`verify-save-btn-${code}`).addEventListener("click", () => saveHierarchy(code));
+}
+
+async function saveHierarchy(code) {
+  const saveStatus = document.getElementById(`verify-save-status-${code}`);
+  const section_code = document.getElementById(`verify-section-code-${code}`).value.trim();
+  const section_name_th = document.getElementById(`verify-section-name-${code}`).value.trim();
+  const division_code = document.getElementById(`verify-division-code-${code}`).value.trim();
+  const division_name_th = document.getElementById(`verify-division-name-${code}`).value.trim();
+
+  saveStatus.textContent = "⏳ กำลังบันทึก...";
+  try {
+    const res = await fetch(`/api/business-types/${encodeURIComponent(code)}/hierarchy`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ section_code, section_name_th, division_code, division_name_th }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      saveStatus.innerHTML = `<span style="color:#d03b3b;">${data.message || "บันทึกไม่สำเร็จ"}</span>`;
+      return;
+    }
+    saveStatus.innerHTML = `<span style="color:#006300;">✅ บันทึกแล้ว</span>`;
+    loadBusinessTypesTable(); // รีเฟรชตารางหลักให้เห็นค่า Section/Division ใหม่ (แผงจะยุบกลับ - เปิดใหม่ได้)
+    openVerifyPanels.delete(code);
+  } catch (err) {
+    saveStatus.innerHTML = `<span style="color:#d03b3b;">เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ</span>`;
+    console.error(err);
+  }
+}
 
 function setStatusPill(status) {
   const map = {
@@ -128,6 +397,7 @@ async function pollJob(jobId) {
   if (data.status === "success") {
     renderResult(data.result, data.customer_profile);
     loadBusinessTypesTable(); // นำเข้าเสร็จอาจมีประเภทธุรกิจ/โปรไฟล์ใหม่ รีเฟรชตารางให้เห็นทันที
+    loadImportLogLocal(); // และอาจมีประวัติการนำเข้าแถวใหม่ (โหมดอัตโนมัติ) ด้วย
   } else if (data.status === "error") {
     jobResult.innerHTML = `<div class="search-hint" style="min-height:auto;">${data.error || "เกิดข้อผิดพลาด"}</div>`;
   }
@@ -206,3 +476,4 @@ async function startImport() {
 submitBtn.addEventListener("click", startImport);
 loadBusinessTypes();
 loadBusinessTypesTable();
+loadImportLogLocal();

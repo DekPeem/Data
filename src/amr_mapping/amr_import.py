@@ -15,6 +15,7 @@ customers_local.csv — ข้อมูลระบุตัวตนลูก�
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, List, Optional
 
@@ -22,6 +23,7 @@ from .amr_downloader import ProgressCallback, download_amr_kw_reports, download_
 from .loader import (
     DEFAULT_DATA_DIR,
     ReferenceData,
+    append_import_log_local,
     load_reference_data,
     save_business_types,
     save_load_curves,
@@ -269,6 +271,27 @@ def import_amr_auto(
     if source_label:
         notes += f" - {source_label}"
 
-    return _build_profile_from_downloads(
+    result_profile = _build_profile_from_downloads(
         downloaded_files, business_type_code, rate_code, billing_method, contract_kva, notes, data_dir, log,
     )
+
+    # บันทึกประวัติ "ทำอะไรไปแล้วบ้าง มีข้อมูลของใครบ้าง" ไว้ในเครื่องตัวเองเท่านั้น (ชื่อบริษัท/
+    # เลขบัญชีจริง) — import_log_local.csv อยู่ใน .gitignore แล้ว หลักการเดียวกับ
+    # customers_local.csv ไม่เคยถูกเขียนไปที่ไฟล์อื่นที่ commit เข้า repo ได้เลย (โหมด auto
+    # เท่านั้นที่มีชื่อบริษัทจริงจากการ scrape — โหมด manual (import_amr_for_business) ไม่มี
+    # ชื่อบริษัทให้บันทึก จึงไม่ต้องมี log แบบนี้)
+    try:
+        append_import_log_local(
+            {
+                "imported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "business_type_code": business_type_code,
+                "rate_code": rate_code,
+                "company_name": profile_info.get("name") or "",
+                "account_no": profile_info.get("account_no") or "",
+            },
+            data_dir / "import_log_local.csv",
+        )
+    except OSError as e:  # noqa: BLE001 — บันทึก log ไม่สำเร็จ ต้องไม่ทำให้ผลการนำเข้าหลักพังไปด้วย
+        log(f"⚠️ บันทึกประวัติการนำเข้าในเครื่องไม่สำเร็จ (ไม่กระทบผลลัพธ์หลัก): {e}")
+
+    return result_profile

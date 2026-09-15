@@ -3,7 +3,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from amr_mapping.loader import load_reference_data, save_business_types, save_load_curves, upsert_load_curve
+from amr_mapping.loader import (
+    append_import_log_local,
+    load_import_log_local,
+    load_reference_data,
+    save_business_types,
+    save_load_curves,
+    upsert_load_curve,
+)
 from amr_mapping.models import BusinessType, LoadCurve
 
 _BUSINESS_TYPES_CSV = "code,name_th,category,notes\nTESTBIZ,ธุรกิจทดสอบ,test,\n"
@@ -147,3 +154,27 @@ def test_customers_local_overrides_same_account_no(tmp_path):
     assert len(matching) == 1
     assert matching[0].name == "ชื่อจริงที่ override ชื่อสมมติ"
     assert matching[0].contract_kva == 9999.0
+
+
+def test_load_import_log_local_returns_empty_when_file_missing(tmp_path):
+    assert load_import_log_local(tmp_path / "no_such_file.csv") == []
+
+
+def test_append_import_log_local_creates_file_with_header_then_appends(tmp_path):
+    path = tmp_path / "import_log_local.csv"
+
+    append_import_log_local(
+        {"imported_at": "2026-09-15T10:00:00+00:00", "business_type_code": "34111", "rate_code": "40",
+         "company_name": "บริษัท ทดสอบ จำกัด", "account_no": "019900000001"},
+        path,
+    )
+    append_import_log_local(
+        {"imported_at": "2026-09-15T11:00:00+00:00", "business_type_code": "34120", "rate_code": "30",
+         "company_name": "บริษัท ทดสอบสอง จำกัด", "account_no": "019900000002"},
+        path,
+    )
+
+    entries = load_import_log_local(path)
+    assert len(entries) == 2
+    assert entries[0]["company_name"] == "บริษัท ทดสอบ จำกัด"
+    assert entries[1]["business_type_code"] == "34120"
