@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, redirect, request
 
 from amr_mapping import estimate_customer_load, load_reference_data
 from amr_mapping.amr_import import import_amr_auto, import_amr_for_business
@@ -191,8 +191,11 @@ def api_forecast(account_no: str):
 
 
 @app.route("/new-forecast")
-def adhoc_forecast_page():
-    return app.send_static_file("adhoc.html")
+def adhoc_forecast_page_redirect():
+    """เดิมเป็นหน้าแยก — ตอนนี้รวมเข้าหน้าแรกเป็นแท็บ "พยากรณ์แบบไม่บันทึกข้อมูล" แล้ว
+    (ค่าเริ่มต้นของหน้าแรกอยู่แล้ว) คง route นี้ไว้เผื่อมี bookmark/ลิงก์เก่าอ้างถึง"""
+
+    return redirect("/")
 
 
 @app.route("/api/forecast-adhoc", methods=["POST"])

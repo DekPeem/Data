@@ -1,12 +1,15 @@
+// หน้าเดียว มี 2 โหมดสลับด้วยแท็บ:
+//   "adhoc"  (ค่าเริ่มต้น) พิมพ์ชื่อบริษัท + เลือกธุรกิจ/อัตรา ดูผลทันที ไม่บันทึกอะไรลงไฟล์เลย —
+//            ชื่อบริษัทที่พิมพ์ "ไม่เคย" ถูกส่งไปที่เซิร์ฟเวอร์ (ดู runForecast(): body ที่ fetch
+//            ไปยัง /api/forecast-adhoc มีแค่ business_type_code/rate_code/contract_kva เท่านั้น)
+//   "search" ค้นหาผู้ใช้ไฟที่บันทึกไว้แล้วในทะเบียน (customers.csv/customers_local.csv) ด้วยเลขบัญชี
+
 const PERIOD_COLOR = { P: "#2a78d6", OP: "#eb6834", H: "#1baf7a" };
 const PERIOD_TH = { P: "Peak (P)", OP: "Off-Peak (OP)", H: "Holiday (H)" };
 
-const searchInput = document.getElementById("search-input");
-const searchBtn = document.getElementById("search-btn");
-const searchHint = document.getElementById("search-hint");
 const resultArea = document.getElementById("result");
 const emptyState = document.getElementById("empty-state");
-const customerList = document.getElementById("customer-list");
+const emptyStateText = document.getElementById("empty-state-text");
 
 function formatNumber(n, digits = 0) {
   return n.toLocaleString("th-TH", { minimumFractionDigits: digits, maximumFractionDigits: digits });
@@ -28,18 +31,197 @@ function iconBuilding(color) {
   </svg>`;
 }
 
+// ── สลับโหมดด้วยแท็บ (ไม่เปลี่ยนหน้า/URL) ──
+
+const modeTabs = document.querySelectorAll(".mode-tab");
+const adhocPanel = document.getElementById("adhoc-panel");
+const searchPanel = document.getElementById("search-panel");
+
+let currentMode = "adhoc";
+
+function clearResult() {
+  resultArea.innerHTML = "";
+  resultArea.style.display = "none";
+  emptyState.style.display = "flex";
+}
+
+function setMode(mode) {
+  currentMode = mode;
+  modeTabs.forEach((btn) => btn.classList.toggle("active", btn.dataset.mode === mode));
+  adhocPanel.hidden = mode !== "adhoc";
+  searchPanel.hidden = mode !== "search";
+  emptyStateText.textContent =
+    mode === "adhoc"
+      ? 'กรอกข้อมูลด้านบนแล้วกด "พยากรณ์" เพื่อดูผลพยากรณ์'
+      : 'พิมพ์เลขบัญชีผู้ใช้ไฟแล้วกด "ค้นหา" เพื่อดูผลพยากรณ์';
+  clearResult();
+}
+
+modeTabs.forEach((btn) => btn.addEventListener("click", () => setMode(btn.dataset.mode)));
+
+// ── โหมดค้นหาในทะเบียนลูกค้า ──
+
+const searchInput = document.getElementById("search-input");
+const searchBtn = document.getElementById("search-btn");
+const searchHint = document.getElementById("search-hint");
+const customerList = document.getElementById("customer-list");
+
 async function loadCustomerList() {
   try {
     const res = await fetch("/api/customers");
     const customers = await res.json();
-    customerList.innerHTML = customers
-      .map((c) => `<option value="${c.account_no}">${c.name}</option>`)
-      .join("");
+    customerList.innerHTML = customers.map((c) => `<option value="${c.account_no}">${c.name}</option>`).join("");
   } catch (err) {
     // ถ้าโหลดรายชื่อไม่สำเร็จ ยังพิมพ์เลขบัญชีค้นหาเองได้ตามปกติ ไม่ต้องบล็อกอะไร
     console.warn("โหลดรายชื่อผู้ใช้ไฟไม่สำเร็จ", err);
   }
 }
+
+async function runSearch() {
+  const q = searchInput.value.trim();
+  searchHint.textContent = "";
+  if (!q) {
+    searchHint.textContent = "กรุณาพิมพ์เลขบัญชีผู้ใช้ไฟ";
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/forecast/${encodeURIComponent(q)}`);
+    const data = await res.json();
+
+    if (!res.ok) {
+      clearResult();
+      searchHint.textContent = data.message || "เกิดข้อผิดพลาด";
+      return;
+    }
+
+    const c = data.customer;
+    renderResult(data, {
+      name: c.name,
+      subLabel: `บัญชีผู้ใช้ไฟ ${c.account_no}`,
+      businessTypeCode: c.business_type_code,
+      fields: [
+        { label: "เลขบัญชีผู้ใช้ไฟ", value: c.account_no },
+        { label: "ประเภทอัตรา", value: c.rate_code || "ไม่ทราบ" },
+        { label: "KVA ตามสัญญา", value: c.contract_kva ? formatNumber(c.contract_kva) + " kVA" : "ไม่ทราบ" },
+      ],
+      extraField: null,
+      disclaimerExtra: "",
+    });
+  } catch (err) {
+    searchHint.textContent = "เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ";
+    console.error(err);
+  }
+}
+
+searchBtn.addEventListener("click", runSearch);
+searchInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") runSearch();
+});
+
+// ── โหมดพยากรณ์แบบไม่บันทึกข้อมูล ──
+// ประเภทธุรกิจ/รหัสอัตราที่เลือกได้ในโหมดนี้ ต้อง "มีโปรไฟล์อ้างอิงจริงรองรับ" เท่านั้น (มาจาก
+// /api/load-profile-keys ซึ่งอ่านตรงจาก load_profiles.csv) — กันไม่ให้เลือกคู่ที่ไม่มีข้อมูลจริง
+// มาจับกัน แล้วได้ผลแบบ fallback (BUSINESS_ONLY/RATE_ONLY) ที่ดูเหมือนจับคู่ผิดพลาดทั้งที่จริงๆ
+// คือยังไม่มีข้อมูลของคู่นั้นให้จับแบบตรงเป๊ะได้ตั้งแต่แรก
+
+const nameInput = document.getElementById("f-name");
+const businessTypeSelect = document.getElementById("f-business-type");
+const rateCodeSelect = document.getElementById("f-rate-code");
+const kvaInput = document.getElementById("f-kva");
+const adhocSubmitBtn = document.getElementById("adhoc-submit-btn");
+const adhocFormHint = document.getElementById("adhoc-form-hint");
+
+let PROFILE_KEYS = []; // [{business_type_code, rate_code, sample_size}, ...]
+let BUSINESS_TYPE_NAMES = {}; // code -> name_th
+
+async function loadBusinessTypesAndKeys() {
+  try {
+    const [typesRes, keysRes] = await Promise.all([fetch("/api/business-types"), fetch("/api/load-profile-keys")]);
+    const types = await typesRes.json();
+    PROFILE_KEYS = await keysRes.json();
+    BUSINESS_TYPE_NAMES = Object.fromEntries(types.map((t) => [t.code, t.name_th]));
+
+    const businessCodesWithData = [...new Set(PROFILE_KEYS.map((k) => k.business_type_code))];
+    businessTypeSelect.innerHTML =
+      `<option value="">-- ไม่ระบุ (จับคู่จากอัตราอย่างเดียว) --</option>` +
+      businessCodesWithData
+        .map((code) => `<option value="${code}">${BUSINESS_TYPE_NAMES[code] || code} · ${code}</option>`)
+        .join("");
+
+    updateRateCodeOptions();
+  } catch (err) {
+    console.warn("โหลดประเภทธุรกิจ/รหัสอัตราที่มีข้อมูลจริงไม่สำเร็จ", err);
+  }
+}
+
+function updateRateCodeOptions() {
+  const businessTypeCode = businessTypeSelect.value;
+  const relevant = businessTypeCode ? PROFILE_KEYS.filter((k) => k.business_type_code === businessTypeCode) : PROFILE_KEYS;
+  const rateCodes = [...new Set(relevant.map((k) => k.rate_code))];
+
+  const previousValue = rateCodeSelect.value;
+  rateCodeSelect.innerHTML = rateCodes.map((code) => `<option value="${code}">${code}</option>`).join("");
+  if (rateCodes.includes(previousValue)) {
+    rateCodeSelect.value = previousValue;
+  }
+}
+
+businessTypeSelect.addEventListener("change", updateRateCodeOptions);
+
+async function runForecast() {
+  adhocFormHint.textContent = "";
+  const displayName = nameInput.value.trim(); // ใช้แสดงผลเท่านั้น — ไม่ส่งไป server
+  const businessTypeCode = businessTypeSelect.value.trim();
+  const rateCode = rateCodeSelect.value.trim();
+  const kvaRaw = kvaInput.value.trim();
+
+  if (!businessTypeCode && !rateCode) {
+    adhocFormHint.textContent = "กรุณาเลือกประเภทธุรกิจ หรือ กรอกรหัสอัตรา อย่างน้อยหนึ่งอย่าง";
+    return;
+  }
+
+  const body = {
+    business_type_code: businessTypeCode || undefined,
+    rate_code: rateCode || undefined,
+    contract_kva: kvaRaw || undefined,
+  };
+
+  try {
+    const res = await fetch("/api/forecast-adhoc", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      clearResult();
+      adhocFormHint.textContent = data.message || "เกิดข้อผิดพลาด";
+      return;
+    }
+
+    const kva = kvaRaw ? Number(kvaRaw) : null;
+    renderResult(data, {
+      name: displayName || "(ไม่ได้ระบุชื่อ)",
+      subLabel: "พยากรณ์แบบไม่บันทึกข้อมูล — ไม่มีเลขบัญชีผู้ใช้ไฟ",
+      businessTypeCode,
+      fields: [
+        { label: "ประเภทอัตราที่กรอก", value: rateCode || "ไม่ทราบ" },
+        { label: "KVA ตามสัญญาที่กรอก", value: kva ? formatNumber(kva) + " kVA" : "ไม่ทราบ" },
+      ],
+      extraField: { label: "จำนวนตัวอย่างในโปรไฟล์", getValue: (p) => p.sample_size || "-" },
+      disclaimerExtra: " และ<b>ไม่มีการบันทึกชื่อบริษัท/ข้อมูลที่กรอกในหน้านี้ลงไฟล์หรือฐานข้อมูลใดๆ ทั้งสิ้น</b>",
+    });
+  } catch (err) {
+    adhocFormHint.textContent = "เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ";
+    console.error(err);
+  }
+}
+
+adhocSubmitBtn.addEventListener("click", runForecast);
+
+// ── กราฟแท่ง P/OP/H ──
 
 function renderBarChart(title, values, unit) {
   const max = Math.max(...Object.values(values), 1);
@@ -62,7 +244,7 @@ function renderBarChart(title, values, unit) {
 }
 
 // ── กราฟเส้น "การใช้ไฟฟ้ารายชั่วโมงใน 1 วัน" แยกดูตามวันในสัปดาห์ได้ (จันทร์-อาทิตย์ หรือ
-//    เฉลี่ยทั้งเดือน) พร้อมชี้ช่วง Peak (09:00-22:00 วันทำการ) บนกราฟ ──
+//    เฉลี่ยทั้งเดือน) พร้อมชี้จุดที่ใช้ไฟฟ้าสูงสุดจริงของวัน + แถบช่วงอัตรา Peak ตาม TOU ──
 
 const DAY_TYPE_TH = {
   all: "เฉลี่ยทั้งเดือน",
@@ -176,11 +358,6 @@ function initDailyCurveSection(container, curveData) {
 }
 
 function renderStatTiles(demand, energy) {
-  const rows = ["P", "OP", "H"].flatMap((period) => [
-    { period, value: demand[period], unit: "kW", label: "กำลังไฟฟ้าสูงสุด", digits: 2 },
-    { period, value: energy[period], unit: "kWh", label: "พลังงานไฟฟ้า / เดือน", digits: 0 },
-  ]);
-  // จัดเป็นแถวกำลังไฟฟ้าก่อน แล้วค่อยพลังงาน (เหมือน mockup)
   const ordered = [
     ...["P", "OP", "H"].map((p) => ({ period: p, value: demand[p], unit: "kW", label: "กำลังไฟฟ้าสูงสุด", digits: 2 })),
     ...["P", "OP", "H"].map((p) => ({ period: p, value: energy[p], unit: "kWh", label: "พลังงานไฟฟ้า / เดือน", digits: 0 })),
@@ -197,8 +374,11 @@ function renderStatTiles(demand, energy) {
     .join("");
 }
 
-function renderResult(data) {
-  const c = data.customer;
+// ── ผลลัพธ์รวม ใช้ร่วมกันทั้ง 2 โหมด — identity คือข้อมูลที่ต่างกันระหว่างโหมด (ชื่อ/เลขบัญชี
+//    ที่มาของธุรกิจ/อัตรา ฯลฯ) ส่วน data (match/matched_profile/forecast/curve) รูปแบบเดียวกัน
+//    ทั้งสอง endpoint (/api/forecast/<account_no> และ /api/forecast-adhoc) อยู่แล้ว ──
+
+function renderResult(data, identity) {
   const m = data.match;
   const p = data.matched_profile;
   const f = data.forecast;
@@ -206,9 +386,14 @@ function renderResult(data) {
   const matchColor = m.is_exact ? "#0ca30c" : "#fab219";
   const matchBg = m.is_exact ? "#e8f7ec" : "#fff7e6";
 
-  const businessBadge = c.business_type_code
-    ? `<span class="badge" style="background:#eef3fa;color:#184f95;">${p.business_type_name || c.business_type_code} · ${c.business_type_code}</span>`
+  const businessBadge = identity.businessTypeCode
+    ? `<span class="badge" style="background:#eef3fa;color:#184f95;">${p.business_type_name || identity.businessTypeCode} · ${identity.businessTypeCode}</span>`
     : `<span class="badge" style="background:rgba(15,23,42,0.05);color:#55647a;">ยังไม่จัดประเภทธุรกิจ</span>`;
+
+  const fields = [...identity.fields, { label: "โปรไฟล์ที่ใช้อ้างอิง", value: `${p.business_type_name || p.business_type_code || "-"} / อัตรา ${p.rate_code}` }];
+  if (identity.extraField) {
+    fields.push({ label: identity.extraField.label, value: identity.extraField.getValue(p) });
+  }
 
   resultArea.innerHTML = `
     <div class="card customer-card">
@@ -216,8 +401,8 @@ function renderResult(data) {
         <div class="customer-head-left">
           <div class="customer-icon">${iconBuilding("#2a78d6")}</div>
           <div>
-            <div class="customer-name">${c.name}</div>
-            <div class="customer-sub">บัญชีผู้ใช้ไฟ ${c.account_no}</div>
+            <div class="customer-name">${identity.name}</div>
+            <div class="customer-sub">${identity.subLabel}</div>
           </div>
         </div>
         <div class="customer-badges">
@@ -227,10 +412,7 @@ function renderResult(data) {
       </div>
       <div class="divider"></div>
       <div class="field-grid">
-        <div class="field-item"><div class="field-label">เลขบัญชีผู้ใช้ไฟ</div><div class="field-value">${c.account_no}</div></div>
-        <div class="field-item"><div class="field-label">ประเภทอัตรา</div><div class="field-value">${c.rate_code || "ไม่ทราบ"}</div></div>
-        <div class="field-item"><div class="field-label">KVA ตามสัญญา</div><div class="field-value">${c.contract_kva ? formatNumber(c.contract_kva) + " kVA" : "ไม่ทราบ"}</div></div>
-        <div class="field-item"><div class="field-label">โปรไฟล์ที่ใช้อ้างอิง</div><div class="field-value">${p.business_type_name || p.business_type_code || "-"} / อัตรา ${p.rate_code}</div></div>
+        ${fields.map((fl) => `<div class="field-item"><div class="field-label">${fl.label}</div><div class="field-value">${fl.value}</div></div>`).join("")}
       </div>
     </div>
 
@@ -275,7 +457,7 @@ function renderResult(data) {
 
     <div class="disclaimer">
       ${iconInfo("#55647a")}
-      <div class="disclaimer-text">ค่าที่แสดงเป็นค่าพยากรณ์ คำนวณจากค่าเฉลี่ยของผู้ใช้ไฟกลุ่มธุรกิจและอัตราเดียวกัน ไม่ใช่ข้อมูลจากมิเตอร์ AMR ของผู้ใช้ไฟรายนี้โดยตรง เนื่องจากยังไม่มีการติดตั้ง AMR</div>
+      <div class="disclaimer-text">ค่าที่แสดงเป็นค่าพยากรณ์ คำนวณจากค่าเฉลี่ยของผู้ใช้ไฟกลุ่มธุรกิจและอัตราเดียวกัน ไม่ใช่ข้อมูลจากมิเตอร์ AMR ของผู้ใช้ไฟรายนี้โดยตรง เนื่องจากยังไม่มีการติดตั้ง AMR${identity.disclaimerExtra}</div>
     </div>
   `;
 
@@ -285,35 +467,8 @@ function renderResult(data) {
   initDailyCurveSection(document.getElementById("daily-curve-root"), data.curve);
 }
 
-async function runSearch() {
-  const q = searchInput.value.trim();
-  searchHint.textContent = "";
-  if (!q) {
-    searchHint.textContent = "กรุณาพิมพ์เลขบัญชีผู้ใช้ไฟ";
-    return;
-  }
+// ── เริ่มต้น ──
 
-  try {
-    const res = await fetch(`/api/forecast/${encodeURIComponent(q)}`);
-    const data = await res.json();
-
-    if (!res.ok) {
-      resultArea.style.display = "none";
-      emptyState.style.display = "flex";
-      searchHint.textContent = data.message || "เกิดข้อผิดพลาด";
-      return;
-    }
-
-    renderResult(data);
-  } catch (err) {
-    searchHint.textContent = "เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ";
-    console.error(err);
-  }
-}
-
-searchBtn.addEventListener("click", runSearch);
-searchInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") runSearch();
-});
-
+setMode("adhoc");
+loadBusinessTypesAndKeys();
 loadCustomerList();

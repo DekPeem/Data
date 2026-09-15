@@ -6,6 +6,30 @@
   <title>ระบบพยากรณ์โปรไฟล์การใช้ไฟฟ้า — No AMR</title>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap">
   <link rel="stylesheet" href="styles.css">
+  <style>
+    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+    .form-field { display: flex; flex-direction: column; gap: 6px; }
+    .form-field label { font-size: 13px; font-weight: 600; color: #55647a; }
+    .form-field input, .form-field select {
+      height: 44px; border-radius: 10px; border: 1px solid rgba(15,23,42,0.14);
+      padding: 0 14px; font-size: 14px; font-family: inherit; background: #fff; color: #0f1b2d;
+    }
+    .form-field .hint { font-size: 12px; color: #8996ab; }
+    .submit-row { display: flex; justify-content: flex-end; }
+    .warn-box {
+      background: #eef3fa; border: 1px solid rgba(42, 120, 214, 0.25); border-radius: 10px;
+      padding: 14px 18px; font-size: 13px; color: #184f95; line-height: 1.6;
+    }
+    .mode-tabs { display: flex; gap: 6px; }
+    .mode-tab {
+      padding: 11px 22px; border-radius: 10px 10px 0 0; border: 1px solid rgba(15,23,42,0.12); border-bottom: none;
+      background: rgba(15,23,42,0.03); color: #55647a; font-size: 14px; font-weight: 600; font-family: inherit; cursor: pointer;
+    }
+    .mode-tab:hover { color: #184f95; }
+    .mode-tab.active { background: #ffffff; color: #184f95; box-shadow: 0 -1px 0 #ffffff inset; }
+    .mode-panel-wrap { background: #ffffff; border: 1px solid rgba(15,23,42,0.12); border-radius: 0 12px 12px 12px; padding: 24px; display: flex; flex-direction: column; gap: 20px; margin-top: -1px; }
+    .mode-panel-wrap[hidden] { display: none; }
+  </style>
 </head>
 <body>
   <div class="root">
@@ -20,17 +44,57 @@
           <div class="header-subtitle">โครงการ No AMR — สำหรับผู้ใช้ไฟที่ยังไม่มีข้อมูลมิเตอร์ AMR ของตัวเอง</div>
         </div>
       </div>
-      <div style="display:flex;gap:16px;align-items:center;">
-        <a href="/new-forecast" style="font-size:13px;color:#2a78d6;text-decoration:none;">พยากรณ์แบบไม่บันทึกข้อมูล →</a>
-        <a href="/admin" style="font-size:13px;color:#2a78d6;text-decoration:none;">นำเข้า AMR (Admin) →</a>
-      </div>
+      <a href="/admin" style="font-size:13px;color:#2a78d6;text-decoration:none;">นำเข้า AMR (Admin) →</a>
     </header>
 
     <main class="body-wrap">
 
-      <!-- Search -->
-      <section class="search-block">
-        <label class="search-label" for="search-input">ค้นหาผู้ใช้ไฟ</label>
+      <div class="mode-tabs">
+        <button type="button" class="mode-tab" data-mode="adhoc">พยากรณ์แบบไม่บันทึกข้อมูล</button>
+        <button type="button" class="mode-tab" data-mode="search">ค้นหาในทะเบียนลูกค้า</button>
+      </div>
+
+      <!-- โหมด: พยากรณ์แบบไม่บันทึกข้อมูล (ค่าเริ่มต้น — เหมาะกับผู้ใช้ไฟที่ยังไม่มีอยู่ในทะเบียน) -->
+      <div id="adhoc-panel" class="mode-panel-wrap">
+        <div class="warn-box">
+          ℹ️ พิมพ์ชื่อบริษัทได้อย่างอิสระ (แม้เป็นชื่อจริง) เพราะ<b>ชื่อที่พิมพ์จะไม่ถูกส่งไปที่เซิร์ฟเวอร์เลย</b> —
+          ใช้แสดงผลในเบราว์เซอร์นี้เท่านั้น ไม่ถูกบันทึกลงไฟล์ ไม่ถูก log ที่ไหนทั้งสิ้น ปิด/รีเฟรชหน้านี้แล้วข้อมูลหายไปทันที
+        </div>
+
+        <div class="form-grid">
+          <div class="form-field" style="grid-column: 1 / -1;">
+            <label for="f-name">ชื่อบริษัท (แสดงผลอย่างเดียว ไม่ถูกบันทึก/ส่งไปเซิร์ฟเวอร์)</label>
+            <input id="f-name" type="text" autocomplete="off" placeholder="เช่น บริษัท ตัวอย่าง จำกัด">
+          </div>
+
+          <div class="form-field">
+            <label for="f-business-type">ประเภทธุรกิจ</label>
+            <select id="f-business-type"></select>
+            <div class="hint">แสดงเฉพาะประเภทที่มีโปรไฟล์อ้างอิงจริงรองรับแล้วเท่านั้น</div>
+          </div>
+
+          <div class="form-field">
+            <label for="f-rate-code">รหัสอัตรา</label>
+            <select id="f-rate-code"></select>
+            <div class="hint">ตัวเลือกจะเปลี่ยนตามประเภทธุรกิจที่เลือก — มีเฉพาะคู่ที่มีข้อมูลจริงรองรับ (จับคู่ตรง exact match เสมอ)</div>
+          </div>
+
+          <div class="form-field">
+            <label for="f-kva">KVA ตามสัญญา (ถ้าทราบ — ไม่บังคับ)</label>
+            <input id="f-kva" type="number" min="0" step="any" placeholder="เช่น 2000">
+            <div class="hint">ใช้ปรับสเกลผลพยากรณ์ตามขนาดสัญญาจริง ถ้าไม่กรอกจะใช้ค่าดิบของโปรไฟล์อ้างอิง</div>
+          </div>
+        </div>
+
+        <div class="submit-row">
+          <button id="adhoc-submit-btn" class="search-button">พยากรณ์</button>
+        </div>
+        <div id="adhoc-form-hint" class="search-hint"></div>
+      </div>
+
+      <!-- โหมด: ค้นหาในทะเบียนลูกค้า (ผู้ใช้ไฟที่บันทึกไว้แล้วใน customers.csv/customers_local.csv) -->
+      <div id="search-panel" class="mode-panel-wrap" hidden>
+        <label class="search-label" for="search-input">ค้นหาผู้ใช้ไฟ (เลขบัญชี/ชื่อที่บันทึกไว้ในทะเบียนแล้ว)</label>
         <div class="search-row">
           <div class="search-box">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#8996ab" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
@@ -40,13 +104,13 @@
           <button id="search-btn" class="search-button">ค้นหา</button>
         </div>
         <div id="search-hint" class="search-hint"></div>
-      </section>
+      </div>
 
       <div id="result" class="result-area"></div>
 
       <div id="empty-state" class="empty-state">
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#8996ab" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <div>พิมพ์เลขบัญชีผู้ใช้ไฟแล้วกด "ค้นหา" เพื่อดูผลพยากรณ์</div>
+        <div id="empty-state-text">กรอกข้อมูลด้านบนแล้วกด "พยากรณ์" เพื่อดูผลพยากรณ์</div>
       </div>
 
     </main>

@@ -24,6 +24,15 @@ def test_index_serves_html(client):
     assert b"<html" in res.data
 
 
+def test_new_forecast_redirects_to_index(client):
+    """หน้า /new-forecast แยกเดิมถูกรวมเข้าหน้าแรกเป็นแท็บแล้ว - route เก่ายังอยู่แต่แค่ redirect
+    ไป "/" เผื่อมี bookmark/ลิงก์เก่าอ้างถึง"""
+
+    res = client.get("/new-forecast", follow_redirects=False)
+    assert res.status_code == 302
+    assert res.headers["Location"] == "/"
+
+
 def test_list_customers(client):
     res = client.get("/api/customers")
     assert res.status_code == 200
