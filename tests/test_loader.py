@@ -3,8 +3,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from amr_mapping.loader import load_reference_data, save_load_curves, upsert_load_curve
-from amr_mapping.models import LoadCurve
+from amr_mapping.loader import load_reference_data, save_business_types, save_load_curves, upsert_load_curve
+from amr_mapping.models import BusinessType, LoadCurve
 
 _BUSINESS_TYPES_CSV = "code,name_th,category,notes\nTESTBIZ,ธุรกิจทดสอบ,test,\n"
 _RATE_SCHEDULES_CSV = "code,billing_method,voltage_level,description\n50,TOU,LV,\n"
@@ -52,6 +52,35 @@ def test_load_reference_data_merges_customers_local(tmp_path):
     real = next(c for c in reference.customers if c.account_no == "REAL-ACCOUNT-001")
     assert real.name == "บริษัท ตัวอย่างจริง จำกัด"
     assert real.contract_kva == 2000.0
+
+
+def test_business_types_hierarchy_fields_round_trip(tmp_path):
+    """section_code/division_code เป็นคอลัมน์ใหม่ (เพิ่มเข้ามาทีหลัง สำหรับ DIVISION_ONLY
+    fallback ใน mapping.find_load_profile) — ต้อง save/load กลับมาได้ครบ"""
+
+    data_dir = _make_data_dir(tmp_path)
+    bt = BusinessType(
+        code="17011", name_th="ผลิตเยื่อกระดาษ", category="paper", notes="ทดสอบ",
+        section_code="C", section_name_th="การผลิต", division_code="17", division_name_th="การผลิตกระดาษ",
+    )
+    save_business_types({"17011": bt}, data_dir / "business_types.csv")
+
+    reference = load_reference_data(data_dir)
+    loaded = reference.business_types["17011"]
+    assert loaded.section_code == "C"
+    assert loaded.division_code == "17"
+    assert loaded.division_name_th == "การผลิตกระดาษ"
+
+
+def test_business_types_without_hierarchy_columns_still_loads(tmp_path):
+    """ไฟล์ business_types.csv แบบเก่า (ไม่มีคอลัมน์ section_code/division_code เลย) ต้องยัง
+    โหลดได้ตามปกติ ไม่ error - hierarchy fields เป็น None/ค่าว่างแทน"""
+
+    data_dir = _make_data_dir(tmp_path)  # ใช้ _BUSINESS_TYPES_CSV เดิมที่ไม่มีคอลัมน์ใหม่
+    reference = load_reference_data(data_dir)
+    bt = reference.business_types["TESTBIZ"]
+    assert bt.section_code is None
+    assert bt.division_code is None
 
 
 def test_load_reference_data_without_load_curves_file_is_empty_not_error(tmp_path):

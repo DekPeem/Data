@@ -44,6 +44,7 @@ _JOBS_LOCK = threading.Lock()
 MATCH_LEVEL_LABEL_TH = {
     MatchLevel.EXACT: "ตรงตามธุรกิจและอัตรา (Exact Match)",
     MatchLevel.BUSINESS_ONLY: "ตรงตามประเภทธุรกิจ (ไม่ทราบ/ไม่ตรงอัตรา)",
+    MatchLevel.DIVISION_ONLY: "ไม่มีข้อมูลธุรกิจนี้ตรงๆ แต่อยู่ในกลุ่มอุตสาหกรรม (TSIC) เดียวกับที่มีข้อมูล",
     MatchLevel.RATE_ONLY: "ตรงตามประเภทอัตรา (ยังไม่จัดประเภทธุรกิจ)",
     MatchLevel.DEFAULT: "ไม่พบข้อมูลที่ตรงกัน (ใช้ค่ากลาง)",
 }
