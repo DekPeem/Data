@@ -113,9 +113,9 @@ const WEEKDAY_DAY_TYPES = new Set(["all", "mon", "tue", "wed", "thu", "fri"]);
 
 function renderDailyCurveSVG(hours, dayType) {
   const width = 640;
-  const height = 220;
+  const height = 230;
   const padX = 40;
-  const padY = 30;
+  const padY = 40;
   const chartW = width - padX * 2;
   const chartH = height - padY * 2 - 16;
   const hourW = chartW / 24;
@@ -127,20 +127,34 @@ function renderDailyCurveSVG(hours, dayType) {
   }
   const max = Math.max(...known, 1);
 
+  // แถบอัตรา Peak ตามช่วงเวลา TOU ของ กฟภ. (วันทำการ 09:00-22:00 เสมอ ไม่ว่าจริงๆ จะใช้ไฟ
+  // เยอะช่วงนั้นหรือไม่) — ป้ายกำกับวางไว้ในแถบเอง ไม่ใช่จุดที่ใช้ไฟสูงสุดจริง (ดู peakPointMarker)
   const peakRect = WEEKDAY_DAY_TYPES.has(dayType)
-    ? `<rect x="${hourX(9).toFixed(1)}" y="${padY}" width="${(hourX(22) - hourX(9)).toFixed(1)}" height="${chartH.toFixed(1)}" fill="#2a78d6" opacity="0.08"/>
-       <text x="${((hourX(9) + hourX(22)) / 2).toFixed(1)}" y="${padY - 10}" text-anchor="middle" font-size="11" font-weight="700" fill="#184f95">ช่วง Peak (09:00-22:00)</text>`
+    ? `<rect x="${hourX(9).toFixed(1)}" y="${padY}" width="${(hourX(22) - hourX(9)).toFixed(1)}" height="${chartH.toFixed(1)}" fill="#2a78d6" opacity="0.07"/>
+       <rect x="${(((hourX(9) + hourX(22)) / 2) - 78).toFixed(1)}" y="${padY + 3}" width="156" height="15" rx="3" fill="#eef3fa" opacity="0.9"/>
+       <text x="${((hourX(9) + hourX(22)) / 2).toFixed(1)}" y="${(padY + 14).toFixed(1)}" text-anchor="middle" font-size="10.5" font-weight="600" fill="#184f95">ช่วงอัตรา Peak (TOU) 09:00-22:00</text>`
     : "";
 
   const points = hours
-    .map((v, h) => (v === null || v === undefined ? null : { x: hourX(h) + hourW / 2, y: padY + (1 - v / max) * chartH, v }))
+    .map((v, h) => (v === null || v === undefined ? null : { x: hourX(h) + hourW / 2, y: padY + (1 - v / max) * chartH, v, h }))
     .filter(Boolean);
+
+  // จุดที่ใช้ไฟฟ้าสูงสุดจริงของวัน (ไม่ใช่ช่วงอัตรา Peak ข้างบน) — ชี้ด้วยเส้นประ+จุดสีแดง
+  const peakPoint = points.reduce((best, p) => (best === null || p.v > best.v ? p : best), null);
+  const peakPointMarker = peakPoint
+    ? `<line x1="${peakPoint.x.toFixed(1)}" y1="${padY}" x2="${peakPoint.x.toFixed(1)}" y2="${(padY + chartH).toFixed(1)}" stroke="#d03b3b" stroke-width="1.5" stroke-dasharray="4,3"/>
+       <text x="${peakPoint.x.toFixed(1)}" y="${(padY - 26).toFixed(1)}" text-anchor="middle" font-size="11.5" font-weight="700" fill="#d03b3b">ใช้ไฟสูงสุด ${String(peakPoint.h).padStart(2, "0")}:00 น. (${formatNumber(peakPoint.v, 1)} kW)</text>
+       <circle cx="${peakPoint.x.toFixed(1)}" cy="${peakPoint.y.toFixed(1)}" r="5.5" fill="#d03b3b" stroke="#ffffff" stroke-width="2"/>`
+    : "";
 
   const polyline =
     points.length > 1
       ? `<polyline points="${points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ")}" fill="none" stroke="#2a78d6" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>`
       : "";
-  const dots = points.map((p) => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3" fill="#2a78d6"/>`).join("");
+  const dots = points
+    .filter((p) => p !== peakPoint)
+    .map((p) => `<circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="3" fill="#2a78d6"/>`)
+    .join("");
 
   const hourLabels = [0, 3, 6, 9, 12, 15, 18, 21]
     .map(
@@ -152,7 +166,7 @@ function renderDailyCurveSVG(hours, dayType) {
 
   return `
     <svg viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;" preserveAspectRatio="xMidYMid meet">
-      ${peakRect}${baseline}${polyline}${dots}${hourLabels}
+      ${peakRect}${baseline}${polyline}${dots}${hourLabels}${peakPointMarker}
     </svg>`;
 }
 
@@ -173,8 +187,8 @@ function initDailyCurveSection(container, curveData) {
       .map((d) => `<button type="button" data-day="${d}" class="day-type-btn${d === selected ? " active" : ""}">${DAY_TYPE_TH[d]}</button>`)
       .join("");
     const caption = WEEKDAY_DAY_TYPES.has(selected)
-      ? `<div class="chart-caption">แถบสีฟ้าอ่อนคือช่วง Peak (วันทำการ 09:00-22:00) — นอกแถบเป็น Off-Peak</div>`
-      : `<div class="chart-caption">วันหยุดสุดสัปดาห์ — ทั้งวันเป็นอัตรา Holiday (H) ไม่มีช่วง Peak</div>`;
+      ? `<div class="chart-caption"><span style="color:#d03b3b;font-weight:700;">●</span> จุด/เส้นประสีแดง คือช่วงเวลาที่ใช้ไฟฟ้าสูงสุดจริงของวันนี้ &nbsp; <span style="color:#184f95;font-weight:700;">■</span> แถบสีฟ้าอ่อน คือช่วงอัตรา Peak ตาม TOU (วันทำการ 09:00-22:00 — ไม่จำเป็นต้องตรงกับช่วงที่ใช้ไฟสูงสุดจริงเสมอไป)</div>`
+      : `<div class="chart-caption"><span style="color:#d03b3b;font-weight:700;">●</span> จุด/เส้นประสีแดง คือช่วงเวลาที่ใช้ไฟฟ้าสูงสุดจริงของวันนี้ &nbsp; วันหยุดสุดสัปดาห์ทั้งวันเป็นอัตรา Holiday (H) ไม่มีช่วงอัตรา Peak</div>`;
 
     container.innerHTML = `
       <div class="card chart-card">
