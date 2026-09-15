@@ -17,6 +17,7 @@ from __future__ import annotations
 import calendar
 import os
 import random
+import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -25,6 +26,7 @@ from typing import Callable, List, Optional
 BASE_URL = "https://www.amr.pea.co.th"
 LOGIN_URL = f"{BASE_URL}/AMRWEB/MainCust.aspx"
 SEL_PERIOD_URL = f"{BASE_URL}/AMRWEB/selPeriodProfile.aspx"
+DASHBOARD_URL = f"{BASE_URL}/AMRWEB/CustDashboard.aspx"
 
 ProgressCallback = Callable[[str], None]
 
@@ -136,6 +138,37 @@ def amr_login(driver, username: str, password: str, log: ProgressCallback = _noo
         return True
     log("❌ Login ไม่สำเร็จ (ตรวจสอบ username/password)")
     return False
+
+
+def extract_dashboard_params(page_source: str) -> dict:
+    """ดึง CustCode / Custid / PeaNo จาก HTML ของหน้า MainCust.aspx หลัง login สำเร็จ
+
+    ค่าเหล่านี้ฝังอยู่ในหน้าเป็น query string 2 จุด (ไม่ใช่ hidden input ธรรมดา):
+      1. ในฟังก์ชัน JS `openUrl()`: var param = "?CustCode=...&Custid=...";
+      2. ใน src ของ <iframe id="frmMain">: CustDashboard.aspx?CustCode=...&Custid=...&PeaNo=...
+
+    คืนค่า dict {"custcode":..., "custid":..., "peano":...} (ค่าใดหาไม่เจอเป็น None)
+    """
+
+    def find(pattern: str) -> Optional[str]:
+        m = re.search(pattern, page_source)
+        return m.group(1) if m else None
+
+    return {
+        "custcode": find(r"CustCode=(\d+)"),
+        "custid": find(r"Custid=(\d+)"),
+        "peano": find(r"PeaNo=(\d+)"),
+    }
+
+
+def build_dashboard_url(custcode: str, custid: str, peano: Optional[str] = None) -> str:
+    """สร้าง URL ของหน้า CustDashboard.aspx (ข้อมูลผู้ใช้ไฟ: ประเภทธุรกิจ/อัตรา/KVA ฯลฯ)
+    จากค่าที่ได้จาก extract_dashboard_params() — เปิด URL นี้ตรงๆ แทนการพึ่ง iframe"""
+
+    url = f"{DASHBOARD_URL}?CustCode={custcode}&Custid={custid}"
+    if peano:
+        url += f"&PeaNo={peano}"
+    return url
 
 
 def get_meter_options(driver, cust_code: str, log: ProgressCallback = _noop) -> List[dict]:
