@@ -3,6 +3,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import amr_mapping.dbd_lookup as dbd_lookup
 from amr_mapping.dbd_lookup import (
     CompanyBusinessInfo,
     build_search_url,
@@ -148,6 +149,46 @@ def test_search_company_business_type_no_results_returns_empty_list():
 
     assert results == []
     assert any("ไม่พบผลลัพธ์" in m for m in logs)
+
+
+def test_lookup_business_type_for_company_closes_driver_always(monkeypatch):
+    """lookup_business_type_for_company (entry point ที่ web/app.py เรียก) ต้องปิด driver
+    เสมอ ไม่ว่าค้นหาสำเร็จหรือ error กลางคัน"""
+
+    closed = {"quit_called": False}
+
+    class _FakeDriver(_FakeSearchDriver):
+        def quit(self):
+            closed["quit_called"] = True
+
+    fake_driver = _FakeDriver()
+    monkeypatch.setattr(dbd_lookup, "setup_driver", lambda headless=True: fake_driver)
+
+    results = dbd_lookup.lookup_business_type_for_company("SCG")
+
+    assert closed["quit_called"] is True
+    assert len(results) == 1
+    assert results[0].tsic_code == "69100"
+
+
+def test_lookup_business_type_for_company_closes_driver_even_on_error(monkeypatch):
+    class _FakeDriver(_FakeSearchDriver):
+        def quit(self):
+            closed["quit_called"] = True
+
+        def get(self, url):
+            raise RuntimeError("จำลอง error ระหว่างเปิดหน้าเว็บ")
+
+    closed = {"quit_called": False}
+    fake_driver = _FakeDriver()
+    monkeypatch.setattr(dbd_lookup, "setup_driver", lambda headless=True: fake_driver)
+
+    import pytest
+
+    with pytest.raises(RuntimeError):
+        dbd_lookup.lookup_business_type_for_company("SCG")
+
+    assert closed["quit_called"] is True
 
 
 def test_search_company_business_type_skips_malformed_rows():

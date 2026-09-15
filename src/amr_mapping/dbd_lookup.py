@@ -59,6 +59,40 @@ class CompanyBusinessInfo:
         return code[:2] if len(code) >= 2 else None
 
 
+def _require_selenium():
+    try:
+        from selenium import webdriver  # noqa: F401
+    except ImportError as exc:  # pragma: no cover
+        raise ImportError(
+            "ต้องติดตั้ง selenium และ webdriver-manager ก่อนใช้งาน dbd_lookup: "
+            "pip install selenium webdriver-manager"
+        ) from exc
+
+
+def setup_driver(headless: bool = True):
+    """สร้าง Chrome WebDriver แบบเบา (ไม่ต้องตั้งค่าดาวน์โหลดไฟล์เหมือน amr_downloader.setup_driver
+    เพราะโมดูลนี้แค่เปิดหน้าเว็บอ่านผลลัพธ์ ไม่ได้ดาวน์โหลดไฟล์ใดๆ เลย)"""
+
+    _require_selenium()
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.chrome.service import Service
+    from webdriver_manager.chrome import ChromeDriverManager
+
+    chrome_opts = Options()
+    if headless:
+        chrome_opts.add_argument("--headless=new")
+    chrome_opts.add_argument("--disable-gpu")
+    chrome_opts.add_argument("--no-sandbox")
+    chrome_opts.add_argument("--disable-dev-shm-usage")
+    chrome_opts.add_argument("--window-size=1280,900")
+
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=chrome_opts)
+    driver.implicitly_wait(5)
+    return driver
+
+
 def build_search_url(keyword: str) -> str:
     return f"{BASE_URL}{SEARCH_PATH}?keyword={quote(keyword)}"
 
@@ -116,6 +150,23 @@ def search_company_business_type(
     results = _parse_result_rows(driver)
     log(f"✅ พบ {len(results)} รายการที่ตรงกับ '{company_name}'")
     return results
+
+
+def lookup_business_type_for_company(
+    company_name: str, log: ProgressCallback = _noop, headless: bool = True
+) -> List[CompanyBusinessInfo]:
+    """เปิดเบราว์เซอร์ใหม่ ค้นหาชื่อบริษัท แล้วปิดเบราว์เซอร์ทิ้งเสมอ (ใช้ครั้งเดียวจบ) —
+    เป็น entry point หลักที่ web/app.py เรียกใช้ (ไม่ต้องยุ่งกับการจัดการ driver เอง)
+
+    ⚠️ ต้องรันในเครื่องที่มี Google Chrome ติดตั้งอยู่ (เหมือน amr_downloader) ใช้งานไม่ได้ใน
+    sandbox/CI ทั่วไปที่ไม่มีเบราว์เซอร์จริง/ไม่มี network ออกไปเว็บภายนอกได้
+    """
+
+    driver = setup_driver(headless=headless)
+    try:
+        return search_company_business_type(driver, company_name, log=log)
+    finally:
+        driver.quit()
 
 
 def find_exact_match(results: List[CompanyBusinessInfo], company_name: str) -> Optional[CompanyBusinessInfo]:

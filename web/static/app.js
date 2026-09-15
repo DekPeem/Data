@@ -169,6 +169,109 @@ function updateRateCodeOptions() {
 
 businessTypeSelect.addEventListener("change", updateRateCodeOptions);
 
+// ── ค้นหาประเภทธุรกิจอัตโนมัติจากชื่อบริษัท (ผ่าน DBD DataWarehouse) ──
+// ⚠️ ต่างจากทุกอย่างในโหมดนี้: ชื่อบริษัทที่พิมพ์ "จะถูกส่งไป server" (แล้ว server ส่งต่อไป
+// ค้นหาที่เว็บ DBD จริง) เพราะไม่มีทางค้นหาบริษัทจากชื่อได้โดยไม่ส่งชื่อไปที่แหล่งข้อมูลนั้น —
+// มีคำเตือนนี้แสดงในหน้าเว็บชัดเจนแล้ว (ดู index.html) ปุ่มนี้ไม่บังคับกด
+
+const lookupBtn = document.getElementById("lookup-business-type-btn");
+const lookupStatus = document.getElementById("business-type-lookup-status");
+
+function applyBusinessTypeSuggestion(candidate) {
+  if (!candidate.suggested_business_type_code) {
+    lookupStatus.innerHTML = `<div class="lookup-status-text">พบข้อมูล TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} แต่ยังไม่มีโปรไฟล์อ้างอิงของหมวดนี้ในระบบ กรุณาเลือกประเภทธุรกิจที่ใกล้เคียงเองด้านบน</div>`;
+    return;
+  }
+  businessTypeSelect.value = candidate.suggested_business_type_code;
+  updateRateCodeOptions();
+  lookupStatus.innerHTML = `<div class="lookup-status-text">✅ ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} → ตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" ให้อัตโนมัติแล้ว (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)</div>`;
+}
+
+function renderLookupCandidates(candidates) {
+  lookupStatus.innerHTML = `
+    <div class="lookup-status-text" style="margin-bottom:8px;">พบหลายบริษัทที่ชื่อใกล้เคียงกัน — เลือกบริษัทที่ใช่:</div>
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      ${candidates
+        .map(
+          (c, i) => `
+        <div class="lookup-candidate">
+          <div>
+            <div class="lookup-candidate-name">${c.juristic_name} <span style="font-weight:400;color:#8996ab;">(${c.juristic_type})</span></div>
+            <div class="lookup-candidate-meta">TSIC ${c.tsic_code} - ${c.tsic_name_th} · ${c.status}</div>
+          </div>
+          <button type="button" class="lookup-pick-btn" data-idx="${i}">เลือกอันนี้</button>
+        </div>`
+        )
+        .join("")}
+    </div>`;
+
+  lookupStatus.querySelectorAll(".lookup-pick-btn").forEach((btn) => {
+    btn.addEventListener("click", () => applyBusinessTypeSuggestion(candidates[Number(btn.dataset.idx)]));
+  });
+}
+
+async function pollBusinessTypeLookupJob(jobId) {
+  const res = await fetch(`/api/business-type-lookup/${jobId}`);
+  const data = await res.json();
+
+  if (data.status === "running") {
+    setTimeout(() => pollBusinessTypeLookupJob(jobId), 800);
+    return;
+  }
+
+  lookupBtn.disabled = false;
+
+  if (data.status === "error") {
+    lookupStatus.innerHTML = `<div class="lookup-status-text" style="color:#d03b3b;">ค้นหาไม่สำเร็จ: ${data.error || "เกิดข้อผิดพลาด"} (ต้องรันเว็บนี้ในเครื่องที่มี Google Chrome ติดตั้งอยู่)</div>`;
+    return;
+  }
+
+  const { candidates, exact_match_index } = data.result;
+  if (!candidates.length) {
+    lookupStatus.innerHTML = `<div class="lookup-status-text">ไม่พบบริษัทนี้ใน DBD DataWarehouse — กรุณาเลือกประเภทธุรกิจเองด้านบน</div>`;
+  } else if (exact_match_index !== null && exact_match_index !== undefined) {
+    applyBusinessTypeSuggestion(candidates[exact_match_index]);
+  } else if (candidates.length === 1) {
+    applyBusinessTypeSuggestion(candidates[0]);
+  } else {
+    renderLookupCandidates(candidates);
+  }
+}
+
+async function runBusinessTypeLookup() {
+  const companyName = nameInput.value.trim();
+  if (!companyName) {
+    lookupStatus.innerHTML = `<div class="lookup-status-text" style="color:#d03b3b;">กรุณาพิมพ์ชื่อบริษัทก่อน</div>`;
+    return;
+  }
+
+  lookupBtn.disabled = true;
+  lookupStatus.innerHTML = `<div class="lookup-status-text">⏳ กำลังค้นหา... (เปิดเบราว์เซอร์จริง อาจใช้เวลาสักครู่)</div>`;
+
+  try {
+    const res = await fetch("/api/business-type-lookup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ company_name: companyName }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      lookupBtn.disabled = false;
+      lookupStatus.innerHTML = `<div class="lookup-status-text" style="color:#d03b3b;">${data.message || "เกิดข้อผิดพลาด"}</div>`;
+      return;
+    }
+
+    pollBusinessTypeLookupJob(data.job_id);
+  } catch (err) {
+    lookupBtn.disabled = false;
+    lookupStatus.innerHTML = `<div class="lookup-status-text" style="color:#d03b3b;">เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ</div>`;
+    console.error(err);
+  }
+}
+
+lookupBtn.addEventListener("click", runBusinessTypeLookup);
+
 async function runForecast() {
   adhocFormHint.textContent = "";
   const displayName = nameInput.value.trim(); // ใช้แสดงผลเท่านั้น — ไม่ส่งไป server

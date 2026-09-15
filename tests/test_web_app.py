@@ -366,6 +366,74 @@ def test_start_import_auto_mode_surfaces_scraped_customer_name(client, monkeypat
     assert status["customer_profile"]["account_no"] == "019900000099"
 
 
+def test_business_type_lookup_missing_company_name(client):
+    res = client.post("/api/business-type-lookup", json={})
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+
+def test_business_type_lookup_success_suggests_matching_business_type(client, monkeypatch):
+    """DBD คืนรหัส TSIC "17099" (division "17" เหมือน 34111 ในระบบเรา ที่ยืนยัน division ไว้
+    แล้ว) — ต้องแนะนำ suggested_business_type_code เป็น "34111" ให้"""
+
+    from amr_mapping.dbd_lookup import CompanyBusinessInfo
+
+    def fake_lookup(company_name, log=lambda m: None, headless=True):
+        log(f"ค้นหา {company_name}")
+        return [
+            CompanyBusinessInfo(
+                registration_no="0105544000157",
+                juristic_name="บริษัท ทดสอบกระดาษ จำกัด",
+                juristic_type="บริษัทจำกัด",
+                status="ยังดำเนินกิจการอยู่",
+                tsic_code="17099",
+                tsic_name_th="การผลิตผลิตภัณฑ์กระดาษอื่นๆ",
+            )
+        ]
+
+    monkeypatch.setattr(app_module, "lookup_business_type_for_company", fake_lookup)
+
+    res = client.post("/api/business-type-lookup", json={"company_name": "บริษัท ทดสอบกระดาษ จำกัด"})
+    assert res.status_code == 200
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/business-type-lookup/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    candidates = status["result"]["candidates"]
+    assert len(candidates) == 1
+    assert candidates[0]["tsic_code"] == "17099"
+    assert candidates[0]["tsic_division_code"] == "17"
+    assert candidates[0]["suggested_business_type_code"] == "34111"
+    # ชื่อที่ค้นหาตรงเป๊ะกับผลลัพธ์เดียวที่เจอ -> ต้องรายงาน exact_match_index
+    assert status["result"]["exact_match_index"] == 0
+
+
+def test_business_type_lookup_handles_selenium_error_gracefully(client, monkeypatch):
+    def fake_lookup(company_name, log=lambda m: None, headless=True):
+        raise RuntimeError("เปิด Chrome ไม่สำเร็จ (จำลอง error)")
+
+    monkeypatch.setattr(app_module, "lookup_business_type_for_company", fake_lookup)
+
+    res = client.post("/api/business-type-lookup", json={"company_name": "บริษัท ทดสอบ จำกัด"})
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/business-type-lookup/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "error"
+    assert "เปิด Chrome ไม่สำเร็จ" in status["error"]
+
+
 def test_start_import_manual_mode_when_only_business_type_given(client, monkeypatch):
     """ระบุ business_type_code มาแม้จะไม่มี rate_code -> ต้องถือเป็นโหมดกรอกเอง (manual)
     ไม่ใช่ auto จึงต้อง validate ครบทุกฟิลด์ตามเดิม (จะ error เพราะ rate_code หาย)"""
