@@ -24,6 +24,7 @@ from flask import Flask, jsonify, request
 from amr_mapping import estimate_customer_load, load_reference_data
 from amr_mapping.amr_import import import_amr_auto, import_amr_for_business
 from amr_mapping.mapping import MatchLevel
+from amr_mapping.models import Customer
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 
@@ -73,12 +74,24 @@ def api_list_customers():
 
 @app.route("/api/business-types")
 def api_list_business_types():
-    """รายชื่อประเภทธุรกิจทั้งหมด (สำหรับ dropdown ในหน้านำเข้า AMR)"""
+    """รายชื่อประเภทธุรกิจทั้งหมด (สำหรับ dropdown ในหน้านำเข้า AMR / หน้าพยากรณ์แบบไม่บันทึก)"""
 
     return jsonify(
         [
             {"code": bt.code, "name_th": bt.name_th, "category": bt.category}
             for bt in get_reference().business_types.values()
+        ]
+    )
+
+
+@app.route("/api/rate-schedules")
+def api_list_rate_schedules():
+    """รายชื่อประเภทอัตราทั้งหมด (สำหรับ dropdown ในหน้าพยากรณ์แบบไม่บันทึก)"""
+
+    return jsonify(
+        [
+            {"code": rs.code, "billing_method": rs.billing_method, "voltage_level": rs.voltage_level, "description": rs.description}
+            for rs in get_reference().rate_schedules.values()
         ]
     )
 
@@ -108,6 +121,78 @@ def api_forecast(account_no: str):
     return jsonify(
         {
             "customer": _customer_to_dict(customer),
+            "match": {
+                "level": result.match_level.value,
+                "level_label_th": MATCH_LEVEL_LABEL_TH.get(result.match_level, result.match_level.value),
+                "is_exact": result.match_level == MatchLevel.EXACT,
+                "scale_factor": result.scale_factor,
+                "warnings": result.warnings,
+            },
+            "matched_profile": {
+                "business_type_code": result.matched_profile.business_type_code,
+                "business_type_name": business_type.name_th if business_type else None,
+                "rate_code": result.matched_profile.rate_code,
+                "rate_description": rate_schedule.description if rate_schedule else None,
+                "sample_size": result.matched_profile.sample_size,
+                "notes": result.matched_profile.notes,
+            },
+            "forecast": {
+                "demand_kw": result.demand_kw,
+                "energy_kwh": result.energy_kwh,
+            },
+        }
+    )
+
+
+@app.route("/new-forecast")
+def adhoc_forecast_page():
+    return app.send_static_file("adhoc.html")
+
+
+@app.route("/api/forecast-adhoc", methods=["POST"])
+def api_forecast_adhoc():
+    """พยากรณ์โปรไฟล์แบบ ad-hoc จากประเภทธุรกิจ + อัตราที่เลือก/กรอกเองโดยตรง
+
+    ใช้สำหรับกรณีที่ยังไม่มีผู้ใช้ไฟรายนี้อยู่ใน customers.csv/customers_local.csv เลย (เช่น
+    อยากลองพิมพ์ชื่อบริษัทจริงดูผลลัพธ์ทันทีในเครื่องตัวเอง โดยไม่ต้องบันทึกชื่อ/เลขบัญชีลง
+    ไฟล์ใดๆ) — endpoint นี้จึงตั้งใจ "ไม่รับ" ชื่อบริษัทเป็นพารามิเตอร์เลยด้วยซ้ำ (ชื่อที่ผู้ใช้
+    พิมพ์ในฟอร์มจะอยู่แค่ฝั่ง browser/JavaScript เท่านั้น ไม่ถูกส่งมาที่ server, ไม่ถูก log,
+    ไม่ถูกเขียนลงดิสก์ที่ไหนทั้งสิ้น) คำนวณแล้วคืนผลลัพธ์กลับไปทันที ไม่มีการบันทึกสถานะใดๆ
+    ในหน่วยความจำของ server ด้วย
+    """
+
+    body = request.get_json(force=True, silent=True) or {}
+
+    business_type_code = (body.get("business_type_code") or "").strip() or None
+    rate_code = (body.get("rate_code") or "").strip() or None
+    contract_kva = body.get("contract_kva")
+    try:
+        contract_kva = float(contract_kva) if contract_kva not in (None, "") else None
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid_request", "message": "KVA ตามสัญญาต้องเป็นตัวเลข"}), 400
+
+    if not business_type_code and not rate_code:
+        return jsonify(
+            {"error": "invalid_request", "message": "กรุณาเลือก/กรอกประเภทธุรกิจ หรือ ประเภทอัตรา อย่างน้อยหนึ่งอย่าง"}
+        ), 400
+
+    reference = get_reference()
+    # ไม่มี account_no/name จริง — เป็นแค่ตัวแปรชั่วคราวสำหรับคำนวณเท่านั้น ไม่ถูกเก็บที่ไหน
+    transient_customer = Customer(
+        account_no="",
+        name="",
+        business_type_code=business_type_code,
+        rate_code=rate_code,
+        contract_kva=contract_kva,
+        has_amr=False,
+    )
+
+    result = estimate_customer_load(transient_customer, reference)
+    business_type = reference.business_types.get(result.matched_profile.business_type_code)
+    rate_schedule = reference.rate_schedules.get(result.matched_profile.rate_code)
+
+    return jsonify(
+        {
             "match": {
                 "level": result.match_level.value,
                 "level_label_th": MATCH_LEVEL_LABEL_TH.get(result.match_level, result.match_level.value),

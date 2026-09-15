@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>พยากรณ์แบบไม่บันทึกข้อมูล — No AMR</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+    .form-field { display: flex; flex-direction: column; gap: 6px; }
+    .form-field label { font-size: 13px; font-weight: 600; color: #55647a; }
+    .form-field input, .form-field select {
+      height: 44px; border-radius: 10px; border: 1px solid rgba(15,23,42,0.14);
+      padding: 0 14px; font-size: 14px; font-family: inherit; background: #fff; color: #0f1b2d;
+    }
+    .form-field .hint { font-size: 12px; color: #8996ab; }
+    .submit-row { display: flex; justify-content: flex-end; }
+    .warn-box {
+      background: #eef3fa; border: 1px solid rgba(42, 120, 214, 0.25); border-radius: 10px;
+      padding: 14px 18px; font-size: 13px; color: #184f95; line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <div class="root">
+
+    <header class="header">
+      <div class="header-brand">
+        <div class="logo-mark">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>
+        </div>
+        <div class="header-titles">
+          <div class="header-title">พยากรณ์แบบไม่บันทึกข้อมูล</div>
+          <div class="header-subtitle">พิมพ์ชื่อบริษัท + เลือกประเภทธุรกิจ/อัตรา ดูผลพยากรณ์ทันที — ไม่มีการบันทึกลงไฟล์ใดๆ</div>
+        </div>
+      </div>
+      <a href="/" style="font-size:13px;color:#2a78d6;text-decoration:none;">← กลับหน้าค้นหา</a>
+    </header>
+
+    <main class="body-wrap">
+
+      <div class="warn-box">
+        ℹ️ หน้านี้ใช้สำหรับลองพยากรณ์ผู้ใช้ไฟที่ <b>ยังไม่มีอยู่ในทะเบียนลูกค้า</b> — พิมพ์
+        ชื่อบริษัทได้อย่างอิสระ (แม้เป็นชื่อจริง) เพราะ<b>ชื่อที่พิมพ์จะไม่ถูกส่งไปที่เซิร์ฟเวอร์
+        เลย</b> ใช้แสดงผลในเบราว์เซอร์นี้เท่านั้น ไม่ถูกบันทึกลงไฟล์ ไม่ถูก log ที่ไหนทั้งสิ้น —
+        ปิดหน้านี้แล้วข้อมูลหายไปทันที ต่างจากหน้า "ค้นหา" ปกติที่ผลลัพธ์มาจากทะเบียนลูกค้าที่
+        บันทึกไว้แล้ว
+      </div>
+
+      <div class="card" style="padding: 28px; display: flex; flex-direction: column; gap: 20px;">
+        <div style="font-size: 15px; font-weight: 700;">กรอกข้อมูลเพื่อพยากรณ์</div>
+
+        <div class="form-grid">
+          <div class="form-field" style="grid-column: 1 / -1;">
+            <label for="f-name">ชื่อบริษัท (แสดงผลอย่างเดียว ไม่ถูกบันทึก/ส่งไปเซิร์ฟเวอร์)</label>
+            <input id="f-name" type="text" autocomplete="off" placeholder="เช่น บริษัท ตัวอย่าง จำกัด">
+          </div>
+
+          <div class="form-field">
+            <label for="f-business-type">ประเภทธุรกิจ</label>
+            <select id="f-business-type"></select>
+          </div>
+
+          <div class="form-field">
+            <label for="f-rate-code">รหัสอัตรา</label>
+            <input id="f-rate-code" list="rate-code-list" type="text" placeholder="เช่น 50">
+            <datalist id="rate-code-list"></datalist>
+          </div>
+
+          <div class="form-field">
+            <label for="f-kva">KVA ตามสัญญา (ถ้าทราบ — ไม่บังคับ)</label>
+            <input id="f-kva" type="number" min="0" step="any" placeholder="เช่น 2000">
+            <div class="hint">ใช้ปรับสเกลผลพยากรณ์ตามขนาดสัญญาจริง ถ้าไม่กรอกจะใช้ค่าดิบของโปรไฟล์อ้างอิง</div>
+          </div>
+        </div>
+
+        <div class="submit-row">
+          <button id="submit-btn" class="search-button">พยากรณ์</button>
+        </div>
+        <div id="form-hint" class="search-hint"></div>
+      </div>
+
+      <div id="result" class="result-area"></div>
+
+    </main>
+  </div>
+
+  <script src="adhoc.js"></script>
+</body>
+</html>
