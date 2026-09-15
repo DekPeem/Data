@@ -14,3 +14,7 @@ amr_selenium_failed.log
 debug_popup_*.html
 debug_showperiod_*.html
 debug_noPopup_*.html
+
+# ทะเบียนผู้ใช้ไฟจริงสำหรับดูในเครื่องตัวเองเท่านั้น — ห้าม commit เด็ดขาด
+# (ดู data/reference/customers_local.csv.example สำหรับรูปแบบไฟล์)
+data/reference/customers_local.csv

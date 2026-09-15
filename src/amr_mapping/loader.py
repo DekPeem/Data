@@ -90,17 +90,20 @@ def _load_load_profiles(path: Path) -> List[LoadProfile]:
 
 
 def _load_customers(path: Path) -> List[Customer]:
-    """โหลดทะเบียนผู้ใช้ไฟตัวอย่าง (สมมติ) จาก customers.csv
+    """โหลดทะเบียนผู้ใช้ไฟจากไฟล์ CSV หนึ่งไฟล์ (customers.csv หรือ customers_local.csv)
 
-    ⚠️ ไฟล์นี้มีไว้สำหรับสาธิต/ทดสอบเท่านั้น — ห้ามใส่ข้อมูลลูกค้าจริง (ชื่อ/เลขบัญชี/
-    เลขมิเตอร์จริง) เพราะ repo นี้เป็น public
+    ข้ามบรรทัดว่างและบรรทัดที่ขึ้นต้นด้วย "#" (คอมเมนต์) ทิ้งไปเฉยๆ — เผื่อกรณีคัดลอกจาก
+    customers_local.csv.example มาโดยลืมลบบรรทัดคำอธิบายที่ขึ้นต้นด้วย # ออกก่อน
     """
 
     customers: List[Customer] = []
     if not path.exists():
         return customers
     with path.open(encoding="utf-8-sig", newline="") as f:
-        for row in csv.DictReader(f):
+        lines = [line for line in f if line.strip() and not line.lstrip().startswith("#")]
+        for row in csv.DictReader(lines):
+            if not row.get("account_no", "").strip():
+                continue
             has_amr_raw = (row.get("has_amr") or "").strip().lower()
             customers.append(
                 Customer(
@@ -182,12 +185,25 @@ def load_reference_data(data_dir: Optional[Path] = None) -> ReferenceData:
     data_dir:
         โฟลเดอร์ที่เก็บไฟล์ business_types.csv / rate_schedules.csv / load_profiles.csv /
         customers.csv ถ้าไม่ระบุ จะใช้ data/reference/ ที่ root ของ repo นี้
+
+    ทะเบียนผู้ใช้ไฟ (customers) โหลดจาก 2 ไฟล์รวมกัน:
+      1. customers.csv — สาธิต/ทดสอบเท่านั้น (commit เข้า repo ได้ ห้ามมีข้อมูลลูกค้าจริง)
+      2. customers_local.csv — ไม่บังคับต้องมี, ใส่ .gitignore ไว้แล้ว (ไม่ถูก commit
+         เด็ดขาด) ใช้เก็บข้อมูลลูกค้าจริงสำหรับดูในเครื่องตัวเองเท่านั้น ถ้ามีบัญชีซ้ำกับ
+         customers.csv จะใช้ข้อมูลจาก customers_local.csv แทน (ให้ override ได้)
     """
 
     data_dir = Path(data_dir) if data_dir else DEFAULT_DATA_DIR
+
+    customers_by_account: Dict[str, Customer] = {c.account_no: c for c in _load_customers(data_dir / "customers.csv")}
+    local_path = data_dir / "customers_local.csv"
+    if local_path.exists():
+        for c in _load_customers(local_path):
+            customers_by_account[c.account_no] = c
+
     return ReferenceData(
         business_types=_load_business_types(data_dir / "business_types.csv"),
         rate_schedules=_load_rate_schedules(data_dir / "rate_schedules.csv"),
         load_profiles=_load_load_profiles(data_dir / "load_profiles.csv"),
-        customers=_load_customers(data_dir / "customers.csv"),
+        customers=list(customers_by_account.values()),
     )

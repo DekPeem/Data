@@ -134,8 +134,20 @@ python web/app.py
 
 ⚠️ **`data/reference/customers.csv` เป็นข้อมูลลูกค้า "สมมติ" สำหรับสาธิตเท่านั้น**
 (ตั้งชื่อขึ้นต้นด้วย `DEMO-`) — ห้ามใส่ข้อมูลลูกค้าจริง (ชื่อ/เลขบัญชี/เลขมิเตอร์จริง)
-ลงไฟล์นี้เพราะ repo เป็น public ถ้าจะต่อกับข้อมูลลูกค้าจริง ให้แก้ `web/app.py` ให้อ่าน
-จากฐานข้อมูล/ไฟล์ที่เก็บแยกไว้นอก repo แทน (เช่นเดียวกับหลักการที่ใช้กับไฟล์ AMR ดิบ)
+ลงไฟล์นี้เพราะ repo เป็น public
+
+### อยากเห็นชื่อลูกค้าจริงตอนรันในเครื่องตัวเอง?
+
+สร้างไฟล์ `data/reference/customers_local.csv` (คัดลอกจาก
+`customers_local.csv.example` แล้วเติมข้อมูลจริง) — ไฟล์นี้อยู่ใน `.gitignore`
+**ไม่มีทาง commit/push ขึ้น GitHub ได้เลย** เว็บแอปจะโหลดรวมกับ `customers.csv`
+อัตโนมัติ (ถ้าเลขบัญชีซ้ำกัน ข้อมูลจาก `customers_local.csv` ชนะ) — ใส่ชื่อบริษัทจริง/
+เลขบัญชีจริงในไฟล์นี้ได้อย่างปลอดภัย เพราะไม่มีทางหลุดขึ้น repo public
+
+```bash
+cp data/reference/customers_local.csv.example data/reference/customers_local.csv
+# แล้วแก้ไฟล์ customers_local.csv ใส่ข้อมูลจริงของคุณ
+```
 
 ## นำเข้า AMR อัตโนมัติผ่านเว็บ (หน้า Admin)
 
