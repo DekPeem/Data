@@ -270,4 +270,8 @@ def api_get_import_status(job_id: str):
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    # use_reloader=False: ปิด auto-restart เวลาไฟล์เปลี่ยน — งานนำเข้า AMR รันเป็น
+    # background thread ที่ใช้เวลานาน (ดาวน์โหลดหลายเดือน) ถ้า reloader restart ตัวเซิร์ฟเวอร์
+    # กลางคันจะทำให้ thread ถูกตัดตอน และอาจทำให้ไฟล์ lock ของ webdriver-manager
+    # (.wdm-lock-chromedriver-*) ค้างจนรอบถัดไป Selenium ต้องรอ lock จนหมดเวลา (timeout)
+    app.run(debug=True, port=5000, use_reloader=False)
