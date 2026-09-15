@@ -18,11 +18,14 @@ data/reference/
   load_profiles.csv    โปรไฟล์ P/OP/H อ้างอิง ต่อคู่ (ประเภทธุรกิจ, อัตรา)
 
 src/amr_mapping/
-  models.py       dataclass หลัก: BusinessType, RateSchedule, LoadProfile, Customer, ForecastResult
-  loader.py       โหลด/บันทึกตาราง CSV ทั้ง 3 ตารางเป็น ReferenceData
-  mapping.py      ตรรกะจับคู่ (find_load_profile) และพยากรณ์ (estimate_customer_load)
-  pea_ingest.py   อ่านไฟล์ export จากระบบ PEA (.xls แบบ HTML table) และคำนวณ
-                  โปรไฟล์ P/OP/H รายเดือน + ค่าเฉลี่ยหลายเดือน จากข้อมูล AMR จริง
+  models.py         dataclass หลัก: BusinessType, RateSchedule, LoadProfile, Customer, ForecastResult
+  loader.py         โหลด/บันทึกตาราง CSV ทั้ง 4 ตารางเป็น ReferenceData
+  mapping.py        ตรรกะจับคู่ (find_load_profile) และพยากรณ์ (estimate_customer_load)
+  pea_ingest.py     อ่านไฟล์ export จากระบบ PEA (.xls แบบ HTML table) — ทั้งแบบประวัติ
+                    รายเดือนและแบบราย 15 นาที — คำนวณโปรไฟล์ P/OP/H และค่าเฉลี่ยหลายเดือน
+  amr_downloader.py ดาวน์โหลดรายงาน AMR จากเว็บ PEA ด้วย Selenium (ดัดแปลงจากสคริปต์เดิม
+                    ของผู้ใช้ ไม่มี credential ฝังในโค้ด — ดูหัวข้อ "นำเข้า AMR อัตโนมัติ")
+  amr_import.py     รวม download → parse → เฉลี่ย → บันทึกลง load_profiles.csv ในคำสั่งเดียว
 
 scripts/update_load_profile_from_register.py
   CLI สำหรับนำไฟล์ "ประวัติการอ่านหน่วยมิเตอร์ AMR" จริงมาคำนวณค่าเฉลี่ยแบบ
@@ -30,8 +33,9 @@ scripts/update_load_profile_from_register.py
   ลงไฟล์ผลลัพธ์ — ดูหัวข้อ "การนำเข้าข้อมูล AMR จริง" ด้านล่าง)
 
 web/
-  app.py            เว็บแอป Flask — API ค้นหาผู้ใช้ไฟ + พยากรณ์โปรไฟล์ (ดูหัวข้อ "เว็บแอป" ด้านล่าง)
-  static/           หน้าเว็บ (HTML/CSS/JS ธรรมดา ไม่มี build step)
+  app.py            เว็บแอป Flask — API ค้นหาผู้ใช้ไฟ + พยากรณ์โปรไฟล์ + นำเข้า AMR (ดูด้านล่าง)
+  static/           หน้าเว็บ (HTML/CSS/JS ธรรมดา ไม่มี build step) — index.html (ค้นหา),
+                    admin.html (นำเข้า AMR)
 
 data/reference/customers.csv   ทะเบียนผู้ใช้ไฟตัวอย่าง (สมมติ) สำหรับสาธิตเว็บแอป
 
@@ -132,6 +136,48 @@ python web/app.py
 (ตั้งชื่อขึ้นต้นด้วย `DEMO-`) — ห้ามใส่ข้อมูลลูกค้าจริง (ชื่อ/เลขบัญชี/เลขมิเตอร์จริง)
 ลงไฟล์นี้เพราะ repo เป็น public ถ้าจะต่อกับข้อมูลลูกค้าจริง ให้แก้ `web/app.py` ให้อ่าน
 จากฐานข้อมูล/ไฟล์ที่เก็บแยกไว้นอก repo แทน (เช่นเดียวกับหลักการที่ใช้กับไฟล์ AMR ดิบ)
+
+## นำเข้า AMR อัตโนมัติผ่านเว็บ (หน้า Admin)
+
+เว็บแอปมีหน้า `/admin` ("นำเข้า AMR (Admin)") ให้กดปุ่มเดียว **ดาวน์โหลด AMR จริงจากเว็บ
+PEA ผ่าน Selenium → คำนวณโปรไฟล์ P/OP/H → บันทึกลง `load_profiles.csv` แบบ anonymized**
+ทันที โดยไม่ต้องรันสคริปต์เองทีละขั้น
+
+### ⚠️ ข้อกำหนดก่อนใช้งาน (สำคัญมาก)
+
+1. **ต้องรันในเครื่องที่มี Google Chrome ติดตั้งอยู่และเข้าเว็บ `amr.pea.co.th` ได้จริง**
+   (ใช้ไม่ได้ใน CI/sandbox ทั่วไป — ฟีเจอร์นี้ทดสอบแล้วเฉพาะ logic การประมวลผล ไม่ได้ทดสอบ
+   การ login จริงในสภาพแวดล้อมที่พัฒนา)
+2. **ห้าม hardcode username/password ลงโค้ดเด็ดขาด** — ตั้งค่าผ่านตัวแปรสภาพแวดล้อม
+   `PEA_AMR_USERNAME` และ `PEA_AMR_PASSWORD` ก่อนรันเซิร์ฟเวอร์ทุกครั้ง (ดู `.env.example`)
+   หน้าเว็บจะไม่ถาม/ไม่รับ username-password ผ่านฟอร์มเลย เพื่อไม่ให้หลุดไปที่ไหนอีก
+
+   ```bash
+   # macOS/Linux
+   export PEA_AMR_USERNAME="เลขบัญชีของคุณ"
+   export PEA_AMR_PASSWORD="รหัสผ่านของคุณ"
+   python web/app.py
+
+   # Windows PowerShell
+   $env:PEA_AMR_USERNAME="เลขบัญชีของคุณ"
+   $env:PEA_AMR_PASSWORD="รหัสผ่านของคุณ"
+   python web/app.py
+   ```
+
+3. **ไฟล์ดิบที่ดาวน์โหลดมาจะถูกลบทิ้งทันทีหลังประมวลผลเสร็จเสมอ** (ดาวน์โหลดลงโฟลเดอร์
+   temp ชั่วคราว ไม่ใช่ในโฟลเดอร์ repo) — มีแต่ตัวเลข P/OP/H ที่เฉลี่ยแล้วเท่านั้นที่ถูกเขียน
+   ลง `load_profiles.csv` ไม่มีชื่อ/เลขบัญชี/เลขมิเตอร์ลูกค้าหลงเหลืออยู่เลย
+
+### วิธีใช้
+
+1. ตั้งค่า `PEA_AMR_USERNAME` / `PEA_AMR_PASSWORD` แล้วรัน `python web/app.py`
+2. เปิด `http://localhost:5000/admin`
+3. กรอกเลขบัญชีผู้ใช้ไฟ (คั่นด้วย `,` ถ้ามีหลายราย), เลือกประเภทธุรกิจ, ใส่รหัสอัตรา, ช่วงวันที่
+4. กด **"ดาวน์โหลดและนำเข้า"** — จะเห็น log แบบ real-time และผลลัพธ์ P/OP/H เมื่อเสร็จ
+
+โค้ดเบื้องหลัง: `src/amr_mapping/amr_downloader.py` (พอร์ตจากสคริปต์ Selenium เดิมของผู้ใช้
+`AMR_PEA_Selenium.py` — ปรับให้รับ credential เป็นพารามิเตอร์แทนการ hardcode) และ
+`src/amr_mapping/amr_import.py` (เชื่อม downloader → `pea_ingest` → `load_profiles.csv`)
 
 ## ⚠️ ข้อควรทราบเกี่ยวกับข้อมูลอ้างอิงชุดปัจจุบัน
 

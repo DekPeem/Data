@@ -6,10 +6,13 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from amr_mapping.pea_ingest import (
+    IntervalReading,
     MonthlyRegisterReading,
+    aggregate_interval_readings,
     average_profiles,
     compute_meter_multiplier,
     compute_monthly_profiles,
+    parse_interval_report,
 )
 
 
@@ -69,3 +72,48 @@ def test_average_profiles():
 def test_average_profiles_empty_raises():
     with pytest.raises(ValueError):
         average_profiles([])
+
+
+_SYNTHETIC_INTERVAL_HTML = """
+<html><body>
+<table>
+  <tr><td>รายงานข้อมูลกิโลวัตต์ชั่วโมงแบบช่วงเวลา (ตัวอย่างสมมติ ไม่ใช่ข้อมูลลูกค้าจริง)</td></tr>
+</table>
+<table>
+  <tr><td></td><td>RATE A</td><td>RATE B</td><td>RATE C</td><td>ผลรวม</td></tr>
+  <tr><td>01/08/2026 00.15</td><td></td><td></td><td>10.00</td><td>10.00</td></tr>
+  <tr><td>01/08/2026 09.15</td><td>20.00</td><td></td><td></td><td>20.00</td></tr>
+  <tr><td>01/08/2026 09.30</td><td>30.00</td><td></td><td></td><td>30.00</td></tr>
+  <tr><td>01/08/2026 22.15</td><td></td><td>5.00</td><td></td><td>5.00</td></tr>
+  <tr><td>ผลรวมทั้งหมด</td><td>50.00</td><td>5.00</td><td>10.00</td><td>65.00</td></tr>
+</table>
+</body></html>
+"""
+
+
+def test_parse_interval_report(tmp_path):
+    path = tmp_path / "synthetic_interval.xls"
+    path.write_text(_SYNTHETIC_INTERVAL_HTML, encoding="utf-8")
+
+    readings = parse_interval_report(path)
+
+    # แถวสรุป "ผลรวมทั้งหมด" ต้องถูกข้าม ไม่นับเป็น reading
+    assert all(r.timestamp != "ผลรวมทั้งหมด" for r in readings)
+    assert IntervalReading(timestamp="01/08/2026 09.30", period="P", kwh=30.0) in readings
+    assert IntervalReading(timestamp="01/08/2026 22.15", period="OP", kwh=5.0) in readings
+    assert IntervalReading(timestamp="01/08/2026 00.15", period="H", kwh=10.0) in readings
+
+
+def test_aggregate_interval_readings():
+    readings = [
+        IntervalReading("01/08/2026 09.15", "P", 20.0),
+        IntervalReading("01/08/2026 09.30", "P", 30.0),
+        IntervalReading("01/08/2026 22.15", "OP", 5.0),
+        IntervalReading("01/08/2026 00.15", "H", 10.0),
+    ]
+    profile = aggregate_interval_readings(readings, interval_minutes=15, label="2026-08")
+
+    assert profile.month == "2026-08"
+    assert profile.energy_kwh == {"P": 50.0, "OP": 5.0, "H": 10.0}
+    # demand = ค่าสูงสุดต่อช่วง x (60/15) = x4
+    assert profile.demand_kw == {"P": 120.0, "OP": 20.0, "H": 40.0}

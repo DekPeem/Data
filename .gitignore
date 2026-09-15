@@ -3,3 +3,14 @@ __pycache__/
 .pytest_cache/
 .venv/
 *.egg-info/
+
+# ข้อมูลลับ/ไฟล์ดาวน์โหลดชั่วคราว — ห้าม commit เด็ดขาด
+.env
+*.env
+amr_downloads/
+amr_selenium.log
+amr_selenium_progress.json
+amr_selenium_failed.log
+debug_popup_*.html
+debug_showperiod_*.html
+debug_noPopup_*.html

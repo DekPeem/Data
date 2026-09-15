@@ -181,6 +181,84 @@ def average_profiles(profiles: List[MonthlyPeriodProfile]) -> dict:
     return {"demand_kw": demand_kw, "energy_kwh": energy_kwh, "n_months": n}
 
 
+@dataclass(frozen=True)
+class IntervalReading:
+    """1 จุดข้อมูลจากรายงาน "กิโลวัตต์ชั่วโมงแบบช่วงเวลา" (เช่น ราย 15 นาที)
+
+    ค่า kwh ในไฟล์นี้เป็นค่าจริงอยู่แล้ว (คูณตัวคูณมิเตอร์มาให้แล้วโดยระบบ PEA)
+    ต่างจาก MonthlyRegisterReading ที่เป็นค่าดิบต้องคูณตัวคูณเอง
+    """
+
+    timestamp: str  # เช่น "01/08/2026 00.15" (คงรูปแบบดิบไว้ ไม่ parse เป็น datetime)
+    period: str  # "P" | "OP" | "H"
+    kwh: float
+
+
+def parse_interval_report(path: Union[str, Path]) -> List[IntervalReading]:
+    """อ่านตาราง "รายงานข้อมูลกิโลวัตต์ชั่วโมงแบบช่วงเวลา" (เช่น ราย 15 นาที)
+
+    หาแถวหัวตารางที่มีคอลัมน์ RATE A / RATE B / RATE C (ไม่สนตัวพิมพ์เล็ก-ใหญ่)
+    แล้วอ่านทุกแถวที่มีค่า ยกเว้นแถวสรุปผลรวมท้ายตาราง (เช่น "ผลรวมทั้งหมด")
+    """
+
+    soup = _read_html(path)
+    tables = soup.find_all("table")
+
+    interval_table = None
+    for t in tables:
+        first_row = t.find("tr")
+        if first_row is None:
+            continue
+        header_cells = [c.get_text(strip=True).upper() for c in first_row.find_all(["td", "th"])]
+        if sum(1 for h in header_cells if "RATE" in h) >= 2:
+            interval_table = t
+            break
+
+    if interval_table is None:
+        raise ValueError(
+            f"ไม่พบตารางรายงานราย 15 นาที (header ต้องมีคอลัมน์ RATE A/B/C) ในไฟล์ {path}"
+        )
+
+    rows = interval_table.find_all("tr")
+    readings: List[IntervalReading] = []
+    for r in rows[1:]:
+        cells = [c.get_text(strip=True) for c in r.find_all("td")]
+        if len(cells) < 4:
+            continue
+        timestamp = cells[0]
+        if not timestamp or timestamp.startswith("ผลรวม"):
+            continue  # ข้ามแถวสรุปผลรวมท้ายตาราง
+        rate_a, rate_b, rate_c = cells[1], cells[2], cells[3]
+        for period, raw in (("P", rate_a), ("OP", rate_b), ("H", rate_c)):
+            val = _to_float(raw)
+            if val is not None:
+                readings.append(IntervalReading(timestamp=timestamp, period=period, kwh=val))
+    return readings
+
+
+def aggregate_interval_readings(
+    readings: List[IntervalReading], interval_minutes: float = 15, label: str = "interval"
+) -> MonthlyPeriodProfile:
+    """รวมข้อมูลราย 15 นาที เป็นโปรไฟล์เดียว (พลังงานรวม + กำลังไฟฟ้าสูงสุด แยกตาม P/OP/H)
+
+    พลังงาน (energy) = ผลรวมของทุกช่วงในคาบนั้น (kWh เป็นค่าจริงอยู่แล้วในไฟล์นี้)
+    กำลังไฟฟ้าสูงสุด (demand) = ค่าสูงสุดที่พบในคาบนั้น เปลี่ยนหน่วยจาก kWh/ช่วงเวลา
+    เป็น kW โดยคูณด้วย (60 / interval_minutes) เช่น ราย 15 นาที คูณด้วย 4
+    """
+
+    energy_kwh = {"P": 0.0, "OP": 0.0, "H": 0.0}
+    peak_interval_kwh = {"P": 0.0, "OP": 0.0, "H": 0.0}
+    for r in readings:
+        energy_kwh[r.period] += r.kwh
+        if r.kwh > peak_interval_kwh[r.period]:
+            peak_interval_kwh[r.period] = r.kwh
+
+    factor = 60.0 / interval_minutes
+    demand_kw = {p: round(v * factor, 2) for p, v in peak_interval_kwh.items()}
+    energy_kwh = {p: round(v, 2) for p, v in energy_kwh.items()}
+    return MonthlyPeriodProfile(month=label, demand_kw=demand_kw, energy_kwh=energy_kwh)
+
+
 def compute_meter_multiplier(ct_ratio: str, vt_ratio: str) -> float:
     """คำนวณตัวคูณมิเตอร์จากอัตราส่วน CT/VT เช่น "50:5 A." และ "22000:110 V."
 
