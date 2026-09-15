@@ -260,14 +260,18 @@ def aggregate_interval_readings(
 
 
 def compute_meter_multiplier(ct_ratio: str, vt_ratio: str) -> float:
-    """คำนวณตัวคูณมิเตอร์จากอัตราส่วน CT/VT เช่น "50:5 A." และ "22000:110 V."
+    """คำนวณตัวคูณมิเตอร์จากอัตราส่วน CT/VT เช่น "50:5 A." / "100/5 A." และ
+    "22000:110 V." / "115000/115 V." — ระบบ PEA ใช้ตัวคั่นทั้ง ":" (หน้ารายงาน kWh)
+    และ "/" (หน้า CustProfile.aspx) แล้วแต่หน้า จึงรองรับทั้งสองแบบ
 
     ตัวคูณ = (CT primary / CT secondary) x (VT primary / VT secondary)
     """
 
+    import re as _re
+
     def parse_ratio(text: str) -> float:
         text = text.split()[0]  # ตัดหน่วย (A./V.) ออก
-        num, den = text.split(":")
+        num, den = _re.split(r"[:/]", text, maxsplit=1)
         return float(num) / float(den)
 
     return parse_ratio(ct_ratio) * parse_ratio(vt_ratio)

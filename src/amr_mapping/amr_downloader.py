@@ -26,7 +26,10 @@ from typing import Callable, List, Optional
 BASE_URL = "https://www.amr.pea.co.th"
 LOGIN_URL = f"{BASE_URL}/AMRWEB/MainCust.aspx"
 SEL_PERIOD_URL = f"{BASE_URL}/AMRWEB/selPeriodProfile.aspx"
-DASHBOARD_URL = f"{BASE_URL}/AMRWEB/CustDashboard.aspx"
+# หน้า "ข้อมูลผู้ใช้ไฟฟ้า" (ประเภทอัตรา/ประเภทธุรกิจ/KVA/เลขมิเตอร์ ฯลฯ) — ยืนยันจาก
+# HTML จริงแล้วว่าอยู่ที่ CustProfile.aspx (ไม่ใช่ CustDashboard.aspx ที่ iframe ชี้ไปตอนแรก
+# ซึ่งเป็นหน้าภาพรวม/กราฟ คนละหน้ากัน) ไม่ต้องมี PeaNo ก็เข้าได้
+PROFILE_URL = f"{BASE_URL}/AMRWEB/CustProfile.aspx"
 
 ProgressCallback = Callable[[str], None]
 
@@ -162,13 +165,108 @@ def extract_dashboard_params(page_source: str) -> dict:
 
 
 def build_dashboard_url(custcode: str, custid: str, peano: Optional[str] = None) -> str:
-    """สร้าง URL ของหน้า CustDashboard.aspx (ข้อมูลผู้ใช้ไฟ: ประเภทธุรกิจ/อัตรา/KVA ฯลฯ)
-    จากค่าที่ได้จาก extract_dashboard_params() — เปิด URL นี้ตรงๆ แทนการพึ่ง iframe"""
+    """สร้าง URL ของ iframe เดิม (CustDashboard.aspx — หน้าภาพรวม/กราฟ) จากค่าที่ได้จาก
+    extract_dashboard_params() — เก็บไว้เผื่อใช้ในอนาคต ไม่ใช่หน้าที่มีข้อมูลอัตรา/ธุรกิจ/KVA
+    (ดู build_profile_url สำหรับหน้านั้น)"""
 
-    url = f"{DASHBOARD_URL}?CustCode={custcode}&Custid={custid}"
+    url = f"{BASE_URL}/AMRWEB/CustDashboard.aspx?CustCode={custcode}&Custid={custid}"
     if peano:
         url += f"&PeaNo={peano}"
     return url
+
+
+def build_profile_url(custcode: str, custid: str) -> str:
+    """สร้าง URL ของหน้า "ข้อมูลผู้ใช้ไฟฟ้า" (CustProfile.aspx) จากค่าที่ได้จาก
+    extract_dashboard_params() — หน้านี้มีประเภทอัตรา/ประเภทธุรกิจ/KVA/เลขมิเตอร์ที่ต้องการ"""
+
+    return f"{PROFILE_URL}?CustCode={custcode}&Custid={custid}"
+
+
+def parse_business_type(raw: str) -> tuple:
+    """แยกข้อความ "34111 : การผลิตเยื่อกระดาษ ..." เป็น (รหัส TSIC, ชื่อธุรกิจ)
+
+    คืนค่า ("", "") ถ้า raw ว่างเปล่า; ถ้าไม่มี " : " คั่น จะถือทั้งสตริงเป็นรหัส (ชื่อว่าง)
+    """
+
+    raw = (raw or "").strip()
+    if not raw:
+        return "", ""
+    if ":" in raw:
+        code, _, name = raw.partition(":")
+        return code.strip(), name.strip()
+    return raw, ""
+
+
+def parse_ct_vt(combined: str) -> tuple:
+    """แยกข้อความ "100/5 A. , 115000/115 V." เป็น (ct_ratio, vt_ratio) แยกกัน
+    เพื่อส่งต่อให้ pea_ingest.compute_meter_multiplier — คืน (None, None) ถ้า parse ไม่ได้"""
+
+    combined = (combined or "").strip()
+    parts = [p.strip() for p in combined.split(",")]
+    if len(parts) != 2:
+        return None, None
+    return parts[0], parts[1]
+
+
+# แผนผัง element id จริงบนหน้า CustProfile.aspx -> ชื่อฟิลด์ที่ใช้ในระบบนี้
+# ⚠️ ระบบ PEA ตั้งชื่อ id สลับกับ label ที่แสดงผลจริง (ยึดตาม id เป็นหลัก เพราะ label
+# เป็นข้อความที่เปลี่ยนได้ตามภาษา แต่ id คงที่): id "lblCustomerBussType" แสดงผลเป็น
+# label "ประเภทอัตรา" (คือรหัสอัตรา เช่น "40") ส่วน id "lblCustomerTypeBuss" แสดงผลเป็น
+# label "ประเภทธุรกิจ" (คือรหัส TSIC เช่น "34111 : การผลิต...")
+_PROFILE_FIELD_IDS = {
+    "pea_site": "lblSitename",
+    "account_no": "lblCustomerAcct",
+    "name": "lblCustomerName",
+    "address": "lblCustomerAdd",
+    "phone": "lblCustomerPhone",
+    "fax": "lblCustomerFax",
+    "contact_person": "lblCustomerContact",
+    "email": "lblCustomerEmail",
+    "website": "lblCustomerWeb",
+    "rate_code": "lblCustomerBussType",  # label แสดงผล "ประเภทอัตรา"
+    "billing_method": "lblCustomerAcctT",
+    "industrial_estate": "lblCustomerIndust",
+    "business_type_raw": "lblCustomerTypeBuss",  # label แสดงผล "ประเภทธุรกิจ" -> "รหัส : ชื่อ"
+    "business_size": "lblCustomerRateType",
+    "meter_no": "lblCustomerMeterNo",
+    "ct_vt": "lblCustomerCTVT",
+    "kva": "lblCustomerKVA",
+    "bill_reset": "lblCustomerReset",
+}
+
+
+def get_customer_profile(driver, custcode: str, custid: str, log: ProgressCallback = _noop) -> dict:
+    """ดึงข้อมูลผู้ใช้ไฟ (ประเภทอัตรา/ประเภทธุรกิจ/KVA/เลขมิเตอร์ ฯลฯ) จากหน้า CustProfile.aspx
+
+    ต้อง login (amr_login) มาก่อนแล้วเท่านั้น (ใช้ session/cookie เดิมของ driver)
+    คืนค่า dict ตาม key ใน _PROFILE_FIELD_IDS บวก "business_type_code"/"business_type_name"
+    ที่แยกจาก business_type_raw ให้แล้ว (ช่องใดหาไม่เจอ/ว่างเปล่าจะเป็น "")
+    """
+
+    from selenium.common.exceptions import NoSuchElementException
+    from selenium.webdriver.common.by import By
+
+    url = build_profile_url(custcode, custid)
+    log(f"📋 เปิดหน้าข้อมูลผู้ใช้ไฟ: {url}")
+    driver.get(url)
+    random_delay(0.5, 1)
+
+    def text(elem_id: str) -> str:
+        try:
+            return driver.find_element(By.ID, elem_id).text.strip()
+        except NoSuchElementException:
+            return ""
+
+    profile = {field: text(elem_id) for field, elem_id in _PROFILE_FIELD_IDS.items()}
+    business_type_code, business_type_name = parse_business_type(profile["business_type_raw"])
+    profile["business_type_code"] = business_type_code
+    profile["business_type_name"] = business_type_name
+
+    log(
+        f"✅ ข้อมูลผู้ใช้ไฟ: {profile['name']} | อัตรา {profile['rate_code']} | "
+        f"ธุรกิจ {business_type_code} : {business_type_name} | KVA {profile['kva']}"
+    )
+    return profile
 
 
 def get_meter_options(driver, cust_code: str, log: ProgressCallback = _noop) -> List[dict]:
@@ -348,6 +446,51 @@ def download_month(
     return None
 
 
+def _download_reports_for_account(
+    driver, account: str, month_ranges: List[tuple], download_dir: str, log: ProgressCallback
+) -> List[DownloadResult]:
+    """ดาวน์โหลดรายงาน kW ราย 15 นาทีของทุกมิเตอร์ในบัญชีเดียว ครอบคลุมทุกเดือนใน
+    month_ranges — ใช้ driver ที่ login อยู่แล้ว (เรียกจาก download_amr_kw_reports และ
+    download_amr_with_profile ทั้งคู่ เพื่อไม่ให้ต้องเขียน loop ซ้ำ)"""
+
+    results: List[DownloadResult] = []
+    meters = get_meter_options(driver, account, log=log)
+    if not meters:
+        log(f"⚠️ ไม่พบมิเตอร์สำหรับบัญชี {account}")
+        return results
+
+    for meter in meters:
+        for date_from, date_to in month_ranges:
+            try:
+                path = download_month(
+                    driver, account, meter["value"], meter["text"], date_from, date_to,
+                    download_dir, log=log,
+                )
+                results.append(
+                    DownloadResult(
+                        account_no=account, meter_text=meter["text"],
+                        date_from=date_from, date_to=date_to,
+                        file_path=path, success=bool(path),
+                    )
+                )
+                if path:
+                    log(f"✅ สำเร็จ: {os.path.basename(path)}")
+                else:
+                    log(f"❌ ไม่สำเร็จ: {account} {meter['text']} {date_from}-{date_to}")
+            except Exception as e:  # noqa: BLE001
+                log(f"❌ error: {account} {meter['text']} {date_from}-{date_to}: {e}")
+                results.append(
+                    DownloadResult(
+                        account_no=account, meter_text=meter["text"],
+                        date_from=date_from, date_to=date_to,
+                        file_path=None, success=False, error=str(e),
+                    )
+                )
+            random_delay(0.5, 1)
+
+    return results
+
+
 def download_amr_kw_reports(
     username: str,
     password: str,
@@ -377,39 +520,49 @@ def download_amr_kw_reports(
             raise RuntimeError("Login ไม่สำเร็จ — ตรวจสอบ username/password")
 
         for account in accounts:
-            meters = get_meter_options(driver, account, log=log)
-            if not meters:
-                log(f"⚠️ ไม่พบมิเตอร์สำหรับบัญชี {account}")
-                continue
-            for meter in meters:
-                for date_from, date_to in month_ranges:
-                    try:
-                        path = download_month(
-                            driver, account, meter["value"], meter["text"], date_from, date_to,
-                            download_dir, log=log,
-                        )
-                        results.append(
-                            DownloadResult(
-                                account_no=account, meter_text=meter["text"],
-                                date_from=date_from, date_to=date_to,
-                                file_path=path, success=bool(path),
-                            )
-                        )
-                        if path:
-                            log(f"✅ สำเร็จ: {os.path.basename(path)}")
-                        else:
-                            log(f"❌ ไม่สำเร็จ: {account} {meter['text']} {date_from}-{date_to}")
-                    except Exception as e:  # noqa: BLE001
-                        log(f"❌ error: {account} {meter['text']} {date_from}-{date_to}: {e}")
-                        results.append(
-                            DownloadResult(
-                                account_no=account, meter_text=meter["text"],
-                                date_from=date_from, date_to=date_to,
-                                file_path=None, success=False, error=str(e),
-                            )
-                        )
-                    random_delay(0.5, 1)
+            results.extend(_download_reports_for_account(driver, account, month_ranges, download_dir, log))
     finally:
         driver.quit()
 
     return results
+
+
+def download_amr_with_profile(
+    username: str,
+    password: str,
+    start_date: str,
+    end_date: str,
+    download_dir: str,
+    log: ProgressCallback = _noop,
+    headless: bool = True,
+) -> tuple:
+    """เวอร์ชัน "ใส่แค่ Username/Password" — login ครั้งเดียว แล้วทั้งดึงข้อมูลผู้ใช้ไฟ
+    (ประเภทอัตรา/ประเภทธุรกิจ/KVA จากหน้า CustProfile.aspx) และดาวน์โหลดรายงาน AMR ของ
+    บัญชีนั้นในเซสชันเดียวกัน (username คือเลขบัญชีอยู่แล้ว — 1 login = 1 บัญชี)
+
+    คืนค่า (profile: dict, results: List[DownloadResult])
+    """
+
+    os.makedirs(download_dir, exist_ok=True)
+    month_ranges = generate_month_ranges(start_date, end_date)
+
+    driver = setup_driver(download_dir, headless=headless)
+    try:
+        if not amr_login(driver, username, password, log=log):
+            raise RuntimeError("Login ไม่สำเร็จ — ตรวจสอบ username/password")
+
+        params = extract_dashboard_params(driver.page_source)
+        custcode = params.get("custcode") or username
+        custid = params.get("custid")
+        if not custid:
+            raise RuntimeError(
+                "ไม่พบ Custid จากหน้าหลัง login — ระบบ AMR ของ PEA อาจเปลี่ยนโครงสร้างหน้าไปแล้ว "
+                "(ลองกรอกประเภทธุรกิจ/อัตรา/KVA เองแทนการให้ระบบตรวจจับอัตโนมัติ)"
+            )
+
+        profile = get_customer_profile(driver, custcode, custid, log=log)
+        results = _download_reports_for_account(driver, custcode, month_ranges, download_dir, log)
+    finally:
+        driver.quit()
+
+    return profile, results

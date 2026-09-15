@@ -28,9 +28,9 @@ async function loadBusinessTypes() {
   try {
     const res = await fetch("/api/business-types");
     const types = await res.json();
-    businessTypeSelect.innerHTML = types
-      .map((t) => `<option value="${t.code}">${t.name_th} (${t.code})</option>`)
-      .join("");
+    const autoOption = `<option value="">-- ให้ระบบตรวจจับอัตโนมัติ --</option>`;
+    businessTypeSelect.innerHTML =
+      autoOption + types.map((t) => `<option value="${t.code}">${t.name_th} (${t.code})</option>`).join("");
   } catch (err) {
     console.error("โหลดประเภทธุรกิจไม่สำเร็จ", err);
   }
@@ -100,9 +100,18 @@ async function startImport() {
   const start_date = document.getElementById("f-start").value;
   const end_date = document.getElementById("f-end").value;
 
-  if (!accounts || !business_type_code || !rate_code || !start_date || !end_date) {
-    formHint.textContent = "กรุณากรอกข้อมูลให้ครบ (เลขบัญชี, ประเภทธุรกิจ, รหัสอัตรา, ช่วงวันที่)";
+  if (!start_date || !end_date) {
+    formHint.textContent = "กรุณาเลือกวันที่เริ่มต้นและสิ้นสุด";
     return;
+  }
+
+  // ระบุประเภทธุรกิจหรืออัตรามาอย่างใดอย่างหนึ่ง (โหมดกรอกเอง) ต้องกรอกให้ครบทั้งคู่ +
+  // เลขบัญชี — ถ้าไม่ระบุทั้งคู่เลย ปล่อยให้ backend ใช้โหมดตรวจจับอัตโนมัติแทน
+  if (business_type_code || rate_code) {
+    if (!accounts || !business_type_code || !rate_code) {
+      formHint.textContent = "โหมดกรอกเอง: กรุณากรอกเลขบัญชี, ประเภทธุรกิจ และรหัสอัตราให้ครบทั้งหมด";
+      return;
+    }
   }
 
   submitBtn.disabled = true;

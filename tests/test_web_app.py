@@ -199,3 +199,68 @@ def test_start_import_and_poll_job_success(client, monkeypatch):
 def test_import_job_not_found(client):
     res = client.get("/api/admin/import/does-not-exist")
     assert res.status_code == 404
+
+
+def test_start_import_auto_mode_when_business_type_and_rate_omitted(client, monkeypatch):
+    """ไม่กรอกประเภทธุรกิจ/อัตรา -> ต้องเรียก import_amr_auto (ตรวจจับอัตโนมัติ) แทน
+    import_amr_for_business และไม่ต้องมี accounts ก็ยังผ่าน validation ได้"""
+    monkeypatch.setenv("PEA_AMR_USERNAME", "u")
+    monkeypatch.setenv("PEA_AMR_PASSWORD", "p")
+
+    received = {}
+
+    def fake_import_amr_auto(**kwargs):
+        received.update(kwargs)
+        from amr_mapping.models import LoadProfile
+
+        return LoadProfile(
+            business_type_code="34111", rate_code="40", billing_method="TOU",
+            demand_kw={"P": 1.0, "OP": 2.0, "H": 3.0},
+            energy_kwh={"P": 10.0, "OP": 20.0, "H": 30.0},
+            contract_kva_ref=15000.0, sample_size=2, notes="fake-auto",
+        )
+
+    def fail_if_called(**kwargs):
+        raise AssertionError("ไม่ควรเรียก import_amr_for_business ในโหมด auto")
+
+    monkeypatch.setattr(app_module, "import_amr_auto", fake_import_amr_auto)
+    monkeypatch.setattr(app_module, "import_amr_for_business", fail_if_called)
+
+    res = client.post(
+        "/api/admin/import",
+        json={"start_date": "2026-01-01", "end_date": "2026-02-28"},  # ไม่มี business_type_code/rate_code/accounts เลย
+    )
+    assert res.status_code == 200
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/import/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    assert status["result"]["business_type_code"] == "34111"
+    assert received["username"] == "u"
+    assert "accounts" not in received  # import_amr_auto ไม่รับพารามิเตอร์นี้
+
+
+def test_start_import_manual_mode_when_only_business_type_given(client, monkeypatch):
+    """ระบุ business_type_code มาแม้จะไม่มี rate_code -> ต้องถือเป็นโหมดกรอกเอง (manual)
+    ไม่ใช่ auto จึงต้อง validate ครบทุกฟิลด์ตามเดิม (จะ error เพราะ rate_code หาย)"""
+    monkeypatch.setenv("PEA_AMR_USERNAME", "u")
+    monkeypatch.setenv("PEA_AMR_PASSWORD", "p")
+
+    res = client.post(
+        "/api/admin/import",
+        json={
+            "accounts": "TEST-001",
+            "business_type_code": "86101",
+            "start_date": "2026-01-01",
+            "end_date": "2026-02-28",
+        },
+    )
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+    assert "rate_code" in res.get_json()["message"]

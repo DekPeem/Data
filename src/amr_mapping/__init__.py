@@ -16,7 +16,14 @@ from .models import (
     MatchResult,
     ForecastResult,
 )
-from .loader import ReferenceData, load_reference_data, save_load_profiles, upsert_load_profile
+from .loader import (
+    ReferenceData,
+    load_reference_data,
+    save_business_types,
+    save_load_profiles,
+    upsert_business_type,
+    upsert_load_profile,
+)
 from .mapping import find_load_profile, estimate_customer_load
 
 __all__ = [
@@ -31,6 +38,8 @@ __all__ = [
     "load_reference_data",
     "save_load_profiles",
     "upsert_load_profile",
+    "save_business_types",
+    "upsert_business_type",
     "find_load_profile",
     "estimate_customer_load",
 ]

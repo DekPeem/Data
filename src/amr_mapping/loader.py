@@ -33,6 +33,27 @@ def _load_business_types(path: Path) -> Dict[str, BusinessType]:
     return result
 
 
+_BUSINESS_TYPE_FIELDNAMES = ["code", "name_th", "category", "notes"]
+
+
+def save_business_types(business_types: Dict[str, BusinessType], path: Path) -> None:
+    """เขียน business_types กลับเป็นไฟล์ business_types.csv (เขียนทับทั้งไฟล์)"""
+
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=_BUSINESS_TYPE_FIELDNAMES)
+        writer.writeheader()
+        for bt in business_types.values():
+            writer.writerow({"code": bt.code, "name_th": bt.name_th, "category": bt.category, "notes": bt.notes})
+
+
+def upsert_business_type(business_types: Dict[str, BusinessType], new_bt: BusinessType) -> Dict[str, BusinessType]:
+    """แทนที่/เพิ่มประเภทธุรกิจตาม code (คืน dict ใหม่ ไม่แก้ของเดิม)"""
+
+    result = dict(business_types)
+    result[new_bt.code] = new_bt
+    return result
+
+
 def _load_rate_schedules(path: Path) -> Dict[str, RateSchedule]:
     result: Dict[str, RateSchedule] = {}
     with path.open(encoding="utf-8-sig", newline="") as f:

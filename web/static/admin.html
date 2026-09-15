@@ -47,13 +47,14 @@
     <main class="body-wrap">
 
       <div class="warn-box">
-        ⚠️ ต้องรันเว็บนี้ในเครื่องที่มี Google Chrome ติดตั้งอยู่ กรอก username/password
-        เข้าเว็บ AMR ของ PEA ในฟอร์มด้านล่างได้โดยตรง (เหมาะถ้ามีหลายบัญชี คนละรหัสผ่านกัน)
-        — ใช้แค่ครั้งเดียวสำหรับงานนี้แล้วทิ้งทันที <b>ไม่ถูกบันทึกลงดิสก์/log ที่ไหนเลย</b>
-        (หรือจะตั้งค่าตัวแปรสภาพแวดล้อม <code>PEA_AMR_USERNAME</code> /
-        <code>PEA_AMR_PASSWORD</code> ไว้เป็นค่า default แทนก็ได้ ดู README)
-        ไฟล์ดิบที่ดาวน์โหลดมา (มีเลขบัญชี/เลขมิเตอร์) จะถูก<b>ลบทิ้งทันที</b>หลังคำนวณเสร็จ
-        เหลือแค่ค่าเฉลี่ย P/OP/H ที่ไม่ระบุตัวตนบันทึกลง <code>load_profiles.csv</code>
+        ⚠️ ต้องรันเว็บนี้ในเครื่องที่มี Google Chrome ติดตั้งอยู่ กรอกแค่ <b>Username/Password</b>
+        เข้าเว็บ AMR ของ PEA + ช่วงวันที่ ก็พอ — ระบบจะ<b>ตรวจจับประเภทธุรกิจ/อัตรา/KVA ให้เอง
+        อัตโนมัติ</b>จากหน้าข้อมูลผู้ใช้ไฟของ PEA (ไม่ต้องเลือก/กรอกเอง เว้นแต่ต้องการกำหนดเอง
+        ให้เปิด "ตัวเลือกขั้นสูง" ด้านล่าง) — ใช้แค่ครั้งเดียวสำหรับงานนี้แล้วทิ้งทันที
+        <b>ไม่ถูกบันทึกลงดิสก์/log ที่ไหนเลย</b> (หรือจะตั้งค่าตัวแปรสภาพแวดล้อม
+        <code>PEA_AMR_USERNAME</code> / <code>PEA_AMR_PASSWORD</code> ไว้เป็นค่า default แทนก็ได้
+        ดู README) ไฟล์ดิบที่ดาวน์โหลดมา (มีเลขบัญชี/เลขมิเตอร์) จะถูก<b>ลบทิ้งทันที</b>หลัง
+        คำนวณเสร็จ เหลือแค่ค่าเฉลี่ย P/OP/H ที่ไม่ระบุตัวตนบันทึกลง <code>load_profiles.csv</code>
       </div>
 
       <div class="card" style="padding: 28px; display: flex; flex-direction: column; gap: 20px;">
@@ -72,32 +73,6 @@
             <div class="hint">ใช้ครั้งเดียวสำหรับงานนี้เท่านั้น ไม่ถูกบันทึกลงที่ใดทั้งสิ้น</div>
           </div>
 
-          <div class="form-field" style="grid-column: 1 / -1;">
-            <label for="f-accounts">เลขบัญชีผู้ใช้ไฟที่จะดึงข้อมูล (คั่นด้วย , ถ้ามีหลายราย)</label>
-            <input id="f-accounts" type="text" placeholder="เช่น 019900000001, 019900000002">
-            <div class="hint">เติมให้อัตโนมัติจาก Username ด้านบน (ปกติ username = เลขบัญชี) แก้เพิ่มเองได้ถ้ามีหลายบัญชี — ทุกมิเตอร์ในบัญชีเหล่านี้จะถูกดาวน์โหลดและนำมาเฉลี่ยรวมกัน</div>
-          </div>
-
-          <div class="form-field">
-            <label for="f-business-type">ประเภทธุรกิจ</label>
-            <select id="f-business-type"></select>
-          </div>
-
-          <div class="form-field">
-            <label for="f-rate-code">รหัสอัตรา</label>
-            <input id="f-rate-code" type="text" placeholder="50">
-          </div>
-
-          <div class="form-field">
-            <label for="f-kva">KVA ตามสัญญา (ถ้าทราบ)</label>
-            <input id="f-kva" type="number" min="0" step="any" placeholder="2000">
-          </div>
-
-          <div class="form-field">
-            <label for="f-source-label">คำอธิบายที่มา</label>
-            <input id="f-source-label" type="text" placeholder="ห้ามใส่ชื่อ/เลขบัญชีลูกค้า">
-          </div>
-
           <div class="form-field">
             <label for="f-start">วันที่เริ่มต้น</label>
             <input id="f-start" type="date">
@@ -107,7 +82,40 @@
             <label for="f-end">วันที่สิ้นสุด</label>
             <input id="f-end" type="date">
           </div>
+
+          <div class="form-field" style="grid-column: 1 / -1;">
+            <label for="f-source-label">คำอธิบายที่มา (ไม่บังคับ)</label>
+            <input id="f-source-label" type="text" placeholder="ห้ามใส่ชื่อ/เลขบัญชีลูกค้า">
+          </div>
         </div>
+
+        <details style="margin-top: 4px;">
+          <summary style="cursor:pointer;font-size:13px;font-weight:600;color:#55647a;">
+            ตัวเลือกขั้นสูง — กรอกเองแทนการให้ระบบตรวจจับอัตโนมัติ
+          </summary>
+          <div class="form-grid" style="margin-top: 16px;">
+            <div class="form-field" style="grid-column: 1 / -1;">
+              <label for="f-accounts">เลขบัญชีผู้ใช้ไฟที่จะดึงข้อมูล (คั่นด้วย , ถ้ามีหลายราย)</label>
+              <input id="f-accounts" type="text" placeholder="เช่น 019900000001, 019900000002">
+              <div class="hint">เติมให้อัตโนมัติจาก Username ด้านบน (ปกติ username = เลขบัญชี) — ใช้เฉพาะตอนกรอกประเภทธุรกิจ/อัตราเองเท่านั้น โหมดอัตโนมัติจะดึงจากบัญชีของ username ที่ login เสมอ</div>
+            </div>
+
+            <div class="form-field">
+              <label for="f-business-type">ประเภทธุรกิจ</label>
+              <select id="f-business-type"></select>
+            </div>
+
+            <div class="form-field">
+              <label for="f-rate-code">รหัสอัตรา</label>
+              <input id="f-rate-code" type="text" placeholder="50">
+            </div>
+
+            <div class="form-field">
+              <label for="f-kva">KVA ตามสัญญา (ถ้าทราบ)</label>
+              <input id="f-kva" type="number" min="0" step="any" placeholder="2000">
+            </div>
+          </div>
+        </details>
 
         <div class="submit-row">
           <button id="submit-btn" class="search-button">ดาวน์โหลดและนำเข้า</button>

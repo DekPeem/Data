@@ -134,3 +134,97 @@ def test_import_amr_for_business_raises_when_no_files_downloaded(monkeypatch, da
             business_type_code="TESTBIZ", rate_code="50", contract_kva=None,
             source_label="", data_dir=data_dir,
         )
+
+
+def _fake_download_amr_with_profile(username, password, start_date, end_date, download_dir, log, headless=True):
+    """แทนที่ login+scrape+download จริงด้วยค่า profile สมมติ + ไฟล์ synthetic"""
+    profile_info = {
+        "rate_code": "40",
+        "billing_method": "TOU",
+        "business_type_code": "34111",
+        "business_type_name": "การผลิตเยื่อกระดาษ (ตัวอย่าง)",
+        "kva": "15,000",
+        "meter_no": "11111111",
+    }
+    path = os.path.join(download_dir, "amr_auto.xls")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(_SYNTHETIC_INTERVAL_HTML)
+    results = [
+        DownloadResult(account_no=username, meter_text="M1", date_from=start_date, date_to=end_date, file_path=path, success=True)
+    ]
+    return profile_info, results
+
+
+def test_import_amr_auto_detects_and_saves_new_business_type(monkeypatch, data_dir):
+    monkeypatch.setattr(amr_import, "download_amr_with_profile", _fake_download_amr_with_profile)
+
+    logs = []
+    profile = amr_import.import_amr_auto(
+        username="019900000001", password="secret-pass",
+        start_date="2026-07-01", end_date="2026-08-31",
+        source_label="unit test auto",
+        data_dir=data_dir, log=logs.append,
+    )
+
+    assert profile.business_type_code == "34111"
+    assert profile.rate_code == "40"
+    assert profile.contract_kva_ref == 15000.0
+    assert profile.billing_method == "TOU"
+
+    # ต้องเพิ่ม business type ใหม่ลง business_types.csv อัตโนมัติ เพราะ 34111 ยังไม่เคยมี
+    reference = load_reference_data(data_dir)
+    assert "34111" in reference.business_types
+    assert reference.business_types["34111"].name_th == "การผลิตเยื่อกระดาษ (ตัวอย่าง)"
+    assert reference.business_types["34111"].category == "auto"
+
+    # และต้องยังมี business type เดิม (TESTBIZ) อยู่ครบ ไม่หายไป
+    assert "TESTBIZ" in reference.business_types
+
+    saved = next(p for p in reference.load_profiles if p.business_type_code == "34111")
+    assert saved.rate_code == "40"
+
+    assert "secret-pass" not in " ".join(logs)
+
+
+def test_import_amr_auto_does_not_overwrite_existing_business_type(monkeypatch, data_dir):
+    def fake_download(username, password, start_date, end_date, download_dir, log, headless=True):
+        profile_info = {
+            "rate_code": "50", "billing_method": "TOU",
+            "business_type_code": "TESTBIZ",  # ชนกับที่มีอยู่แล้วใน fixture
+            "business_type_name": "ชื่อใหม่ที่ไม่ควรถูกใช้ทับ",
+            "kva": "500",
+        }
+        path = os.path.join(download_dir, "amr_auto.xls")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(_SYNTHETIC_INTERVAL_HTML)
+        results = [DownloadResult(account_no=username, meter_text="M1", date_from=start_date, date_to=end_date, file_path=path, success=True)]
+        return profile_info, results
+
+    monkeypatch.setattr(amr_import, "download_amr_with_profile", fake_download)
+
+    amr_import.import_amr_auto(
+        username="TESTBIZ-ACC", password="p",
+        start_date="2026-07-01", end_date="2026-08-31",
+        data_dir=data_dir,
+    )
+
+    reference = load_reference_data(data_dir)
+    # ชื่อเดิม ("ธุรกิจทดสอบ" จาก fixture) ต้องไม่ถูกเขียนทับด้วยชื่อที่ scrape มาใหม่
+    assert reference.business_types["TESTBIZ"].name_th == "ธุรกิจทดสอบ"
+
+
+def test_import_amr_auto_raises_when_detection_incomplete(monkeypatch, data_dir):
+    def fake_download(username, password, start_date, end_date, download_dir, log, headless=True):
+        profile_info = {"rate_code": "", "business_type_code": "", "kva": ""}  # ตรวจจับไม่ได้เลย
+        path = os.path.join(download_dir, "amr_auto.xls")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(_SYNTHETIC_INTERVAL_HTML)
+        results = [DownloadResult(account_no=username, meter_text="M1", date_from=start_date, date_to=end_date, file_path=path, success=True)]
+        return profile_info, results
+
+    monkeypatch.setattr(amr_import, "download_amr_with_profile", fake_download)
+
+    with pytest.raises(RuntimeError):
+        amr_import.import_amr_auto(
+            username="u", password="p", start_date="2026-07-01", end_date="2026-08-31", data_dir=data_dir,
+        )

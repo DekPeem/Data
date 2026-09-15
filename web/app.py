@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from flask import Flask, jsonify, request
 
 from amr_mapping import estimate_customer_load, load_reference_data
-from amr_mapping.amr_import import import_amr_for_business
+from amr_mapping.amr_import import import_amr_auto, import_amr_for_business
 from amr_mapping.mapping import MatchLevel
 
 app = Flask(__name__, static_folder="static", static_url_path="")
@@ -142,19 +142,30 @@ def _run_import_job(job_id: str, username: str, password: str, params: dict) -> 
             _JOBS[job_id]["logs"].append(msg)
 
     try:
-        profile = import_amr_for_business(
-            username=username,
-            password=password,
-            accounts=params["accounts"],
-            start_date=params["start_date"],
-            end_date=params["end_date"],
-            business_type_code=params["business_type_code"],
-            rate_code=params["rate_code"],
-            contract_kva=params.get("contract_kva"),
-            source_label=params.get("source_label", ""),
-            billing_method=params.get("billing_method", "TOU"),
-            log=log,
-        )
+        if params["mode"] == "auto":
+            log("🤖 ไม่ได้ระบุประเภทธุรกิจ/อัตรา — ให้ระบบตรวจจับอัตโนมัติจากหน้าข้อมูลผู้ใช้ไฟของ PEA")
+            profile = import_amr_auto(
+                username=username,
+                password=password,
+                start_date=params["start_date"],
+                end_date=params["end_date"],
+                source_label=params.get("source_label", ""),
+                log=log,
+            )
+        else:
+            profile = import_amr_for_business(
+                username=username,
+                password=password,
+                accounts=params["accounts"],
+                start_date=params["start_date"],
+                end_date=params["end_date"],
+                business_type_code=params["business_type_code"],
+                rate_code=params["rate_code"],
+                contract_kva=params.get("contract_kva"),
+                source_label=params.get("source_label", ""),
+                billing_method=params.get("billing_method", "TOU"),
+                log=log,
+            )
         with _JOBS_LOCK:
             _JOBS[job_id]["status"] = "success"
             _JOBS[job_id]["result"] = {
@@ -204,17 +215,25 @@ def api_start_import():
     start_date = (body.get("start_date") or "").strip()
     end_date = (body.get("end_date") or "").strip()
 
-    missing = [
-        name
-        for name, val in [
-            ("accounts", accounts),
-            ("business_type_code", business_type_code),
-            ("rate_code", rate_code),
-            ("start_date", start_date),
-            ("end_date", end_date),
+    # ไม่ระบุทั้งประเภทธุรกิจและอัตรา -> โหมดอัตโนมัติ (ตรวจจับจากหน้าข้อมูลผู้ใช้ไฟของ PEA
+    # เอง ต้องการแค่ username/password + ช่วงวันที่); ระบุมาอย่างน้อยหนึ่งอย่าง -> โหมดกรอกเอง
+    # (แบบเดิม ต้องกรอกให้ครบทั้งคู่ และต้องระบุเลขบัญชีด้วย)
+    mode = "auto" if not business_type_code and not rate_code else "manual"
+
+    if mode == "auto":
+        missing = [name for name, val in [("start_date", start_date), ("end_date", end_date)] if not val]
+    else:
+        missing = [
+            name
+            for name, val in [
+                ("accounts", accounts),
+                ("business_type_code", business_type_code),
+                ("rate_code", rate_code),
+                ("start_date", start_date),
+                ("end_date", end_date),
+            ]
+            if not val
         ]
-        if not val
-    ]
     if missing:
         return jsonify({"error": "invalid_request", "message": f"กรอกข้อมูลไม่ครบ: {', '.join(missing)}"}), 400
 
@@ -223,6 +242,7 @@ def api_start_import():
         _JOBS[job_id] = {"status": "running", "logs": [], "result": None, "error": None}
 
     params = {
+        "mode": mode,
         "accounts": accounts,
         "business_type_code": business_type_code,
         "rate_code": rate_code,

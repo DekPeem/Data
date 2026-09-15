@@ -21,6 +21,12 @@ def test_compute_meter_multiplier():
     assert compute_meter_multiplier("50:5 A.", "22000:110 V.") == pytest.approx(2000.0)
 
 
+def test_compute_meter_multiplier_slash_separator():
+    # หน้า CustProfile.aspx ใช้ตัวคั่น "/" แทน ":" (เช่น "100/5 A." , "115000/115 V.")
+    # CT 100/5 -> 20, VT 115000/115 -> 1000, รวม = 20000
+    assert compute_meter_multiplier("100/5 A.", "115000/115 V.") == pytest.approx(20000.0)
+
+
 def test_compute_monthly_profiles_diff_and_scale():
     readings = [
         MonthlyRegisterReading(
