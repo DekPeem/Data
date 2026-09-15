@@ -6,6 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import amr_mapping.dbd_lookup as dbd_lookup
 from amr_mapping.dbd_lookup import (
     CompanyBusinessInfo,
+    _fallback_search_terms,
     _strip_legal_form,
     build_search_url,
     find_exact_match,
@@ -68,6 +69,23 @@ def test_strip_legal_form_removes_long_prefix_before_short_one():
 
 def test_strip_legal_form_returns_none_when_nothing_to_strip():
     assert _strip_legal_form("ชื่อธรรมดาไม่มีคำนำหน้า") is None
+
+
+def test_fallback_search_terms_strips_legal_form_first_then_shortens():
+    terms = _fallback_search_terms("บริษัท ตัวอย่าง เอ บี ซี จำกัด")
+    # ลำดับต้องเป็น: ตัด legal form ก่อน แล้วค่อยตัดคำท้ายทีละคำ จนเหลือคำแรกคำเดียว
+    assert terms == ["ตัวอย่าง เอ บี ซี", "ตัวอย่าง เอ บี", "ตัวอย่าง เอ", "ตัวอย่าง"]
+
+
+def test_fallback_search_terms_skips_candidates_shorter_than_min_length():
+    """ตัดจนเหลือคำเดียวที่สั้นกว่า _MIN_FALLBACK_KEYWORD_LEN (เช่น 1 ตัวอักษร) ต้องไม่ถูกเสนอ
+    เป็นคำค้นหาสำรอง (กว้างเกินไปจนไม่มีประโยชน์ อาจได้ผลลัพธ์เป็นพันรายการ)"""
+    terms = _fallback_search_terms("บริษัท ก บ จำกัด")
+    assert "ก" not in terms
+
+
+def test_fallback_search_terms_empty_for_single_word_name_with_no_legal_form():
+    assert _fallback_search_terms("ไม่มีบริษัทนี้แน่นอน") == []
 
 
 # ── fake Selenium driver (ไม่ต้องมี Chrome จริง) — เลียนแบบโครงสร้าง DOM จริงที่ยืนยันแล้ว
@@ -260,5 +278,52 @@ def test_search_company_business_type_does_not_retry_when_name_has_no_legal_form
 
     assert results == []
     assert len(driver.get_calls) == 1
+
+
+class _FakeNthCallSucceedsDriver(_FakeSearchDriver):
+    """คืนผลลัพธ์ว่างสำหรับ (succeed_at_call - 1) ครั้งแรก แล้วเจอผลลัพธ์ตั้งแต่ครั้งที่
+    succeed_at_call เป็นต้นไป — ใช้ทดสอบว่า fallback ไล่ลองคำค้นหาหลายแบบเรียงลำดับถูกต้องก่อนเจอ
+    (ยืนยันจากการทดสอบจริงบนเว็บ DBD ว่าบางครั้งต้องตัดคำท้ายมากกว่า 1 คำถึงจะเจอ)"""
+
+    def __init__(self, succeed_at_call, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._succeed_at_call = succeed_at_call
+
+    def find_element(self, by, selector):
+        from selenium.common.exceptions import NoSuchElementException
+
+        if len(self.get_calls) < self._succeed_at_call:
+            raise NoSuchElementException(selector)
+        return _FakeRow(self._rows_cells[0])
+
+    def find_elements(self, by, selector):
+        if len(self.get_calls) < self._succeed_at_call:
+            return []
+        return [_FakeRow(cells) for cells in self._rows_cells]
+
+
+def test_search_company_business_type_progressively_shortens_keyword_until_found():
+    from urllib.parse import unquote
+
+    driver = _FakeNthCallSucceedsDriver(succeed_at_call=3)
+    logs = []
+
+    results = search_company_business_type(
+        driver, "บริษัท ตัวอย่าง เอ บี ซี จำกัด", log=logs.append, timeout=0.5
+    )
+
+    calls = [unquote(u.split("keyword=")[1]) for u in driver.get_calls]
+    assert calls == ["บริษัท ตัวอย่าง เอ บี ซี จำกัด", "ตัวอย่าง เอ บี ซี", "ตัวอย่าง เอ บี"]
+    assert len(results) == 1
+
+
+def test_search_company_business_type_returns_empty_when_every_fallback_term_fails():
+    driver = _FakeSearchDriver(present=False)
+
+    results = search_company_business_type(driver, "บริษัท ตัวอย่าง เอ บี ซี จำกัด", timeout=0.5)
+
+    assert results == []
+    # ต้องลองครบทุกคำ: ชื่อเต็ม + 4 คำสำรอง (ตัด legal form + ตัดคำท้ายทีละคำจนเหลือคำเดียว) = 5 ครั้ง
+    assert len(driver.get_calls) == 5
 
 
