@@ -97,6 +97,43 @@ def build_search_url(keyword: str) -> str:
     return f"{BASE_URL}{SEARCH_PATH}?keyword={quote(keyword)}"
 
 
+# คำนำหน้า/ต่อท้ายที่บ่งบอกประเภทนิติบุคคล — เรียงจากยาวไปสั้น เพื่อให้ตัดรูปเต็มก่อนรูปย่อ
+# (เช่นตัด "ห้างหุ้นส่วนจำกัด" ก่อน ไม่ใช่ไปตัด "หจก." ซึ่งไม่ตรงอยู่แล้วถ้าพิมพ์เต็ม)
+_LEGAL_FORM_PREFIXES = [
+    "ห้างหุ้นส่วนสามัญนิติบุคคล",
+    "ห้างหุ้นส่วนจำกัด",
+    "ห้างหุ้นส่วนสามัญ",
+    "หจก.",
+    "บริษัท",
+]
+_LEGAL_FORM_SUFFIXES = [
+    "จำกัด (มหาชน)",
+    "จำกัด(มหาชน)",
+    "จำกัด",
+]
+
+
+def _strip_legal_form(name: str) -> Optional[str]:
+    """ตัดคำนำหน้า/ต่อท้ายที่บ่งบอกประเภทนิติบุคคล (เช่น "หจก.", "บริษัท", "จำกัด") ออก เหลือแค่
+    ชื่อเฉพาะของกิจการ — ใช้เป็นคำค้นหาสำรองรอบสอง เผื่อรูปแบบคำนำหน้า/ต่อท้ายที่ผู้ใช้พิมพ์มาไม่ตรง
+    กับที่ DBD บันทึกไว้เป๊ะๆ (เช่น พิมพ์ย่อ "หจก." แต่ DBD DataWarehouse ทำ keyword search แบบ
+    ต้องตรงกับข้อความที่บันทึกไว้ค่อนข้างเป๊ะ) คืน None ถ้าตัดแล้วไม่มีอะไรเปลี่ยน (จะได้ไม่ค้นหา
+    ซ้ำคำเดิมโดยเปล่าประโยชน์)"""
+
+    original = name.strip()
+    stripped = original
+    for prefix in _LEGAL_FORM_PREFIXES:
+        if stripped.startswith(prefix):
+            stripped = stripped[len(prefix) :].strip()
+            break
+    for suffix in _LEGAL_FORM_SUFFIXES:
+        if stripped.endswith(suffix):
+            stripped = stripped[: -len(suffix)].strip()
+            break
+
+    return stripped if stripped and stripped != original else None
+
+
 def _parse_result_rows(driver) -> List[CompanyBusinessInfo]:
     """อ่านแถวผลลัพธ์จากตารางที่หน้าเว็บ render เสร็จแล้ว (ถอดรหัสให้เรียบร้อยแล้วโดยเว็บเขาเอง —
     ดูคำเตือนหัวไฟล์: เราไม่ได้แตะ API เข้ารหัสเลย)"""
@@ -122,33 +159,51 @@ def _parse_result_rows(driver) -> List[CompanyBusinessInfo]:
     return results
 
 
-def search_company_business_type(
-    driver, company_name: str, log: ProgressCallback = _noop, timeout: int = 15
-) -> List[CompanyBusinessInfo]:
-    """ค้นหาชื่อบริษัทใน DBD DataWarehouse คืนรายการผลลัพธ์ทั้งหมดที่พบ (การค้นหาแบบ keyword
-    อาจเจอหลายบริษัทที่ชื่อคล้ายกัน — ผู้เรียกเลือกเอง หรือใช้ find_exact_match กรองชื่อที่ตรงเป๊ะ)
-
-    ต้อง driver ที่เปิดอยู่แล้ว (ไม่ต้อง login เพราะเป็นข้อมูลสาธารณะ) — ฟังก์ชันนี้แค่ driver.get()
-    ไปที่ URL ค้นหา แล้วรอให้ตารางผลลัพธ์ปรากฏก่อนอ่านค่า
-    """
+def _search_once(driver, keyword: str, log: ProgressCallback, timeout: int) -> List[CompanyBusinessInfo]:
+    """ค้นหา 1 รอบด้วยคำค้นหาเดียว — ใช้ driver ที่เปิดอยู่แล้ว (ไม่ต้อง login เพราะเป็นข้อมูล
+    สาธารณะ) แค่ driver.get() ไปที่ URL ค้นหา แล้วรอให้ตารางผลลัพธ์ปรากฏก่อนอ่านค่า"""
 
     from selenium.webdriver.support import expected_conditions as EC
     from selenium.webdriver.support.ui import WebDriverWait
     from selenium.webdriver.common.by import By
 
-    url = build_search_url(company_name)
-    log(f"🔍 ค้นหาใน DBD DataWarehouse: {company_name}")
+    url = build_search_url(keyword)
+    log(f"🔍 ค้นหาใน DBD DataWarehouse: {keyword}")
     driver.get(url)
 
     wait = WebDriverWait(driver, timeout)
     try:
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, _RESULT_ROW_SELECTOR)))
     except Exception:  # noqa: BLE001 — TimeoutException หรืออื่นๆ ถือว่าไม่พบผลลัพธ์เหมือนกัน
-        log("⚠️ ไม่พบผลลัพธ์ (หรือหน้าเว็บของ DBD เปลี่ยนโครงสร้างไปแล้ว — ต้องอัปเดต selector)")
+        log(f"⚠️ ไม่พบผลลัพธ์สำหรับ '{keyword}'")
         return []
 
     results = _parse_result_rows(driver)
-    log(f"✅ พบ {len(results)} รายการที่ตรงกับ '{company_name}'")
+    log(f"✅ พบ {len(results)} รายการที่ตรงกับ '{keyword}'")
+    return results
+
+
+def search_company_business_type(
+    driver, company_name: str, log: ProgressCallback = _noop, timeout: int = 15
+) -> List[CompanyBusinessInfo]:
+    """ค้นหาชื่อบริษัทใน DBD DataWarehouse คืนรายการผลลัพธ์ทั้งหมดที่พบ (การค้นหาแบบ keyword
+    อาจเจอหลายบริษัทที่ชื่อคล้ายกัน — ผู้เรียกเลือกเอง หรือใช้ find_exact_match กรองชื่อที่ตรงเป๊ะ)
+
+    ถ้าค้นด้วยชื่อเต็มตามที่พิมพ์มาแล้วไม่พบเลย จะลองค้นซ้ำอีกครั้งโดยตัดคำนำหน้า/ต่อท้ายที่บ่งบอก
+    ประเภทนิติบุคคลออก (เช่น "หจก.", "บริษัท", "จำกัด") เพราะ DBD DataWarehouse ทำ keyword search
+    แบบต้องใกล้เคียงกับชื่อที่บันทึกไว้ค่อนข้างมาก — พิมพ์ย่อ "หจก." อาจไม่พบถ้า DBD เก็บเป็นรูปเต็ม
+    "ห้างหุ้นส่วนจำกัด" (หรือกลับกัน) ทั้งที่เป็นกิจการเดียวกัน
+    """
+
+    results = _search_once(driver, company_name, log, timeout)
+    if results:
+        return results
+
+    fallback_keyword = _strip_legal_form(company_name)
+    if fallback_keyword:
+        log(f"🔁 ลองค้นหาอีกครั้งโดยตัดคำนำหน้า/ต่อท้ายประเภทนิติบุคคลออก: '{fallback_keyword}'")
+        results = _search_once(driver, fallback_keyword, log, timeout)
+
     return results
 
 

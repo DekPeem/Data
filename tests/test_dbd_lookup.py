@@ -6,6 +6,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import amr_mapping.dbd_lookup as dbd_lookup
 from amr_mapping.dbd_lookup import (
     CompanyBusinessInfo,
+    _strip_legal_form,
     build_search_url,
     find_exact_match,
     search_company_business_type,
@@ -50,6 +51,23 @@ def test_find_exact_match_returns_none_when_no_exact_hit():
         CompanyBusinessInfo("1", "บริษัท ทดสอบ กรุ๊ป จำกัด", "บริษัทจำกัด", "ยังดำเนินกิจการอยู่", "12345", "x"),
     ]
     assert find_exact_match(results, "บริษัท ทดสอบ จำกัด") is None
+
+
+def test_strip_legal_form_removes_prefix_abbreviation():
+    assert _strip_legal_form("หจก. ตัวอย่าง เอ แอนด์ บี") == "ตัวอย่าง เอ แอนด์ บี"
+
+
+def test_strip_legal_form_removes_full_prefix_and_suffix():
+    assert _strip_legal_form("บริษัท ทดสอบ จำกัด") == "ทดสอบ"
+
+
+def test_strip_legal_form_removes_long_prefix_before_short_one():
+    """ต้องตัด "ห้างหุ้นส่วนจำกัด" (รูปเต็ม) ไม่ใช่พยายามตัด "หจก." ซึ่งไม่ตรงอยู่แล้วถ้าพิมพ์เต็มมา"""
+    assert _strip_legal_form("ห้างหุ้นส่วนจำกัด ตัวอย่าง เอ แอนด์ บี") == "ตัวอย่าง เอ แอนด์ บี"
+
+
+def test_strip_legal_form_returns_none_when_nothing_to_strip():
+    assert _strip_legal_form("ชื่อธรรมดาไม่มีคำนำหน้า") is None
 
 
 # ── fake Selenium driver (ไม่ต้องมี Chrome จริง) — เลียนแบบโครงสร้าง DOM จริงที่ยืนยันแล้ว
@@ -199,3 +217,48 @@ def test_search_company_business_type_skips_malformed_rows():
 
     assert len(results) == 1
     assert results[0].tsic_code == "69100"
+
+
+class _FakeFallbackDriver(_FakeSearchDriver):
+    """จำลองเคส: คำค้นหารอบแรก (เช่น "หจก. ชื่อ") ไม่พบผลลัพธ์เลย แต่คำค้นหารอบสอง (ตัดคำนำหน้า/
+    ต่อท้ายประเภทนิติบุคคลออกแล้ว) พบ — เพื่อทดสอบ fallback ใน search_company_business_type"""
+
+    def find_element(self, by, selector):
+        from selenium.common.exceptions import NoSuchElementException
+
+        if len(self.get_calls) < 2:
+            raise NoSuchElementException(selector)
+        return _FakeRow(self._rows_cells[0])
+
+    def find_elements(self, by, selector):
+        if len(self.get_calls) < 2:
+            return []
+        return [_FakeRow(cells) for cells in self._rows_cells]
+
+
+def test_search_company_business_type_retries_without_legal_form_when_first_search_empty():
+    from urllib.parse import unquote
+
+    driver = _FakeFallbackDriver()
+    logs = []
+
+    results = search_company_business_type(driver, "หจก. ตัวอย่าง เอ แอนด์ บี", log=logs.append, timeout=0.5)
+
+    assert len(driver.get_calls) == 2
+    assert "หจก." not in unquote(driver.get_calls[1])
+    assert len(results) == 1
+    assert any("ลองค้นหาอีกครั้ง" in m for m in logs)
+
+
+def test_search_company_business_type_does_not_retry_when_name_has_no_legal_form():
+    """ถ้าชื่อที่พิมพ์ไม่มีคำนำหน้า/ต่อท้ายประเภทนิติบุคคลให้ตัดเลย ไม่ควรค้นหาซ้ำคำเดิมโดยเปล่า
+    ประโยชน์ (เสียเวลาเปิดหน้าเว็บซ้ำ)"""
+
+    driver = _FakeSearchDriver(present=False)
+
+    results = search_company_business_type(driver, "ไม่มีบริษัทนี้แน่นอน", timeout=0.5)
+
+    assert results == []
+    assert len(driver.get_calls) == 1
+
+
