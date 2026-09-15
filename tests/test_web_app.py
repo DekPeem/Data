@@ -148,6 +148,22 @@ def test_list_business_types(client):
     assert any(bt["code"] == "63201" for bt in data)
 
 
+def test_list_business_types_full_includes_hierarchy_and_profiles(client):
+    res = client.get("/api/business-types-full")
+    assert res.status_code == 200
+    data = res.get_json()
+
+    paper = next(bt for bt in data if bt["code"] == "34111")
+    assert paper["section_code"] == "C"
+    assert paper["division_code"] == "17"
+    assert {"rate_code": "40", "sample_size": 12} in paper["profiles"]
+
+    # ตัวที่ยังไม่เคยตรวจสอบ TSIC เลย ต้องเป็น None ไม่ใช่ error
+    office = next(bt for bt in data if bt["code"] == "68100")
+    assert office["division_code"] is None
+    assert office["profiles"] == []  # 68100 ยังไม่มีโปรไฟล์อ้างอิงเลย
+
+
 def test_start_import_missing_credentials(client, monkeypatch):
     monkeypatch.delenv("PEA_AMR_USERNAME", raising=False)
     monkeypatch.delenv("PEA_AMR_PASSWORD", raising=False)

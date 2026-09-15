@@ -109,6 +109,37 @@ def api_list_business_types():
     )
 
 
+@app.route("/api/business-types-full")
+def api_list_business_types_full():
+    """รายชื่อประเภทธุรกิจทั้งหมดแบบละเอียด (รวม TSIC section/division + ว่ามีโปรไฟล์อ้างอิง
+    จริงรองรับอยู่แล้วกี่อัตรา) — ใช้โดยตาราง "หมวดหมู่ธุรกิจทั้งหมดในระบบ" ในหน้า Admin เพื่อดูภาพ
+    รวมของข้อมูลอ้างอิงทั้งหมดในเครื่องนี้ในที่เดียว ไม่ต้องเปิดไฟล์ CSV ดูเอง"""
+
+    reference = get_reference()
+    profiles_by_business: dict = {}
+    for p in reference.load_profiles:
+        profiles_by_business.setdefault(p.business_type_code, []).append(
+            {"rate_code": p.rate_code, "sample_size": p.sample_size}
+        )
+
+    return jsonify(
+        [
+            {
+                "code": bt.code,
+                "name_th": bt.name_th,
+                "category": bt.category,
+                "notes": bt.notes,
+                "section_code": bt.section_code,
+                "section_name_th": bt.section_name_th,
+                "division_code": bt.division_code,
+                "division_name_th": bt.division_name_th,
+                "profiles": profiles_by_business.get(bt.code, []),
+            }
+            for bt in reference.business_types.values()
+        ]
+    )
+
+
 @app.route("/api/rate-schedules")
 def api_list_rate_schedules():
     """รายชื่อประเภทอัตราทั้งหมด (สำหรับ dropdown ในหน้าพยากรณ์แบบไม่บันทึก)"""
