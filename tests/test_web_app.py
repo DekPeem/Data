@@ -92,6 +92,35 @@ def test_forecast_curve_available_and_scaled_when_present(client, monkeypatch):
     assert data["curve"]["day_types"]["all"][0] is None
 
 
+def test_admin_curve_returns_unscaled_curve(client, monkeypatch):
+    """/api/admin/curve ใช้ scale_factor=1.0 เสมอ (ไม่ผูกกับ KVA ของลูกค้ารายใด) เพราะเป็นการ
+    ดูรูปแบบกราฟดิบของกลุ่มธุรกิจ ไม่ใช่การพยากรณ์ให้ลูกค้ารายใดรายหนึ่ง"""
+    from amr_mapping.models import LoadCurve
+
+    original = app_module.load_reference_data()
+    curve = LoadCurve(
+        business_type_code="63201",
+        rate_code="50",
+        hours={"all": [10.0 if h == 9 else None for h in range(24)]},
+        contract_kva_ref=2000.0,
+        sample_size=3,
+    )
+    patched = replace(original, load_curves=[curve])
+    monkeypatch.setattr(app_module, "get_reference", lambda: patched)
+
+    res = client.get("/api/admin/curve/63201/50")
+    data = res.get_json()
+    assert data["available"] is True
+    assert data["sample_size"] == 3
+    assert data["day_types"]["all"][9] == pytest.approx(10.0)
+
+
+def test_admin_curve_not_available_for_unknown_pair(client):
+    res = client.get("/api/admin/curve/NOPE/999")
+    data = res.get_json()
+    assert data == {"available": False, "day_types": {}, "sample_size": 0}
+
+
 def test_forecast_not_found(client):
     res = client.get("/api/forecast/NOT-A-REAL-ACCOUNT")
     assert res.status_code == 404

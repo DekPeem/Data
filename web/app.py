@@ -186,6 +186,16 @@ def api_update_business_type_hierarchy(code: str):
     return jsonify({"code": code, "section_code": section_code, "division_code": division_code})
 
 
+@app.route("/api/admin/curve/<code>/<rate_code>")
+def api_admin_curve(code: str, rate_code: str):
+    """เส้นโค้งรายชั่วโมงดิบ (ไม่สเกลตาม KVA ของลูกค้ารายใดรายหนึ่ง — scale_factor=1.0) ของคู่
+    ประเภทธุรกิจ+รหัสอัตราหนึ่งคู่ ใช้ในหน้า Admin เพื่อดูว่ากลุ่มนี้มีรูปแบบการใช้ไฟเป็นแบบไหน
+    ก่อนจะเอาไปใช้พยากรณ์จริง (ไม่ใช่ส่วนพยากรณ์ - แค่ดูข้อมูลที่นำเข้าไว้)"""
+
+    reference = get_reference()
+    return jsonify(_curve_response(reference, code, rate_code, scale_factor=1.0))
+
+
 @app.route("/api/rate-schedules")
 def api_list_rate_schedules():
     """รายชื่อประเภทอัตราทั้งหมด (สำหรับ dropdown ในหน้าพยากรณ์แบบไม่บันทึก)"""

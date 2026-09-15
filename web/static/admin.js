@@ -86,10 +86,12 @@ function guessCompanyNameForBusinessType(businessTypeCode) {
   return match ? match.company_name : "";
 }
 
-// ── ตาราง "หมวดหมู่ธุรกิจทั้งหมดในระบบ" (business_types.csv แบบเต็ม + สถานะ TSIC/โปรไฟล์) ──
+// ── "หมวดหมู่ธุรกิจทั้งหมดในระบบ" จัดกลุ่มตาม Section (TSIC) ก่อน แล้วค่อยแยก Division/
+//    ประเภทธุรกิจย่อยด้านใน — แต่ละประเภทธุรกิจแสดงรายชื่อบริษัทที่เคยนำเข้า (จาก import log)
+//    และปุ่มดูกราฟการใช้ไฟจริงจาก AMR (ยังไม่ใช่ส่วนพยากรณ์ — แค่สำรวจรูปแบบก่อนนำไปใช้) ──
 
 const businessTypesRefreshBtn = document.getElementById("business-types-refresh-btn");
-const businessTypesTbody = document.getElementById("business-types-tbody");
+const businessTypesBySectionEl = document.getElementById("business-types-by-section");
 
 // โครงสร้าง Section/Division ของ TSIC (อิง ISIC Rev.4 ที่ TSIC ใช้เป็นฐาน) — ใช้แค่เดา Section
 // จาก Division ให้อัตโนมัติตอนตรวจสอบ (แก้ไขเองได้เสมอถ้าไม่ตรง)
@@ -123,61 +125,174 @@ function sectionForDivision(divisionCode) {
   return TSIC_SECTIONS.find((s) => n >= s.from && n <= s.to) || null;
 }
 
+// จัดกลุ่ม business types ตาม section_code — ตัวที่ยังไม่มี section_code เลยจัดไว้ในกลุ่ม
+// "UNVERIFIED" (แสดงเป็น "ยังไม่ตรวจสอบ TSIC") ท้ายสุดเสมอ
+function groupBySection(types) {
+  const groups = {};
+  types.forEach((t) => {
+    const key = t.section_code || "UNVERIFIED";
+    if (!groups[key]) {
+      groups[key] = { section_code: t.section_code, section_name_th: t.section_name_th, types: [] };
+    }
+    groups[key].types.push(t);
+  });
+  return groups;
+}
+
+// รายชื่อบริษัท (ไม่ซ้ำ) ที่เคยนำเข้าไว้สำหรับประเภทธุรกิจรหัสนี้ — มาจาก import log ในเครื่องนี้
+function companiesForBusinessType(code) {
+  const seen = new Set();
+  const result = [];
+  importLogEntries
+    .filter((e) => e.business_type_code === code)
+    .forEach((e) => {
+      const key = `${e.company_name}|${e.account_no}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        result.push(e);
+      }
+    });
+  return result;
+}
+
+function renderBizCard(t) {
+  const divisionBadge = t.division_code
+    ? `<span class="biz-division-badge">Division ${t.division_code}${t.division_name_th ? ` · ${t.division_name_th}` : ""}</span>`
+    : `<span class="biz-division-badge">ยังไม่ทราบ Division</span>`;
+
+  const companies = companiesForBusinessType(t.code);
+  const companiesHtml = companies.length
+    ? companies.map((c) => `<span class="company-chip">${c.company_name}${c.account_no ? ` · ${c.account_no}` : ""}</span>`).join("")
+    : `<span class="hint">ยังไม่มีประวัติการนำเข้าในเครื่องนี้สำหรับประเภทนี้</span>`;
+
+  const profileButtons = t.profiles.length
+    ? t.profiles
+        .map(
+          (p) =>
+            `<button type="button" class="day-type-btn curve-toggle-btn" data-code="${t.code}" data-rate="${p.rate_code}">📈 ดูกราฟ · อัตรา ${p.rate_code} (${p.sample_size} ตัวอย่าง)</button>`
+        )
+        .join("")
+    : `<span class="hint">ยังไม่มีโปรไฟล์อ้างอิง</span>`;
+
+  const curvePanels = t.profiles
+    .map((p) => `<div id="curve-panel-${t.code}-${p.rate_code}" style="display:none;"></div>`)
+    .join("");
+
+  return `
+    <div class="biz-card" data-code="${t.code}">
+      <div class="biz-card-header">
+        <div><span class="biz-code">${t.code}</span>${t.name_th}${divisionBadge}</div>
+        <button type="button" class="day-type-btn verify-toggle-btn" data-code="${t.code}">🔍 ตรวจสอบ TSIC</button>
+      </div>
+      <div class="biz-companies">${companiesHtml}</div>
+      <div class="biz-profiles">${profileButtons}</div>
+      <div id="verify-panel-${t.code}" style="display:none;"></div>
+      ${curvePanels}
+    </div>`;
+}
+
+const openSections = new Set();
+
+function toggleSectionPanel(key) {
+  const panel = document.getElementById(`section-panel-${key}`);
+  if (openSections.has(key)) {
+    openSections.delete(key);
+    panel.classList.remove("open");
+  } else {
+    openSections.add(key);
+    panel.classList.add("open");
+  }
+}
+
 async function loadBusinessTypesTable() {
-  businessTypesTbody.innerHTML = `<tr><td colspan="6" style="padding:12px 10px;color:#8996ab;">กำลังโหลด...</td></tr>`;
+  businessTypesBySectionEl.innerHTML = `<div style="padding:12px 10px;color:#8996ab;">กำลังโหลด...</div>`;
   try {
     const res = await fetch("/api/business-types-full");
     const types = await res.json();
+    const groups = groupBySection(types);
 
-    businessTypesTbody.innerHTML = types
-      .map((t) => {
-        const profilesText = t.profiles.length
-          ? t.profiles.map((p) => `${p.rate_code} · ${p.sample_size} ตัวอย่าง`).join(", ")
-          : `<span style="color:#8996ab;">ยังไม่มี</span>`;
-        const sectionText = t.section_code ? `${t.section_code} (${t.section_name_th})` : `<span style="color:#8996ab;">ยังไม่ตรวจสอบ</span>`;
-        const divisionText = t.division_code ? `${t.division_code} (${t.division_name_th})` : `<span style="color:#8996ab;">ยังไม่ตรวจสอบ</span>`;
+    const keys = Object.keys(groups)
+      .filter((k) => k !== "UNVERIFIED")
+      .sort();
+    if (groups.UNVERIFIED) keys.push("UNVERIFIED");
+
+    businessTypesBySectionEl.innerHTML = keys
+      .map((key) => {
+        const g = groups[key];
+        const label = key === "UNVERIFIED" ? "ยังไม่ตรวจสอบ TSIC" : `${g.section_code} · ${g.section_name_th}`;
+        const isOpen = openSections.has(key);
         return `
-          <tr style="border-bottom:1px solid rgba(15,23,42,0.06);">
-            <td style="padding:8px 10px;font-weight:600;">${t.code}</td>
-            <td style="padding:8px 10px;">${t.name_th}</td>
-            <td style="padding:8px 10px;" id="verify-section-${t.code}">${sectionText}</td>
-            <td style="padding:8px 10px;" id="verify-division-${t.code}">${divisionText}</td>
-            <td style="padding:8px 10px;">${profilesText}</td>
-            <td style="padding:8px 10px;">
-              <button type="button" class="day-type-btn verify-toggle-btn" data-code="${t.code}">🔍 ตรวจสอบ</button>
-            </td>
-          </tr>
-          <tr id="verify-row-${t.code}" style="display:none;">
-            <td colspan="6" style="padding:0 10px 14px 10px;"><div id="verify-panel-${t.code}"></div></td>
-          </tr>`;
+          <div class="section-block">
+            <button type="button" class="section-pill-btn" data-section="${key}">
+              <span>${label}</span>
+              <span class="section-count">${g.types.length} ประเภทธุรกิจ</span>
+            </button>
+            <div class="section-panel${isOpen ? " open" : ""}" id="section-panel-${key}">
+              ${g.types.map((t) => renderBizCard(t)).join("")}
+            </div>
+          </div>`;
       })
       .join("");
 
-    businessTypesTbody.querySelectorAll(".verify-toggle-btn").forEach((btn) => {
+    businessTypesBySectionEl.querySelectorAll(".section-pill-btn").forEach((btn) => {
+      btn.addEventListener("click", () => toggleSectionPanel(btn.dataset.section));
+    });
+    businessTypesBySectionEl.querySelectorAll(".verify-toggle-btn").forEach((btn) => {
       btn.addEventListener("click", () => toggleVerifyPanel(btn.dataset.code));
     });
+    businessTypesBySectionEl.querySelectorAll(".curve-toggle-btn").forEach((btn) => {
+      btn.addEventListener("click", () => toggleCurvePanel(btn.dataset.code, btn.dataset.rate));
+    });
   } catch (err) {
-    businessTypesTbody.innerHTML = `<tr><td colspan="6" style="padding:12px 10px;color:#d03b3b;">โหลดไม่สำเร็จ</td></tr>`;
-    console.error("โหลดตารางหมวดหมู่ธุรกิจไม่สำเร็จ", err);
+    businessTypesBySectionEl.innerHTML = `<div style="padding:12px 10px;color:#d03b3b;">โหลดไม่สำเร็จ</div>`;
+    console.error("โหลดหมวดหมู่ธุรกิจไม่สำเร็จ", err);
   }
 }
 
 businessTypesRefreshBtn.addEventListener("click", loadBusinessTypesTable);
 
-// ── แผงตรวจสอบ TSIC ในแถว (ค้นหาจากชื่อบริษัทที่เคยนำเข้า แล้วบันทึกกลับเข้า business_types.csv) ──
+// ── กราฟการใช้ไฟจาก AMR จริงของแต่ละคู่ประเภทธุรกิจ+อัตรา (ข้อมูลดิบ ไม่สเกล — ยังไม่ใช่การ
+//    พยากรณ์ แค่ดูว่าประเภทธุรกิจนี้มีรูปแบบการใช้ไฟแบบไหน) ──
+
+const openCurvePanels = new Set();
+
+async function toggleCurvePanel(code, rateCode) {
+  const key = `${code}|${rateCode}`;
+  const panel = document.getElementById(`curve-panel-${code}-${rateCode}`);
+  if (openCurvePanels.has(key)) {
+    openCurvePanels.delete(key);
+    panel.style.display = "none";
+    return;
+  }
+  openCurvePanels.add(key);
+  panel.style.display = "block";
+  if (!panel.dataset.built) {
+    panel.dataset.built = "1";
+    panel.innerHTML = `<div class="hint" style="padding:12px 0;">⏳ กำลังโหลดกราฟ...</div>`;
+    try {
+      const res = await fetch(`/api/admin/curve/${encodeURIComponent(code)}/${encodeURIComponent(rateCode)}`);
+      const curveData = await res.json();
+      initDailyCurveSection(panel, curveData);
+    } catch (err) {
+      panel.innerHTML = `<div class="hint" style="color:#d03b3b;">โหลดกราฟไม่สำเร็จ</div>`;
+      console.error("โหลดกราฟไม่สำเร็จ", err);
+    }
+  }
+}
+
+// ── แผงตรวจสอบ TSIC ในการ์ด (ค้นหาจากชื่อบริษัทที่เคยนำเข้า แล้วบันทึกกลับเข้า business_types.csv) ──
 
 const openVerifyPanels = new Set();
 
 function toggleVerifyPanel(code) {
-  const row = document.getElementById(`verify-row-${code}`);
   const panel = document.getElementById(`verify-panel-${code}`);
   if (openVerifyPanels.has(code)) {
     openVerifyPanels.delete(code);
-    row.style.display = "none";
+    panel.style.display = "none";
     return;
   }
   openVerifyPanels.add(code);
-  row.style.display = "";
+  panel.style.display = "block";
   if (!panel.dataset.built) {
     panel.dataset.built = "1";
     renderVerifyPanel(code);
@@ -396,8 +511,10 @@ async function pollJob(jobId) {
 
   if (data.status === "success") {
     renderResult(data.result, data.customer_profile);
-    loadBusinessTypesTable(); // นำเข้าเสร็จอาจมีประเภทธุรกิจ/โปรไฟล์ใหม่ รีเฟรชตารางให้เห็นทันที
-    loadImportLogLocal(); // และอาจมีประวัติการนำเข้าแถวใหม่ (โหมดอัตโนมัติ) ด้วย
+    // นำเข้าเสร็จอาจมีประวัติการนำเข้าแถวใหม่ (โหมดอัตโนมัติ) และประเภทธุรกิจ/โปรไฟล์ใหม่ —
+    // ต้องโหลด import log ให้เสร็จก่อน (เติมตัวแปร importLogEntries) แล้วค่อยวาดการ์ดประเภทธุรกิจ
+    // ไม่งั้นชื่อบริษัทในการ์ดจะยังว่างเพราะ fetch สองอันแข่งกัน (race condition)
+    loadImportLogLocal().then(loadBusinessTypesTable);
   } else if (data.status === "error") {
     jobResult.innerHTML = `<div class="search-hint" style="min-height:auto;">${data.error || "เกิดข้อผิดพลาด"}</div>`;
   }
@@ -475,5 +592,6 @@ async function startImport() {
 
 submitBtn.addEventListener("click", startImport);
 loadBusinessTypes();
-loadBusinessTypesTable();
-loadImportLogLocal();
+// ต้องโหลด import log ให้เสร็จก่อน (เติม importLogEntries) แล้วค่อยวาดการ์ดประเภทธุรกิจ ไม่งั้น
+// ชื่อบริษัทในการ์ดจะว่างเพราะ fetch สองอันแข่งกัน (race condition)
+loadImportLogLocal().then(loadBusinessTypesTable);

@@ -40,6 +40,32 @@
       display: flex; align-items: center; justify-content: space-between; gap: 10px;
       background: #fff; border: 1px solid rgba(15,23,42,0.08); border-radius: 8px; padding: 10px 12px;
     }
+    .section-block { border: 1px solid rgba(15,23,42,0.08); border-radius: 12px; overflow: hidden; }
+    .section-pill-btn {
+      width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      background: #f7f9fc; border: none; padding: 14px 18px; font-family: inherit; font-size: 14px;
+      font-weight: 700; color: #0f1b2d; cursor: pointer; text-align: left;
+    }
+    .section-pill-btn:hover { background: #eef3fa; }
+    .section-pill-btn .section-count { font-size: 12.5px; font-weight: 500; color: #8996ab; }
+    .section-panel { display: none; padding: 16px 18px; display: flex; flex-direction: column; gap: 14px; }
+    .section-panel.open { display: flex; }
+    .biz-card {
+      border: 1px solid rgba(15,23,42,0.08); border-radius: 10px; padding: 14px 16px;
+      display: flex; flex-direction: column; gap: 10px; background: #fff;
+    }
+    .biz-card-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
+    .biz-code { font-weight: 700; margin-right: 8px; }
+    .biz-division-badge {
+      display: inline-block; margin-left: 8px; font-size: 11.5px; font-weight: 600; color: #55647a;
+      background: #f0f2f6; border-radius: 999px; padding: 2px 9px;
+    }
+    .biz-companies { display: flex; flex-wrap: wrap; gap: 6px; }
+    .company-chip {
+      font-size: 12px; background: #eef3fa; color: #184f95; border-radius: 999px;
+      padding: 3px 10px; font-weight: 600;
+    }
+    .biz-profiles { display: flex; flex-wrap: wrap; gap: 8px; }
   </style>
 </head>
 <body>
@@ -177,31 +203,25 @@
       <div class="card" style="padding: 28px; display: flex; flex-direction: column; gap: 16px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
           <div>
-            <div style="font-size: 15px; font-weight: 700;">หมวดหมู่ธุรกิจทั้งหมดในระบบ</div>
-            <div class="hint">สรุปทุกประเภทธุรกิจใน business_types.csv พร้อมสถานะ TSIC (Section/Division) และโปรไฟล์อ้างอิงที่มี — อัปเดตอัตโนมัติทุกครั้งที่นำเข้า AMR ใหม่ กดปุ่ม "ตรวจสอบ" ในแถวที่ยังไม่ได้ตรวจ เพื่อค้นหา TSIC จากชื่อบริษัทที่เคยนำเข้าและบันทึกผลได้เลย</div>
+            <div style="font-size: 15px; font-weight: 700;">หมวดหมู่ธุรกิจทั้งหมดในระบบ (แบ่งตาม Section)</div>
+            <div class="hint">
+              จัดกลุ่มตาม Section (TSIC) ก่อน แล้วค่อยแยกเป็น Division/ประเภทธุรกิจย่อยด้านใน —
+              กดที่ Section เพื่อดูรายชื่อบริษัทที่เคยนำเข้าในกลุ่มนั้น และกด "📈 ดูกราฟ" เพื่อดู
+              รูปแบบการใช้ไฟที่นำเข้าจาก AMR จริง (ส่วนนี้ยังไม่ใช่การพยากรณ์ — เป็นขั้นแรกที่นำข้อมูล
+              AMR เข้าระบบและดูว่าประเภทธุรกิจนี้มีรูปแบบกราฟเป็นอย่างไรก่อน) หมวดที่ยังไม่ได้ตรวจสอบ
+              TSIC จะถูกจัดไว้ในกลุ่ม "ยังไม่ตรวจสอบ" — กดปุ่ม "ตรวจสอบ TSIC" ในการ์ดนั้นเพื่อค้นหา
+              และบันทึกได้เลย
+            </div>
           </div>
           <button type="button" id="business-types-refresh-btn" class="day-type-btn">🔄 รีเฟรช</button>
         </div>
-        <div style="overflow-x:auto;">
-          <table id="business-types-table" style="width:100%;border-collapse:collapse;font-size:13px;">
-            <thead>
-              <tr style="text-align:left;border-bottom:2px solid rgba(15,23,42,0.1);">
-                <th style="padding:8px 10px;">รหัส</th>
-                <th style="padding:8px 10px;">ชื่อประเภทธุรกิจ</th>
-                <th style="padding:8px 10px;">Section (TSIC)</th>
-                <th style="padding:8px 10px;">Division (TSIC)</th>
-                <th style="padding:8px 10px;">โปรไฟล์อ้างอิงที่มี (รหัสอัตรา · จำนวนตัวอย่าง)</th>
-                <th style="padding:8px 10px;">ตรวจสอบ TSIC</th>
-              </tr>
-            </thead>
-            <tbody id="business-types-tbody"></tbody>
-          </table>
-        </div>
+        <div id="business-types-by-section" style="display:flex;flex-direction:column;gap:10px;"></div>
       </div>
 
     </main>
   </div>
 
+  <script src="curve-chart.js"></script>
   <script src="admin.js"></script>
 </body>
 </html>
