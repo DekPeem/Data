@@ -120,13 +120,18 @@ def api_list_business_types():
 def api_list_business_types_full():
     """รายชื่อประเภทธุรกิจทั้งหมดแบบละเอียด (รวม TSIC section/division + ว่ามีโปรไฟล์อ้างอิง
     จริงรองรับอยู่แล้วกี่อัตรา) — ใช้โดยตาราง "หมวดหมู่ธุรกิจทั้งหมดในระบบ" ในหน้า Admin เพื่อดูภาพ
-    รวมของข้อมูลอ้างอิงทั้งหมดในเครื่องนี้ในที่เดียว ไม่ต้องเปิดไฟล์ CSV ดูเอง"""
+    รวมของข้อมูลอ้างอิงทั้งหมดในเครื่องนี้ในที่เดียว ไม่ต้องเปิดไฟล์ CSV ดูเอง
+
+    profiles[].has_curve บอกว่าคู่ธุรกิจ+อัตรานั้นมีข้อมูลกราฟรายชั่วโมงจริง (load_curves.csv —
+    มาจาก AMR ที่นำเข้าจริงเท่านั้น) หรือเป็นแค่แถว placeholder ใน load_profiles.csv ที่มีแค่ตัวเลข
+    เฉลี่ย P/OP/H แต่ไม่มีกราฟให้ดู — ใช้กรองในหน้า Admin"""
 
     reference = get_reference()
     profiles_by_business: dict = {}
     for p in reference.load_profiles:
+        has_curve = find_load_curve(reference.load_curves, p.business_type_code, p.rate_code) is not None
         profiles_by_business.setdefault(p.business_type_code, []).append(
-            {"rate_code": p.rate_code, "sample_size": p.sample_size}
+            {"rate_code": p.rate_code, "sample_size": p.sample_size, "has_curve": has_curve}
         )
 
     return jsonify(

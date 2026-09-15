@@ -185,7 +185,21 @@ def test_list_business_types_full_includes_hierarchy_and_profiles(client):
     paper = next(bt for bt in data if bt["code"] == "34111")
     assert paper["section_code"] == "C"
     assert paper["division_code"] == "17"
-    assert {"rate_code": "40", "sample_size": 12} in paper["profiles"]
+    profile = next(p for p in paper["profiles"] if p["rate_code"] == "40")
+    assert profile["sample_size"] == 12
+    assert profile["has_curve"] is True  # มีข้อมูล load_curves.csv จริงสำหรับคู่นี้
+
+
+def test_list_business_types_full_marks_placeholder_profiles_as_no_curve(client):
+    """แถว load_profiles.csv แบบ placeholder (ตัวเลขประมาณการ ไม่มีข้อมูลรายชั่วโมงจริง) ต้องได้
+    has_curve เป็น False เพื่อให้หน้า Admin กรองออกได้ ต่างจากโปรไฟล์ที่มาจาก AMR จริง"""
+
+    res = client.get("/api/business-types-full")
+    data = res.get_json()
+
+    hospital = next(bt for bt in data if bt["code"] == "86101")
+    profile = next(p for p in hospital["profiles"] if p["rate_code"] == "50")
+    assert profile["has_curve"] is False
 
     # ตัวที่ยังไม่เคยตรวจสอบ TSIC เลย ต้องเป็น None ไม่ใช่ error
     office = next(bt for bt in data if bt["code"] == "68100")

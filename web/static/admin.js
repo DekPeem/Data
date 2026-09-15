@@ -204,11 +204,34 @@ function toggleSectionPanel(key) {
   }
 }
 
+// รายการประเภทธุรกิจล่าสุดที่ fetch มา (เก็บไว้ใช้กรองใหม่ตอนติ๊ก/ถอดติ๊ก checkbox โดยไม่ต้อง
+// ยิง request ไปเซิร์ฟเวอร์ซ้ำ)
+let lastBusinessTypes = [];
+
+const hideNoCurveCheckbox = document.getElementById("hide-no-curve-checkbox");
+hideNoCurveCheckbox.addEventListener("change", () => renderBusinessTypesSections(lastBusinessTypes));
+
+// ประเภทธุรกิจหนึ่งตัว "มีกราฟจาก AMR จริง" ถ้ามีโปรไฟล์อย่างน้อย 1 อัตราที่ has_curve เป็น true
+// (แถว placeholder ใน load_profiles.csv มีแค่ตัวเลขเฉลี่ย ไม่มีข้อมูลรายชั่วโมงจริง จะไม่ผ่านเงื่อนไขนี้)
+function businessTypeHasAnyCurve(t) {
+  return t.profiles.some((p) => p.has_curve);
+}
+
 async function loadBusinessTypesTable() {
   businessTypesBySectionEl.innerHTML = `<div style="padding:12px 10px;color:#8996ab;">กำลังโหลด...</div>`;
   try {
     const res = await fetch("/api/business-types-full");
-    const types = await res.json();
+    lastBusinessTypes = await res.json();
+    renderBusinessTypesSections(lastBusinessTypes);
+  } catch (err) {
+    businessTypesBySectionEl.innerHTML = `<div style="padding:12px 10px;color:#d03b3b;">โหลดไม่สำเร็จ</div>`;
+    console.error("โหลดหมวดหมู่ธุรกิจไม่สำเร็จ", err);
+  }
+}
+
+function renderBusinessTypesSections(allTypes) {
+  try {
+    const types = hideNoCurveCheckbox.checked ? allTypes.filter(businessTypeHasAnyCurve) : allTypes;
     const groups = groupBySection(types);
 
     const keys = Object.keys(groups)
@@ -244,8 +267,8 @@ async function loadBusinessTypesTable() {
       btn.addEventListener("click", () => toggleCurvePanel(btn.dataset.code, btn.dataset.rate));
     });
   } catch (err) {
-    businessTypesBySectionEl.innerHTML = `<div style="padding:12px 10px;color:#d03b3b;">โหลดไม่สำเร็จ</div>`;
-    console.error("โหลดหมวดหมู่ธุรกิจไม่สำเร็จ", err);
+    businessTypesBySectionEl.innerHTML = `<div style="padding:12px 10px;color:#d03b3b;">แสดงผลไม่สำเร็จ</div>`;
+    console.error("แสดงผลหมวดหมู่ธุรกิจไม่สำเร็จ", err);
   }
 }
 
