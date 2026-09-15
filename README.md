@@ -29,8 +29,14 @@ scripts/update_load_profile_from_register.py
   anonymized แล้วอัปเดตแถวใน load_profiles.csv (ไม่เขียนข้อมูลระบุตัวตนลูกค้า
   ลงไฟล์ผลลัพธ์ — ดูหัวข้อ "การนำเข้าข้อมูล AMR จริง" ด้านล่าง)
 
+web/
+  app.py            เว็บแอป Flask — API ค้นหาผู้ใช้ไฟ + พยากรณ์โปรไฟล์ (ดูหัวข้อ "เว็บแอป" ด้านล่าง)
+  static/           หน้าเว็บ (HTML/CSS/JS ธรรมดา ไม่มี build step)
+
+data/reference/customers.csv   ทะเบียนผู้ใช้ไฟตัวอย่าง (สมมติ) สำหรับสาธิตเว็บแอป
+
 examples/demo.py   ตัวอย่างการใช้งาน 4 กรณี (exact / business only / rate only / default)
-tests/   unit tests (pytest) ครอบคลุมทั้ง mapping และ pea_ingest
+tests/   unit tests (pytest) ครอบคลุมทั้ง mapping, pea_ingest และเว็บแอป
 ```
 
 ## หลักการจับคู่ (matching priority)
@@ -106,6 +112,26 @@ python scripts/update_load_profile_from_register.py \
 `load_profiles.csv` เท่านั้น — **ไม่เขียนชื่อ/เลขบัญชี/เลขมิเตอร์ของลูกค้าลงไฟล์ผลลัพธ์**
 จึง commit ไฟล์ผลลัพธ์เข้า repository (แม้เป็น public) ได้อย่างปลอดภัย ส่วนไฟล์ดิบที่มี
 ข้อมูลระบุตัวตนลูกค้า **ไม่ควร commit เข้า repo นี้เด็ดขาด** ให้เก็บไว้นอก repo เท่านั้น
+
+## เว็บแอป
+
+หน้าเว็บสำหรับค้นหาผู้ใช้ไฟ (ตามเลขบัญชี) แล้วดูผลพยากรณ์โปรไฟล์ P/OP/H — เชื่อมกับ
+`amr_mapping` โดยตรง (ไม่ใช่ mockup) รันเองในเครื่องได้ทันที ไม่ต้อง build:
+
+```bash
+pip install -r requirements.txt
+python web/app.py
+# เปิดเบราว์เซอร์ที่ http://localhost:5000
+```
+
+โครงสร้าง: `web/app.py` เป็น Flask backend เปิด 2 endpoint (`GET /api/customers` รายชื่อ
+ทั้งหมด, `GET /api/forecast/<account_no>` ผลพยากรณ์ของรายนั้น) และเสิร์ฟหน้าเว็บ static
+จาก `web/static/` (HTML/CSS/JS ธรรมดา ไม่มี framework/build step)
+
+⚠️ **`data/reference/customers.csv` เป็นข้อมูลลูกค้า "สมมติ" สำหรับสาธิตเท่านั้น**
+(ตั้งชื่อขึ้นต้นด้วย `DEMO-`) — ห้ามใส่ข้อมูลลูกค้าจริง (ชื่อ/เลขบัญชี/เลขมิเตอร์จริง)
+ลงไฟล์นี้เพราะ repo เป็น public ถ้าจะต่อกับข้อมูลลูกค้าจริง ให้แก้ `web/app.py` ให้อ่าน
+จากฐานข้อมูล/ไฟล์ที่เก็บแยกไว้นอก repo แทน (เช่นเดียวกับหลักการที่ใช้กับไฟล์ AMR ดิบ)
 
 ## ⚠️ ข้อควรทราบเกี่ยวกับข้อมูลอ้างอิงชุดปัจจุบัน
 

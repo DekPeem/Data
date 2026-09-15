@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from .models import BusinessType, LoadProfile, RateSchedule, PERIODS
+from .models import BusinessType, Customer, LoadProfile, RateSchedule, PERIODS
 
 DEFAULT_DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "reference"
 
@@ -68,6 +68,32 @@ def _load_load_profiles(path: Path) -> List[LoadProfile]:
     return profiles
 
 
+def _load_customers(path: Path) -> List[Customer]:
+    """โหลดทะเบียนผู้ใช้ไฟตัวอย่าง (สมมติ) จาก customers.csv
+
+    ⚠️ ไฟล์นี้มีไว้สำหรับสาธิต/ทดสอบเท่านั้น — ห้ามใส่ข้อมูลลูกค้าจริง (ชื่อ/เลขบัญชี/
+    เลขมิเตอร์จริง) เพราะ repo นี้เป็น public
+    """
+
+    customers: List[Customer] = []
+    if not path.exists():
+        return customers
+    with path.open(encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            has_amr_raw = (row.get("has_amr") or "").strip().lower()
+            customers.append(
+                Customer(
+                    account_no=row["account_no"].strip(),
+                    name=row["name"].strip(),
+                    business_type_code=(row.get("business_type_code") or "").strip() or None,
+                    rate_code=(row.get("rate_code") or "").strip() or None,
+                    contract_kva=_to_float(row.get("contract_kva", "")),
+                    has_amr=has_amr_raw in ("1", "true", "yes"),
+                )
+            )
+    return customers
+
+
 _LOAD_PROFILE_FIELDNAMES = [
     "business_type_code",
     "rate_code",
@@ -124,16 +150,17 @@ class ReferenceData:
     business_types: Dict[str, BusinessType]
     rate_schedules: Dict[str, RateSchedule]
     load_profiles: List[LoadProfile]
+    customers: List[Customer]
 
 
 def load_reference_data(data_dir: Optional[Path] = None) -> ReferenceData:
-    """โหลดตารางอ้างอิงทั้งหมด (business_types, rate_schedules, load_profiles)
+    """โหลดตารางอ้างอิงทั้งหมด (business_types, rate_schedules, load_profiles, customers)
 
     Parameters
     ----------
     data_dir:
-        โฟลเดอร์ที่เก็บไฟล์ business_types.csv / rate_schedules.csv / load_profiles.csv
-        ถ้าไม่ระบุ จะใช้ data/reference/ ที่ root ของ repo นี้
+        โฟลเดอร์ที่เก็บไฟล์ business_types.csv / rate_schedules.csv / load_profiles.csv /
+        customers.csv ถ้าไม่ระบุ จะใช้ data/reference/ ที่ root ของ repo นี้
     """
 
     data_dir = Path(data_dir) if data_dir else DEFAULT_DATA_DIR
@@ -141,4 +168,5 @@ def load_reference_data(data_dir: Optional[Path] = None) -> ReferenceData:
         business_types=_load_business_types(data_dir / "business_types.csv"),
         rate_schedules=_load_rate_schedules(data_dir / "rate_schedules.csv"),
         load_profiles=_load_load_profiles(data_dir / "load_profiles.csv"),
+        customers=_load_customers(data_dir / "customers.csv"),
     )
