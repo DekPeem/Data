@@ -306,15 +306,61 @@ function renderVerifyPanel(code) {
     <div class="verify-panel">
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
         <div class="form-field" style="flex:1;min-width:220px;">
-          <label for="verify-name-input-${code}">ชื่อบริษัท/นิติบุคคล (ค้นหาจาก DBD DataWarehouse)</label>
+          <label for="verify-name-input-${code}">ชื่อบริษัท/นิติบุคคล (ค้นหาจาก DBD DataWarehouse — ไม่บังคับ)</label>
           <input id="verify-name-input-${code}" type="text" value="${guessedName}" placeholder="เช่น บริษัท ตัวอย่าง จำกัด">
         </div>
         <button type="button" class="day-type-btn verify-search-btn" data-code="${code}">ค้นหา TSIC</button>
       </div>
       <div id="verify-status-${code}" class="hint"></div>
+
+      <div class="hint" style="margin-top:10px;">
+        กรอกเอง หรือเลือกจากผลค้นหาด้านบนเพื่อเติมให้อัตโนมัติ — พิมพ์ Division code แล้ว Section
+        จะเดาให้เองจากโครงสร้าง TSIC (แก้ไขเองได้เสมอถ้าไม่ตรง):
+      </div>
+      <div class="verify-row-fields">
+        <div class="form-field">
+          <label>Section code</label>
+          <input id="verify-section-code-${code}" type="text" maxlength="1">
+        </div>
+        <div class="form-field">
+          <label>ชื่อ Section (TH)</label>
+          <input id="verify-section-name-${code}" type="text">
+        </div>
+        <div class="form-field">
+          <label>Division code</label>
+          <input id="verify-division-code-${code}" type="text" maxlength="2">
+        </div>
+        <div class="form-field">
+          <label>ชื่อ Division (TH)</label>
+          <input id="verify-division-name-${code}" type="text">
+        </div>
+      </div>
+      <div class="submit-row" style="margin-top:10px;">
+        <button type="button" class="search-button" id="verify-save-btn-${code}">บันทึกเป็นของรหัส ${code} นี้</button>
+      </div>
+      <div id="verify-save-status-${code}" class="hint" style="margin-top:6px;"></div>
     </div>`;
 
   panel.querySelector(".verify-search-btn").addEventListener("click", () => runVerifyLookup(code));
+  document.getElementById(`verify-section-code-${code}`).addEventListener("input", () => {
+    document.getElementById(`verify-section-code-${code}`).dataset.userEdited = "1";
+  });
+  document.getElementById(`verify-division-code-${code}`).addEventListener("input", () => {
+    autofillSectionFromDivision(code);
+  });
+  document.getElementById(`verify-save-btn-${code}`).addEventListener("click", () => saveHierarchy(code));
+}
+
+// เดา Section ให้อัตโนมัติทุกครั้งที่ Division code เปลี่ยน (ทั้งตอนพิมพ์เองหรือเติมจากผลค้นหา) —
+// เว้นแต่ผู้ใช้เคยแก้ Section code เองมาก่อนแล้ว (ไม่อยากไปทับค่าที่แก้ไว้ตั้งใจ)
+function autofillSectionFromDivision(code) {
+  const sectionCodeInput = document.getElementById(`verify-section-code-${code}`);
+  if (sectionCodeInput.dataset.userEdited) return;
+
+  const divisionCode = document.getElementById(`verify-division-code-${code}`).value.trim();
+  const section = sectionForDivision(divisionCode);
+  sectionCodeInput.value = section ? section.code : "";
+  document.getElementById(`verify-section-name-${code}`).value = section ? section.name_th : "";
 }
 
 async function runVerifyLookup(code) {
@@ -363,7 +409,7 @@ async function pollVerifyLookupJob(code, jobId) {
 
   const { candidates } = data.result;
   if (!candidates.length) {
-    status.innerHTML = `ไม่พบบริษัทนี้ใน DBD DataWarehouse`;
+    status.innerHTML = `ไม่พบบริษัทนี้ใน DBD DataWarehouse — กรอก Section/Division เองด้านล่างได้เลย`;
     return;
   }
 
@@ -381,51 +427,19 @@ async function pollVerifyLookupJob(code, jobId) {
         <div class="hint">TSIC ${c.tsic_code} - ${c.tsic_name_th} · ${c.status}</div>
       </div>
       <button type="button" class="day-type-btn">ใช้อันนี้</button>`;
-    row.querySelector("button").addEventListener("click", () => showHierarchyFields(code, candidates[i]));
+    row.querySelector("button").addEventListener("click", () => applyCandidateToFields(code, candidates[i]));
     list.appendChild(row);
   });
   status.appendChild(list);
 }
 
-function showHierarchyFields(code, candidate) {
-  const status = document.getElementById(`verify-status-${code}`);
+// เติมค่าลงในช่อง Section/Division ที่มีอยู่แล้วในแผง (renderVerifyPanel สร้างไว้ตั้งแต่เปิดแผง) —
+// ไม่ auto-apply ให้ทันที ผู้ใช้ยังต้องกด "บันทึก" เองเสมอ จะได้ตรวจสอบ/แก้ไขก่อนได้
+function applyCandidateToFields(code, candidate) {
   const divisionCode = candidate.tsic_division_code || candidate.tsic_code.slice(0, 2);
-  const section = sectionForDivision(divisionCode);
-
-  const fieldsBox = document.createElement("div");
-  fieldsBox.style.marginTop = "12px";
-  fieldsBox.innerHTML = `
-    <div class="hint" style="margin-bottom:6px;">ตรวจสอบ/แก้ไขได้ก่อนบันทึก (Section เดาให้อัตโนมัติจากโครงสร้าง TSIC — แก้ไขเองได้ถ้าไม่ตรง):</div>
-    <div class="verify-row-fields">
-      <div class="form-field">
-        <label>Section code</label>
-        <input id="verify-section-code-${code}" type="text" value="${section ? section.code : ""}" maxlength="1">
-      </div>
-      <div class="form-field">
-        <label>ชื่อ Section (TH)</label>
-        <input id="verify-section-name-${code}" type="text" value="${section ? section.name_th : ""}">
-      </div>
-      <div class="form-field">
-        <label>Division code</label>
-        <input id="verify-division-code-${code}" type="text" value="${divisionCode}" maxlength="2">
-      </div>
-      <div class="form-field">
-        <label>ชื่อ Division (TH) โดยประมาณ</label>
-        <input id="verify-division-name-${code}" type="text" value="${candidate.tsic_name_th}">
-      </div>
-    </div>
-    <div class="submit-row" style="margin-top:10px;">
-      <button type="button" class="search-button" id="verify-save-btn-${code}">บันทึกเป็นของรหัส ${code} นี้</button>
-    </div>
-    <div id="verify-save-status-${code}" class="hint" style="margin-top:6px;"></div>`;
-
-  // แทนที่กล่อง fields เดิม (ถ้าเคยเลือกผู้สมัครอื่นมาก่อนแล้ว) ด้วยอันใหม่ ไม่ต่อท้ายซ้ำ
-  const prev = document.getElementById(`verify-fields-box-${code}`);
-  if (prev) prev.remove();
-  fieldsBox.id = `verify-fields-box-${code}`;
-  status.appendChild(fieldsBox);
-
-  document.getElementById(`verify-save-btn-${code}`).addEventListener("click", () => saveHierarchy(code));
+  document.getElementById(`verify-division-code-${code}`).value = divisionCode;
+  document.getElementById(`verify-division-name-${code}`).value = candidate.tsic_name_th;
+  autofillSectionFromDivision(code);
 }
 
 async function saveHierarchy(code) {
