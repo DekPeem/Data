@@ -105,10 +105,33 @@ def test_import_amr_for_business_updates_load_profiles(monkeypatch, data_dir):
     assert "test-pass" not in joined_logs
 
     # ต้องบันทึกเส้นโค้งรายชั่วโมงลง load_curves.csv ด้วย (ไม่ใช่แค่ load_profiles.csv)
-    curve = next(c for c in reference.load_curves if c.key() == ("TESTBIZ", "50"))
+    curve = next(c for c in reference.load_curves if c.key() == ("TESTBIZ", "50", False))
     # ข้อมูล synthetic มีจุดเดียวที่ชม.9 (RATE A 20.00 -> 80 kW) ในวันเสาร์ (01/08/2026)
     assert curve.hours["sat"][9] == pytest.approx(80.0)
     assert curve.hours["all"][9] == pytest.approx(80.0)
+
+
+def test_import_amr_for_business_saves_has_solar_flag(monkeypatch, data_dir):
+    """has_solar ต้องกรอกเอง (ไม่มีการตรวจจับอัตโนมัติ) — ต้องถูกส่งต่อไปยังทั้ง LoadProfile
+    และ LoadCurve ที่บันทึกจริง ไม่ใช่แค่ default False เสมอ"""
+
+    monkeypatch.setattr(amr_import, "download_amr_kw_reports", _fake_download_amr_kw_reports)
+
+    profile = amr_import.import_amr_for_business(
+        username="test-user", password="test-pass", accounts=["9999999999"],
+        start_date="2026-07-01", end_date="2026-08-31",
+        business_type_code="TESTBIZ", rate_code="50", contract_kva=1000,
+        source_label="unit test solar", has_solar=True,
+        data_dir=data_dir, download_dir=data_dir.parent / "downloads",
+    )
+
+    assert profile.has_solar is True
+
+    reference = load_reference_data(data_dir)
+    saved = next(p for p in reference.load_profiles if p.business_type_code == "TESTBIZ")
+    assert saved.has_solar is True
+    curve = next(c for c in reference.load_curves if c.key() == ("TESTBIZ", "50", True))
+    assert curve.has_solar is True
 
 
 def test_import_amr_for_business_keeps_download_dir_for_reuse(monkeypatch, data_dir, tmp_path):
@@ -218,6 +241,23 @@ def test_import_amr_auto_detects_and_saves_new_business_type(monkeypatch, data_d
     assert log_entries[0]["business_type_code"] == "34111"
 
     assert "secret-pass" not in " ".join(logs)
+
+
+def test_import_amr_auto_saves_has_solar_and_logs_it(monkeypatch, data_dir):
+    monkeypatch.setattr(amr_import, "download_amr_with_profile", _fake_download_amr_with_profile)
+
+    profile = amr_import.import_amr_auto(
+        username="019900000001", password="secret-pass",
+        start_date="2026-07-01", end_date="2026-08-31",
+        has_solar=True,
+        data_dir=data_dir, download_dir=data_dir.parent / "downloads",
+    )
+    assert profile.has_solar is True
+
+    from amr_mapping.loader import load_import_log_local
+
+    log_entries = load_import_log_local(data_dir / "import_log_local.csv")
+    assert log_entries[0]["has_solar"] == "true"
 
 
 def test_import_amr_auto_does_not_overwrite_existing_business_type(monkeypatch, data_dir):

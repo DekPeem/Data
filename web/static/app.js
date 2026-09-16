@@ -127,6 +127,7 @@ const nameInput = document.getElementById("f-name");
 const businessTypeSelect = document.getElementById("f-business-type");
 const rateCodeSelect = document.getElementById("f-rate-code");
 const kvaInput = document.getElementById("f-kva");
+const hasSolarSelect = document.getElementById("f-has-solar");
 const adhocSubmitBtn = document.getElementById("adhoc-submit-btn");
 const adhocFormHint = document.getElementById("adhoc-form-hint");
 
@@ -276,6 +277,7 @@ async function runForecast() {
   const businessTypeCode = businessTypeSelect.value.trim();
   const rateCode = rateCodeSelect.value.trim();
   const kvaRaw = kvaInput.value.trim();
+  const hasSolarRaw = hasSolarSelect.value; // "" = ไม่ทราบ, "true"/"false" = ทราบแน่ชัด
 
   if (!businessTypeCode && !rateCode) {
     adhocFormHint.textContent = "กรุณาเลือกประเภทธุรกิจ หรือ กรอกรหัสอัตรา อย่างน้อยหนึ่งอย่าง";
@@ -286,6 +288,7 @@ async function runForecast() {
     business_type_code: businessTypeCode || undefined,
     rate_code: rateCode || undefined,
     contract_kva: kvaRaw || undefined,
+    has_solar: hasSolarRaw === "" ? undefined : hasSolarRaw === "true",
   };
 
   try {
@@ -310,6 +313,7 @@ async function runForecast() {
       fields: [
         { label: "ประเภทอัตราที่กรอก", value: rateCode || "ไม่ทราบ" },
         { label: "KVA ตามสัญญาที่กรอก", value: kva ? formatNumber(kva) + " kVA" : "ไม่ทราบ" },
+        { label: "สถานะ Solar ที่ระบุ", value: hasSolarRaw === "" ? "ไม่ทราบ" : hasSolarRaw === "true" ? "ติดตั้งแล้ว" : "ยังไม่ติดตั้ง" },
       ],
       extraField: { label: "จำนวนตัวอย่างในโปรไฟล์", getValue: (p) => p.sample_size || "-" },
       disclaimerExtra: " และ<b>ไม่มีการบันทึกชื่อบริษัท/ข้อมูลที่กรอกในหน้านี้ลงไฟล์หรือฐานข้อมูลใดๆ ทั้งสิ้น</b>",
@@ -380,7 +384,8 @@ function renderResult(data, identity) {
     ? `<span class="badge" style="background:#eef3fa;color:#184f95;">${p.business_type_name || identity.businessTypeCode} · ${identity.businessTypeCode}</span>`
     : `<span class="badge" style="background:rgba(15,23,42,0.05);color:#55647a;">ยังไม่จัดประเภทธุรกิจ</span>`;
 
-  const fields = [...identity.fields, { label: "โปรไฟล์ที่ใช้อ้างอิง", value: `${p.business_type_name || p.business_type_code || "-"} / อัตรา ${p.rate_code}` }];
+  const solarSuffix = p.has_solar ? " · ☀️ ติด Solar" : "";
+  const fields = [...identity.fields, { label: "โปรไฟล์ที่ใช้อ้างอิง", value: `${p.business_type_name || p.business_type_code || "-"} / อัตรา ${p.rate_code}${solarSuffix}` }];
   if (identity.extraField) {
     fields.push({ label: identity.extraField.label, value: identity.extraField.getValue(p) });
   }

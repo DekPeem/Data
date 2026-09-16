@@ -9,9 +9,10 @@ from amr_mapping.loader import (
     load_reference_data,
     save_business_types,
     save_load_curves,
+    save_load_profiles,
     upsert_load_curve,
 )
-from amr_mapping.models import BusinessType, LoadCurve
+from amr_mapping.models import BusinessType, LoadCurve, LoadProfile
 
 _BUSINESS_TYPES_CSV = "code,name_th,category,notes\nTESTBIZ,ธุรกิจทดสอบ,test,\n"
 _RATE_SCHEDULES_CSV = "code,billing_method,voltage_level,description\n50,TOU,LV,\n"
@@ -128,6 +129,71 @@ def test_save_and_load_load_curves_round_trip(tmp_path):
     assert "tue" not in loaded.hours
 
 
+def test_load_profiles_without_has_solar_column_defaults_to_false(tmp_path):
+    """ไฟล์ load_profiles.csv แบบเก่า (ไม่มีคอลัมน์ has_solar เลย) ต้องยังโหลดได้ตามปกติ —
+    has_solar เป็น False แทน (ไม่ error)"""
+
+    data_dir = _make_data_dir(tmp_path)
+    (data_dir / "load_profiles.csv").write_text(
+        _LOAD_PROFILES_CSV + "TESTBIZ,50,TOU,10,10,10,100,100,100,1000,3,เก่า\n", encoding="utf-8"
+    )
+
+    reference = load_reference_data(data_dir)
+    profile = next(p for p in reference.load_profiles if p.business_type_code == "TESTBIZ")
+    assert profile.has_solar is False
+
+
+def test_save_and_load_load_profiles_round_trip_with_has_solar(tmp_path):
+    data_dir = _make_data_dir(tmp_path)
+    profile = LoadProfile(
+        business_type_code="TESTBIZ", rate_code="50", billing_method="TOU",
+        demand_kw={"P": 1, "OP": 1, "H": 1}, energy_kwh={"P": 1, "OP": 1, "H": 1},
+        has_solar=True,
+    )
+    save_load_profiles([profile], data_dir / "load_profiles.csv")
+
+    reference = load_reference_data(data_dir)
+    loaded = next(p for p in reference.load_profiles if p.business_type_code == "TESTBIZ")
+    assert loaded.has_solar is True
+
+
+def test_load_curves_has_solar_kept_as_separate_curves(tmp_path):
+    """โปรไฟล์ธุรกิจ+อัตราเดียวกัน แต่ติด/ไม่ติด Solar ต่างกัน ต้องเก็บเป็นเส้นโค้งคนละเส้น
+    ไม่ถูกรวมเป็นเส้นเดียวกันโดยไม่ตั้งใจ (has_solar เป็นส่วนหนึ่งของ key)"""
+
+    data_dir = _make_data_dir(tmp_path)
+    non_solar = LoadCurve(business_type_code="TESTBIZ", rate_code="50", hours={"all": [10.0] * 24}, has_solar=False)
+    solar = LoadCurve(business_type_code="TESTBIZ", rate_code="50", hours={"all": [4.0] * 24}, has_solar=True)
+    save_load_curves([non_solar, solar], data_dir / "load_curves.csv")
+
+    reference = load_reference_data(data_dir)
+    assert len(reference.load_curves) == 2
+    by_solar = {c.has_solar: c for c in reference.load_curves}
+    assert by_solar[False].hours["all"][0] == 10.0
+    assert by_solar[True].hours["all"][0] == 4.0
+
+
+def test_customers_has_solar_tri_state(tmp_path):
+    """has_solar ของลูกค้าเป็น tri-state: คอลัมน์ว่าง/ไม่มีคอลัมน์ -> None (ไม่ทราบ) ต่างจาก
+    False (ทราบแน่ชัดว่าไม่ติด Solar)"""
+
+    local_csv = (
+        "account_no,name,business_type_code,rate_code,contract_kva,has_amr,has_solar\n"
+        "ACC-UNKNOWN,ไม่ทราบสถานะ,TESTBIZ,50,1000,false,\n"
+        "ACC-SOLAR,ติด Solar แล้ว,TESTBIZ,50,1000,false,true\n"
+        "ACC-NO-SOLAR,ไม่ติด Solar แน่นอน,TESTBIZ,50,1000,false,false\n"
+    )
+    data_dir = _make_data_dir(tmp_path, customers_local_csv=local_csv)
+    reference = load_reference_data(data_dir)
+    by_account = {c.account_no: c for c in reference.customers}
+
+    assert by_account["ACC-UNKNOWN"].has_solar is None
+    assert by_account["ACC-SOLAR"].has_solar is True
+    assert by_account["ACC-NO-SOLAR"].has_solar is False
+    # customers.csv เดิม (ไม่มีคอลัมน์ has_solar เลย) ก็ต้องเป็น None เหมือนกัน ไม่ error
+    assert by_account["DEMO-001"].has_solar is None
+
+
 def test_upsert_load_curve_replaces_same_key():
     old = LoadCurve(business_type_code="A", rate_code="1", hours={"all": [1.0] * 24})
     other = LoadCurve(business_type_code="B", rate_code="2", hours={"all": [2.0] * 24})
@@ -136,7 +202,7 @@ def test_upsert_load_curve_replaces_same_key():
     result = upsert_load_curve([old, other], new)
 
     assert len(result) == 2
-    updated = next(c for c in result if c.key() == ("A", "1"))
+    updated = next(c for c in result if c.key() == ("A", "1", False))
     assert updated.notes == "ใหม่"
     assert updated.hours["all"][0] == 9.0
 
