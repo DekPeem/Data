@@ -14,6 +14,7 @@ from amr_mapping.pea_ingest import (
     compute_meter_multiplier,
     compute_monthly_profiles,
     parse_interval_report,
+    parse_report_header,
 )
 
 
@@ -109,6 +110,61 @@ def test_parse_interval_report(tmp_path):
     assert IntervalReading(timestamp="01/08/2026 09.30", period="P", kwh=30.0) in readings
     assert IntervalReading(timestamp="01/08/2026 22.15", period="OP", kwh=5.0) in readings
     assert IntervalReading(timestamp="01/08/2026 00.15", period="H", kwh=10.0) in readings
+
+
+# โครงสร้างจริงจากไฟล์ export ของ PEA (ยืนยันจากไฟล์จริงที่ผู้ใช้ส่งมา — ตารางหัวรายงานแยก
+# ต่างหากจากตารางข้อมูลราย 15 นาที อยู่ก่อนหน้ากัน) ใช้ข้อมูลสมมติแทนของจริงทั้งหมด
+_SYNTHETIC_HEADER_HTML = """
+<meta http-equiv='Content-Type' content='text/html; charset=UTF-8'/>
+<table width='800px' cellpadding='4' cellspacing='4'><tr>
+<td colspan='7' class='header'>รายงานข้อมูลกิโลวัตต์แบบช่วงเวลา</td></tr>
+<tr>
+<td colspan='7' class='header'>[ระหว่างวันที่ : 01 มิถุนายน 2569 - 30 มิถุนายน 2569]</td></tr>
+<tr>
+<td class='detail'>บัญชีผู้ใช้ไฟ : </td><td>0199000000&nbsp;</td><td class='detail'>ชื่อผู้ใช้ไฟ : </td><td>บริษัท ทดสอบ จำกัด</td><td></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td class='detail'>หมายเลขมิเตอร์ : </td><td>1234567&nbsp;</td><td class='detail'>Tariff : </td>
+<td>TOU</td><td></td>
+<td></td>
+<td></td>
+</tr>
+<tr>
+<td class='detail'>CT Ratio : </td>
+<td>150:5 A. </td><td class='detail'>VT Ratio : </td>
+<td>115000:115 V. </td><td></td>
+<td></td>
+<td></td>
+</tr>
+</table>
+<table width='100%' cellpadding='4' cellspacing='4'><tr><td width='20%'></td><td width='27%' class='repheader' colspan='2'>RATE A</td><td width='27%' class='repheader' colspan='2'>RATE B</td><td width='28%' class='repheader' colspan='2'>RATE C</td></tr>
+<tr><td class='leftcenter'>&nbsp;01/06/2026 00.15</td><td class='rightdetail' colspan='2'></td><td class='rightdetail' colspan='2'>540.000</td><td class='rightdetail' colspan='2'></td></tr>
+</table>
+"""
+
+
+def test_parse_report_header_extracts_account_company_meter_tariff_ratios(tmp_path):
+    path = tmp_path / "synthetic_with_header.xls"
+    path.write_text(_SYNTHETIC_HEADER_HTML, encoding="utf-8")
+
+    info = parse_report_header(path)
+
+    assert info["บัญชีผู้ใช้ไฟ"] == "0199000000"
+    assert info["ชื่อผู้ใช้ไฟ"] == "บริษัท ทดสอบ จำกัด"
+    assert info["หมายเลขมิเตอร์"] == "1234567"
+    assert info["Tariff"] == "TOU"
+    assert info["CT Ratio"] == "150:5 A."
+    assert info["VT Ratio"] == "115000:115 V."
+
+
+def test_parse_report_header_returns_empty_dict_when_no_header_table(tmp_path):
+    """ไฟล์รูปแบบเก่า/ไฟล์ทดสอบที่ไม่มีตารางหัวรายงานเลย ต้องคืน dict ว่าง ไม่ error"""
+    path = tmp_path / "synthetic_interval.xls"
+    path.write_text(_SYNTHETIC_INTERVAL_HTML, encoding="utf-8")
+
+    assert parse_report_header(path) == {}
 
 
 def test_compute_hourly_curve_buckets_by_hour_and_weekday():

@@ -39,6 +39,7 @@ from .pea_ingest import (
     average_profiles,
     compute_hourly_curve,
     parse_interval_report,
+    parse_report_header,
 )
 
 # โฟลเดอร์เก็บไฟล์ AMR ดิบที่ดาวน์โหลดมาแบบถาวร (ไม่ใช่ temp dir ที่ลบทิ้งหลังเสร็จเหมือนเดิม)
@@ -209,13 +210,14 @@ def import_amr_for_business(
 
 def import_amr_from_files(
     file_paths: List[str],
-    business_type_code: str,
-    rate_code: str,
-    contract_kva: Optional[float],
-    source_label: str,
-    billing_method: str = "TOU",
+    business_type_code: str = "",
+    rate_code: str = "",
+    contract_kva: Optional[float] = None,
+    source_label: str = "",
+    billing_method: str = "",
     has_solar: bool = False,
     data_dir: Optional[Path] = None,
+    on_profile: Optional[Callable[[dict], None]] = None,
     log: ProgressCallback = _noop,
 ) -> LoadProfile:
     """เหมือน import_amr_for_business ทุกอย่าง ยกเว้นไม่ต้อง login/ดาวน์โหลดจากเว็บ PEA เลย —
@@ -223,20 +225,90 @@ def import_amr_from_files(
     download_amr_kw_reports ดาวน์โหลดมาให้เอง — ดู pea_ingest.parse_interval_report) อยู่แล้ว
     ในเครื่อง (เช่น ได้รับมาจากที่อื่น ไม่มี username/password ของบัญชีนั้นเอง)
 
-    business_type_code/rate_code ต้องกรอกเองเสมอ (ไม่มีการตรวจจับอัตโนมัติ เพราะไม่ได้เข้าหน้า
-    ข้อมูลผู้ใช้ไฟของ PEA เลย) คืนค่า LoadProfile ที่บันทึกไปแล้ว
+    business_type_code/rate_code/contract_kva/billing_method ไม่ต้องกรอกก็ได้ (ปล่อยว่าง) —
+    จะพยายามหาให้อัตโนมัติก่อนเสมอ:
+      1. อ่านเลขบัญชี/ชื่อผู้ใช้ไฟ/Tariff จาก "หัวรายงาน" ในไฟล์แรกที่แนบมา (ดู
+         pea_ingest.parse_report_header — ไฟล์ export ของ PEA มีข้อมูลนี้อยู่ในตัวไฟล์เองอยู่แล้ว)
+      2. เอาเลขบัญชีที่อ่านได้ไปค้นในทะเบียนลูกค้า (customers.csv/customers_local.csv) ถ้าเจอ
+         จะได้ business_type_code/rate_code/contract_kva ของบัญชีนั้นมาใช้ต่อ (ค่าที่ผู้ใช้กรอก
+         มาเองในพารามิเตอร์ยังมีความสำคัญกว่าเสมอ ถ้าระบุมาจะไม่ถูกเขียนทับด้วยค่าจากทะเบียน)
+    ประเภทธุรกิจ/TSIC ไม่มีทางหาได้จากไฟล์นี้เอง (ไม่มีข้อมูลนี้อยู่ในไฟล์ export เลย ต่างจาก
+    บัญชี/ชื่อ/Tariff) จึงต้องพึ่งทะเบียนลูกค้าเท่านั้น — ถ้าหา business_type_code หรือ rate_code
+    ไม่ได้เลยทั้งจากที่ระบุมาเองและจากทะเบียน จะ raise RuntimeError บอกชัดเจนว่าต้องกรอกเอง
+
+    ถ้าอ่านเจอเลขบัญชี/ชื่อบริษัทจากไฟล์ จะบันทึกประวัติ + กราฟแยกของไซต์นี้ไว้ในเครื่องเองด้วย
+    (import_log_local.csv/site_curves_local.csv — ไฟล์ local-only เหมือนโหมดอัตโนมัติจากเว็บ)
     """
 
     data_dir = Path(data_dir) if data_dir else DEFAULT_DATA_DIR
+
+    header_info: dict = {}
+    if file_paths:
+        try:
+            header_info = parse_report_header(file_paths[0])
+        except Exception as e:  # noqa: BLE001 — อ่านหัวรายงานไม่สำเร็จต้องไม่ทำให้ทั้ง job พังไปด้วย
+            log(f"⚠️ อ่านหัวรายงานจากไฟล์ไม่สำเร็จ (ไม่กระทบการประมวลผลหลัก): {e}")
+
+    account_no = (header_info.get("บัญชีผู้ใช้ไฟ") or "").strip()
+    company_name = (header_info.get("ชื่อผู้ใช้ไฟ") or "").strip()
+    if account_no:
+        log(f"📋 พบข้อมูลในไฟล์: บัญชี {account_no}" + (f" ({company_name})" if company_name else ""))
+
+    if on_profile:
+        try:
+            on_profile({"name": company_name, "account_no": account_no, "meter_no": header_info.get("หมายเลขมิเตอร์") or ""})
+        except Exception as e:  # noqa: BLE001 — callback error ต้องไม่ทำให้ job หลักพังไปด้วย
+            log(f"⚠️ on_profile callback error (ไม่กระทบผลการนำเข้าหลัก): {e}")
+
+    if not billing_method:
+        billing_method = (header_info.get("Tariff") or "").strip() or "TOU"
+
+    if (not business_type_code or not rate_code or contract_kva is None) and account_no:
+        reference: ReferenceData = load_reference_data(data_dir)
+        matched = next((c for c in reference.customers if c.account_no == account_no), None)
+        if matched:
+            log(f"✅ พบบัญชี {account_no} ในทะเบียนลูกค้า — ใช้ประเภทธุรกิจ/อัตรา/KVA จากทะเบียนอัตโนมัติ")
+            business_type_code = business_type_code or (matched.business_type_code or "")
+            rate_code = rate_code or (matched.rate_code or "")
+            if contract_kva is None:
+                contract_kva = matched.contract_kva
+
+    if not business_type_code or not rate_code:
+        hint = ""
+        if account_no:
+            hint = (
+                f" (พบบัญชี {account_no}" + (f" - {company_name}" if company_name else "")
+                + " ในไฟล์ แต่ไม่พบในทะเบียนลูกค้า หรือทะเบียนยังไม่ได้ระบุประเภทธุรกิจ/อัตราไว้)"
+            )
+        raise RuntimeError(f"ไม่ทราบประเภทธุรกิจ/รหัสอัตราของบัญชีนี้{hint} — กรุณากรอกประเภทธุรกิจและรหัสอัตราเอง")
 
     notes = "ค่าเฉลี่ยจาก AMR จริง (นำเข้าจากไฟล์ที่แนบเอง, anonymized)"
     if source_label:
         notes += f" - {source_label}"
 
-    return _build_profile_from_downloads(
+    result_profile = _build_profile_from_downloads(
         file_paths, business_type_code, rate_code, billing_method, contract_kva, notes, data_dir, log,
         has_solar=has_solar,
+        site_info={"company_name": company_name, "account_no": account_no} if account_no else None,
     )
+
+    if account_no:
+        try:
+            append_import_log_local(
+                {
+                    "imported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    "business_type_code": business_type_code,
+                    "rate_code": rate_code,
+                    "company_name": company_name,
+                    "account_no": account_no,
+                    "has_solar": "true" if has_solar else "false",
+                },
+                data_dir / "import_log_local.csv",
+            )
+        except OSError as e:  # noqa: BLE001 — บันทึก log ไม่สำเร็จ ต้องไม่ทำให้ผลการนำเข้าหลักพังไปด้วย
+            log(f"⚠️ บันทึกประวัติการนำเข้าในเครื่องไม่สำเร็จ (ไม่กระทบผลลัพธ์หลัก): {e}")
+
+    return result_profile
 
 
 def import_amr_auto(

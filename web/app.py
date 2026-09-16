@@ -674,6 +674,16 @@ def _run_import_file_job(job_id: str, file_paths: List[str], params: dict) -> No
         with _JOBS_LOCK:
             _JOBS[job_id]["logs"].append(msg)
 
+    def on_profile(info: dict) -> None:
+        # เก็บบัญชี/ชื่อบริษัทจริงที่อ่านได้จากไฟล์ (ถ้ามี) ไว้แสดงในหน้า Admin ของเครื่องนี้
+        # เท่านั้น เหมือนโหมดดึงจากเว็บอัตโนมัติ — ไม่เคยถูกเขียนลงไฟล์ใดๆ ทั้งสิ้น
+        with _JOBS_LOCK:
+            _JOBS[job_id]["customer_profile"] = {
+                "name": info.get("name") or "",
+                "account_no": info.get("account_no") or "",
+                "meter_no": info.get("meter_no") or "",
+            }
+
     try:
         profile = import_amr_from_files(
             file_paths=file_paths,
@@ -682,6 +692,7 @@ def _run_import_file_job(job_id: str, file_paths: List[str], params: dict) -> No
             contract_kva=params.get("contract_kva"),
             source_label=params.get("source_label", ""),
             has_solar=params.get("has_solar", False),
+            on_profile=on_profile,
             log=log,
         )
         with _JOBS_LOCK:
@@ -708,8 +719,9 @@ def api_start_import_file():
     "รายงานข้อมูลกิโลวัตต์ชั่วโมงแบบช่วงเวลา" (รูปแบบเดียวกับที่โหมดดึงจากเว็บดาวน์โหลดมาให้เอง —
     ดู pea_ingest.parse_interval_report) อยู่แล้วในเครื่อง แต่ไม่มี username/password ของบัญชีนั้น
 
-    ต้องกรอกประเภทธุรกิจ/รหัสอัตราเองเสมอ (ไม่มีการตรวจจับอัตโนมัติ เพราะไม่ได้เข้าหน้าข้อมูล
-    ผู้ใช้ไฟของ PEA เลย)
+    business_type_code/rate_code ไม่บังคับต้องกรอก — ถ้าปล่อยว่าง import_amr_from_files จะ
+    พยายามอ่านเลขบัญชีจากในไฟล์แล้วค้นในทะเบียนลูกค้าให้อัตโนมัติ (ดู amr_import.py) ถ้าหาไม่ได้
+    จริงๆ job จะ error กลับมาบอกให้กรอกเอง (ไฟล์ที่แนบไว้ตอนนั้นจะถูกทิ้งไว้เฉยๆ ไม่ลบอัตโนมัติ)
     """
 
     files = request.files.getlist("files")
@@ -719,13 +731,8 @@ def api_start_import_file():
     source_label = (request.form.get("source_label") or "").strip()
     has_solar = (request.form.get("has_solar") or "").strip().lower() in ("1", "true", "yes", "on")
 
-    missing = [
-        name
-        for name, val in [("files", files), ("business_type_code", business_type_code), ("rate_code", rate_code)]
-        if not val
-    ]
-    if missing:
-        return jsonify({"error": "invalid_request", "message": f"กรอกข้อมูลไม่ครบ: {', '.join(missing)}"}), 400
+    if not files:
+        return jsonify({"error": "invalid_request", "message": "กรุณาแนบไฟล์ AMR อย่างน้อย 1 ไฟล์"}), 400
 
     contract_kva: Optional[float] = None
     if contract_kva_raw:

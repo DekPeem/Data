@@ -193,6 +193,45 @@ def _write_synthetic_files(tmp_path, n=2):
     return paths
 
 
+# โครงสร้างเดียวกับ _SYNTHETIC_INTERVAL_HTML แต่มีตารางหัวรายงาน (บัญชี/ชื่อ/Tariff) นำหน้าด้วย —
+# ยืนยันจากไฟล์จริงที่ผู้ใช้ส่งมาว่าไฟล์ export ของ PEA มีตารางนี้อยู่เสมอ (ดู pea_ingest.py)
+_SYNTHETIC_HTML_WITH_HEADER_TEMPLATE = """
+<table width='800px'><tr>
+<td class='detail'>บัญชีผู้ใช้ไฟ : </td><td>{account_no}&nbsp;</td><td class='detail'>ชื่อผู้ใช้ไฟ : </td><td>{company_name}</td>
+</tr>
+<tr>
+<td class='detail'>หมายเลขมิเตอร์ : </td><td>{meter_no}&nbsp;</td><td class='detail'>Tariff : </td><td>{tariff}</td>
+</tr>
+</table>
+<html><body>
+<table>
+  <tr><td></td><td>RATE A</td><td>RATE B</td><td>RATE C</td><td>ผลรวม</td></tr>
+  <tr><td>01/08/2026 09.15</td><td>20.00</td><td></td><td></td><td>20.00</td></tr>
+  <tr><td>01/08/2026 22.15</td><td></td><td>5.00</td><td></td><td>5.00</td></tr>
+  <tr><td>02/08/2026 00.15</td><td></td><td></td><td>10.00</td><td>10.00</td></tr>
+  <tr><td>ผลรวมทั้งหมด</td><td>20.00</td><td>5.00</td><td>10.00</td><td>35.00</td></tr>
+</table>
+</body></html>
+"""
+
+
+def _write_synthetic_files_with_header(
+    tmp_path, account_no="0199000000", company_name="บริษัท ทดสอบ จำกัด", meter_no="1234567", tariff="TOU", n=1
+):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for i in range(n):
+        path = tmp_path / f"attached_{i}.xls"
+        path.write_text(
+            _SYNTHETIC_HTML_WITH_HEADER_TEMPLATE.format(
+                account_no=account_no, company_name=company_name, meter_no=meter_no, tariff=tariff
+            ),
+            encoding="utf-8",
+        )
+        paths.append(str(path))
+    return paths
+
+
 def test_import_amr_from_files_updates_load_profiles(data_dir, tmp_path):
     file_paths = _write_synthetic_files(tmp_path / "attached")
 
@@ -256,6 +295,107 @@ def test_import_amr_from_files_raises_when_no_readable_files(data_dir, tmp_path)
             source_label="",
             data_dir=data_dir,
         )
+
+
+def _write_registered_customer(data_dir, account_no="0199000000", business_type_code="TESTBIZ", rate_code="50", contract_kva=2000.0):
+    (data_dir / "customers.csv").write_text(
+        "account_no,name,business_type_code,rate_code,contract_kva,has_amr\n"
+        f"{account_no},ลูกค้าทดสอบ,{business_type_code},{rate_code},{contract_kva},false\n",
+        encoding="utf-8",
+    )
+
+
+def test_import_amr_from_files_resolves_fields_from_customer_registry(data_dir, tmp_path):
+    """ไม่ระบุ business_type_code/rate_code/contract_kva มาเลย — ต้องอ่านเลขบัญชีจากไฟล์แล้ว
+    เทียบกับทะเบียนลูกค้าให้อัตโนมัติ (ตามที่ผู้ใช้ขอ: แนบแค่ไฟล์ ไม่ต้องกรอกอะไรเลย)"""
+
+    _write_registered_customer(data_dir, account_no="0199000000", business_type_code="TESTBIZ", rate_code="50", contract_kva=2500.0)
+    file_paths = _write_synthetic_files_with_header(tmp_path / "attached", account_no="0199000000")
+
+    logs = []
+    profile = amr_import.import_amr_from_files(file_paths=file_paths, data_dir=data_dir, log=logs.append)
+
+    assert profile.business_type_code == "TESTBIZ"
+    assert profile.rate_code == "50"
+    assert profile.contract_kva_ref == 2500.0
+    assert any("ทะเบียนลูกค้า" in line for line in logs)
+
+
+def test_import_amr_from_files_explicit_args_take_priority_over_registry(data_dir, tmp_path):
+    """ถ้าผู้ใช้กรอกประเภทธุรกิจ/อัตราเองมาด้วย ต้องใช้ค่าที่กรอกมา ไม่ใช่ค่าจากทะเบียน"""
+
+    _write_registered_customer(data_dir, account_no="0199000000", business_type_code="FROM-REGISTRY", rate_code="99")
+    file_paths = _write_synthetic_files_with_header(tmp_path / "attached", account_no="0199000000")
+
+    profile = amr_import.import_amr_from_files(
+        file_paths=file_paths, business_type_code="TESTBIZ", rate_code="50", data_dir=data_dir,
+    )
+
+    assert profile.business_type_code == "TESTBIZ"
+    assert profile.rate_code == "50"
+
+
+def test_import_amr_from_files_raises_helpful_message_when_account_not_registered(data_dir, tmp_path):
+    file_paths = _write_synthetic_files_with_header(
+        tmp_path / "attached", account_no="0199009999", company_name="บริษัท ไม่มีทะเบียน จำกัด"
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        amr_import.import_amr_from_files(file_paths=file_paths, data_dir=data_dir)
+
+    message = str(exc_info.value)
+    assert "0199009999" in message
+    assert "บริษัท ไม่มีทะเบียน จำกัด" in message
+
+
+def test_import_amr_from_files_raises_generic_message_when_no_account_info_at_all(data_dir, tmp_path):
+    """ไฟล์ไม่มีตารางหัวรายงานเลย (หาเลขบัญชีไม่ได้) และไม่ได้กรอกประเภทธุรกิจ/อัตรามาด้วย —
+    ต้อง raise เหมือนเดิม แค่ไม่มี hint เลขบัญชีแนบมาด้วย (เพราะไม่รู้จริงๆ)"""
+
+    file_paths = _write_synthetic_files(tmp_path / "attached", n=1)
+
+    with pytest.raises(RuntimeError):
+        amr_import.import_amr_from_files(file_paths=file_paths, data_dir=data_dir)
+
+
+def test_import_amr_from_files_logs_import_history_when_account_known(data_dir, tmp_path):
+    _write_registered_customer(data_dir, account_no="0199000000")
+    file_paths = _write_synthetic_files_with_header(
+        tmp_path / "attached", account_no="0199000000", company_name="บริษัท ทดสอบ จำกัด"
+    )
+
+    amr_import.import_amr_from_files(file_paths=file_paths, data_dir=data_dir)
+
+    from amr_mapping.loader import load_import_log_local
+
+    entries = load_import_log_local(data_dir / "import_log_local.csv")
+    assert len(entries) == 1
+    assert entries[0]["account_no"] == "0199000000"
+    assert entries[0]["company_name"] == "บริษัท ทดสอบ จำกัด"
+    assert entries[0]["business_type_code"] == "TESTBIZ"
+
+
+def test_import_amr_from_files_calls_on_profile_callback(data_dir, tmp_path):
+    _write_registered_customer(data_dir, account_no="0199000000")
+    file_paths = _write_synthetic_files_with_header(
+        tmp_path / "attached", account_no="0199000000", company_name="บริษัท ทดสอบ จำกัด", meter_no="7654321"
+    )
+
+    received = {}
+    amr_import.import_amr_from_files(file_paths=file_paths, data_dir=data_dir, on_profile=received.update)
+
+    assert received["name"] == "บริษัท ทดสอบ จำกัด"
+    assert received["account_no"] == "0199000000"
+    assert received["meter_no"] == "7654321"
+
+
+def test_import_amr_from_files_uses_tariff_from_file_as_billing_method(data_dir, tmp_path):
+    _write_registered_customer(data_dir, account_no="0199000000")
+    file_paths = _write_synthetic_files_with_header(tmp_path / "attached", account_no="0199000000", tariff="NORMAL")
+
+    profile = amr_import.import_amr_from_files(file_paths=file_paths, data_dir=data_dir)
+
+    assert profile.billing_method == "NORMAL"
 
 
 def _fake_download_amr_with_profile(username, password, start_date, end_date, download_dir, log, headless=True):

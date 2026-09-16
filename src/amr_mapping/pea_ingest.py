@@ -195,6 +195,27 @@ class IntervalReading:
     kwh: float
 
 
+def parse_report_header(path: Union[str, Path]) -> dict:
+    """อ่าน "หัวรายงาน" (เลขบัญชี/ชื่อผู้ใช้ไฟ/เลขมิเตอร์/Tariff/CT-VT Ratio) จากไฟล์ export ของ
+    PEA — อยู่ในตารางแยกต่างหากก่อนตารางข้อมูลราย 15 นาที รูปแบบเป็นคู่ <td class='detail'>ป้ายชื่อ
+    :</td><td>ค่า</td> เรียงกันในแถวเดียวกัน (ยืนยันจากไฟล์จริงที่ผู้ใช้ส่งมา)
+
+    คืน dict คีย์เป็นป้ายชื่อภาษาไทย/อังกฤษตามที่ปรากฏในไฟล์ตรงๆ (เช่น "บัญชีผู้ใช้ไฟ",
+    "ชื่อผู้ใช้ไฟ", "หมายเลขมิเตอร์", "Tariff", "CT Ratio", "VT Ratio") — คืน dict ว่างถ้าไฟล์
+    ไม่มีตารางหัวรายงานนี้เลย (เช่นไฟล์รูปแบบเก่า/ไฟล์ทดสอบ) ไม่ error
+    """
+
+    soup = _read_html(path)
+    info: dict = {}
+    for label_td in soup.find_all("td", class_="detail"):
+        label = label_td.get_text(strip=True).rstrip(":").strip()
+        if not label:
+            continue
+        value_td = label_td.find_next_sibling("td")
+        info[label] = value_td.get_text(strip=True) if value_td else ""
+    return info
+
+
 def parse_interval_report(path: Union[str, Path]) -> List[IntervalReading]:
     """อ่านตาราง "รายงานข้อมูลกิโลวัตต์ชั่วโมงแบบช่วงเวลา" (เช่น ราย 15 นาที)
 

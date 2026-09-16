@@ -920,15 +920,13 @@ async function startFileImport() {
     formHint.textContent = "กรุณาแนบไฟล์ AMR อย่างน้อย 1 ไฟล์";
     return;
   }
-  if (!business_type_code || !rate_code) {
-    formHint.textContent = "กรุณาเลือกประเภทธุรกิจและกรอกรหัสอัตราให้ครบ";
-    return;
-  }
+  // ไม่บังคับกรอกประเภทธุรกิจ/รหัสอัตราแล้ว — ปล่อยว่างได้ ระบบจะอ่านเลขบัญชีจากในไฟล์แล้วค้น
+  // ในทะเบียนลูกค้าให้อัตโนมัติก่อน ถ้าหาไม่เจอจริงๆ job จะ error กลับมาบอกให้กรอกเอง
 
   const formData = new FormData();
   for (const file of files) formData.append("files", file);
-  formData.append("business_type_code", business_type_code);
-  formData.append("rate_code", rate_code);
+  if (business_type_code) formData.append("business_type_code", business_type_code);
+  if (rate_code) formData.append("rate_code", rate_code);
   if (contract_kva) formData.append("contract_kva", contract_kva);
   formData.append("source_label", source_label);
   formData.append("has_solar", has_solar ? "true" : "false");

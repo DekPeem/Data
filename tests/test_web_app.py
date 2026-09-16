@@ -548,16 +548,47 @@ def test_import_job_not_found(client):
 # ── โหมดแนบไฟล์ที่มีอยู่แล้ว (ไม่ต้อง login เว็บ PEA เลย — /api/admin/import-file) ──
 
 
-def test_start_import_file_invalid_request_when_missing_fields(client):
+def test_start_import_file_does_not_require_business_type_or_rate_code(client, monkeypatch, tmp_path):
+    """business_type_code/rate_code ไม่บังคับกรอกแล้ว (ตามที่ผู้ใช้ขอ: แนบแค่ไฟล์ก็พอ) — ต้อง
+    เริ่ม job ได้แม้ไม่ระบุมาเลย (ปล่อยให้ import_amr_from_files เป็นคนหาให้เองจากทะเบียนลูกค้า)"""
     import io
+
+    monkeypatch.setattr(app_module, "DEFAULT_DOWNLOAD_DIR", tmp_path / "amr_downloads")
+
+    received = {}
+
+    def fake_import_amr_from_files(**kwargs):
+        received["business_type_code"] = kwargs["business_type_code"]
+        received["rate_code"] = kwargs["rate_code"]
+        from amr_mapping.models import LoadProfile
+
+        return LoadProfile(
+            business_type_code="63201", rate_code="50", billing_method="TOU",
+            demand_kw={"P": 0, "OP": 0, "H": 0}, energy_kwh={"P": 0, "OP": 0, "H": 0},
+            contract_kva_ref=None, sample_size=1, notes="fake",
+        )
+
+    monkeypatch.setattr(app_module, "import_amr_from_files", fake_import_amr_from_files)
 
     res = client.post(
         "/api/admin/import-file",
-        data={"files": (io.BytesIO(b"<html></html>"), "a.xls")},  # ขาด business_type_code/rate_code
+        data={"files": (io.BytesIO(b"<html></html>"), "a.xls")},  # ไม่มี business_type_code/rate_code เลย
         content_type="multipart/form-data",
     )
-    assert res.status_code == 400
-    assert res.get_json()["error"] == "invalid_request"
+    assert res.status_code == 200
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/import/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    # ค่าว่างเปล่า (ไม่ใช่ None) ต้องถูกส่งต่อไปให้ import_amr_from_files เป็นคนตัดสินใจเอง
+    assert received["business_type_code"] == ""
+    assert received["rate_code"] == ""
 
 
 def test_start_import_file_invalid_request_when_no_files(client):
