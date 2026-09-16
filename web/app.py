@@ -29,6 +29,7 @@ from amr_mapping.dbd_lookup import find_exact_match, lookup_business_type_for_co
 from amr_mapping.loader import (
     DEFAULT_DATA_DIR,
     load_import_log_local,
+    load_site_curves_local,
     save_business_types,
     upsert_business_type,
 )
@@ -187,6 +188,23 @@ def api_list_import_log_local():
 
     entries = load_import_log_local(DEFAULT_DATA_DIR / "import_log_local.csv")
     return jsonify(list(reversed(entries)))  # ใหม่ล่าสุดขึ้นก่อน
+
+
+@app.route("/api/admin/site-curve/<account_no>")
+def api_get_site_curve(account_no: str):
+    """เส้นโค้งรายชั่วโมงดิบของไซต์ (บัญชี) หนึ่งรายโดยเฉพาะ — อ่านจาก site_curves_local.csv
+    (ไฟล์ local-only มีชื่อบริษัท/เลขบัญชีจริง อยู่ใน .gitignore แล้ว) ต่างจาก
+    /api/admin/curve/<code>/<rate_code> ซึ่งเป็นค่าเฉลี่ยรวมของทุกไซต์แบบ anonymized —
+    endpoint นี้ให้กราฟของไซต์นี้ไซต์เดียวเท่านั้น ใช้กดดูแยกแต่ละบริษัท/ไซต์ในหน้า Admin
+
+    คืน {"available": False, ...} เฉยๆ ถ้ายังไม่มีกราฟแยกของไซต์นี้เลย (เช่น นำเข้าไว้ก่อนฟีเจอร์
+    นี้จะมี หรือนำเข้าด้วยโหมดกรอกเองซึ่งไม่ทราบชื่อบริษัทจริง) ไม่ใช่ error"""
+
+    entries = load_site_curves_local(DEFAULT_DATA_DIR / "site_curves_local.csv")
+    entry = next((e for e in entries if e["account_no"] == account_no), None)
+    if entry is None:
+        return jsonify(_NO_CURVE)
+    return jsonify({"available": True, "day_types": entry["hours"], "sample_size": entry["sample_size"]})
 
 
 @app.route("/api/business-types/<code>/hierarchy", methods=["POST"])

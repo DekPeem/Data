@@ -5,8 +5,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from amr_mapping.loader import (
     append_import_log_local,
+    append_site_curve_local,
     load_import_log_local,
     load_reference_data,
+    load_site_curves_local,
     save_business_types,
     save_load_curves,
     save_load_profiles,
@@ -244,3 +246,63 @@ def test_append_import_log_local_creates_file_with_header_then_appends(tmp_path)
     assert len(entries) == 2
     assert entries[0]["company_name"] == "บริษัท ทดสอบ จำกัด"
     assert entries[1]["business_type_code"] == "34120"
+
+
+def test_load_site_curves_local_returns_empty_when_file_missing(tmp_path):
+    assert load_site_curves_local(tmp_path / "no_such_file.csv") == []
+
+
+def test_append_and_load_site_curve_local_round_trip(tmp_path):
+    path = tmp_path / "site_curves_local.csv"
+    curve = LoadCurve(
+        business_type_code="34111", rate_code="40",
+        hours={"all": [1.0 if h == 9 else None for h in range(24)]},
+        sample_size=12, has_solar=True,
+    )
+
+    append_site_curve_local("บริษัท ทดสอบ จำกัด", "019900000001", curve, path)
+
+    entries = load_site_curves_local(path)
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["company_name"] == "บริษัท ทดสอบ จำกัด"
+    assert entry["account_no"] == "019900000001"
+    assert entry["business_type_code"] == "34111"
+    assert entry["rate_code"] == "40"
+    assert entry["has_solar"] is True
+    assert entry["sample_size"] == 12
+    assert entry["hours"]["all"][9] == 1.0
+    assert entry["hours"]["all"][0] is None
+
+
+def test_load_site_curves_local_keeps_latest_reimport(tmp_path):
+    """เลขบัญชีเดียวกันถูกนำเข้าซ้ำ (append รอบสอง) — ต้องได้ข้อมูลจากรอบล่าสุดเสมอ ไม่ใช่
+    รอบแรกหรือค่าผสมกัน"""
+
+    path = tmp_path / "site_curves_local.csv"
+    old_curve = LoadCurve(business_type_code="34111", rate_code="40", hours={"all": [1.0] * 24}, sample_size=6)
+    new_curve = LoadCurve(business_type_code="34111", rate_code="40", hours={"all": [9.0] * 24}, sample_size=12)
+
+    append_site_curve_local("บริษัท ทดสอบ จำกัด", "019900000001", old_curve, path)
+    append_site_curve_local("บริษัท ทดสอบ จำกัด", "019900000001", new_curve, path)
+
+    entries = load_site_curves_local(path)
+    assert len(entries) == 1
+    assert entries[0]["sample_size"] == 12
+    assert entries[0]["hours"]["all"][0] == 9.0
+
+
+def test_load_site_curves_local_keeps_separate_accounts_distinct(tmp_path):
+    """บริษัทเดียวกันแต่คนละเลขบัญชี (คนละไซต์) ต้องแยกกันคนละรายการ ไม่ถูกรวมกัน"""
+
+    path = tmp_path / "site_curves_local.csv"
+    curve_a = LoadCurve(business_type_code="34111", rate_code="40", hours={"all": [1.0] * 24}, sample_size=6)
+    curve_b = LoadCurve(business_type_code="34111", rate_code="40", hours={"all": [2.0] * 24}, sample_size=6)
+
+    append_site_curve_local("บริษัท เดียวกัน จำกัด", "SITE-A", curve_a, path)
+    append_site_curve_local("บริษัท เดียวกัน จำกัด", "SITE-B", curve_b, path)
+
+    entries = {e["account_no"]: e for e in load_site_curves_local(path)}
+    assert len(entries) == 2
+    assert entries["SITE-A"]["hours"]["all"][0] == 1.0
+    assert entries["SITE-B"]["hours"]["all"][0] == 2.0

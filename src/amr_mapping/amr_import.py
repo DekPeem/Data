@@ -24,6 +24,7 @@ from .loader import (
     DEFAULT_DATA_DIR,
     ReferenceData,
     append_import_log_local,
+    append_site_curve_local,
     load_reference_data,
     save_business_types,
     save_load_curves,
@@ -60,9 +61,15 @@ def _build_profile_from_downloads(
     data_dir: Path,
     log: ProgressCallback,
     has_solar: bool = False,
+    site_info: Optional[dict] = None,
 ) -> LoadProfile:
     """แปลงไฟล์ AMR ที่ดาวน์โหลดมาแล้วเป็น LoadProfile เฉลี่ยหลายเดือน แล้ว upsert ลง
-    load_profiles.csv — ใช้ร่วมกันทั้ง import_amr_for_business และ import_amr_auto"""
+    load_profiles.csv — ใช้ร่วมกันทั้ง import_amr_for_business และ import_amr_auto
+
+    site_info (ถ้าระบุ — {"company_name": ..., "account_no": ...}) จะทำให้บันทึกเส้นโค้งของ
+    ไซต์นี้แยกต่างหากไว้ที่ site_curves_local.csv ด้วย (ไฟล์ local-only มีชื่อบริษัทจริง — ดู
+    loader.append_site_curve_local) เพื่อให้กดดูกราฟของไซต์นี้แยกจากค่าเฉลี่ยรวมได้ทีหลังในหน้า
+    Admin — ใช้เฉพาะโหมด auto (import_amr_auto) เพราะเป็นโหมดเดียวที่ทราบชื่อบริษัทจริง"""
 
     log(f"📊 ประมวลผล {len(downloaded_files)} ไฟล์ ...")
     monthly_profiles = []
@@ -120,6 +127,18 @@ def _build_profile_from_downloads(
     updated_curves = upsert_load_curve(reference.load_curves, new_curve)
     save_load_curves(updated_curves, data_dir / "load_curves.csv")
     log(f"💾 บันทึกเส้นโค้งรายชั่วโมงลง {data_dir / 'load_curves.csv'} แล้ว")
+
+    if site_info and site_info.get("account_no"):
+        try:
+            append_site_curve_local(
+                site_info.get("company_name") or "",
+                site_info["account_no"],
+                new_curve,
+                data_dir / "site_curves_local.csv",
+            )
+            log("💾 บันทึกกราฟแยกของไซต์นี้ไว้ในเครื่อง (site_curves_local.csv — ไม่ commit เข้า repo)")
+        except OSError as e:  # noqa: BLE001 — บันทึกกราฟแยกของไซต์ไม่สำเร็จ ต้องไม่ทำให้ผลหลักพังไปด้วย
+            log(f"⚠️ บันทึกกราฟแยกของไซต์ไม่สำเร็จ (ไม่กระทบผลลัพธ์หลัก): {e}")
 
     return new_profile
 
@@ -290,6 +309,7 @@ def import_amr_auto(
     result_profile = _build_profile_from_downloads(
         downloaded_files, business_type_code, rate_code, billing_method, contract_kva, notes, data_dir, log,
         has_solar=has_solar,
+        site_info={"company_name": profile_info.get("name") or "", "account_no": profile_info.get("account_no") or ""},
     )
 
     # บันทึกประวัติ "ทำอะไรไปแล้วบ้าง มีข้อมูลของใครบ้าง" ไว้ในเครื่องตัวเองเท่านั้น (ชื่อบริษัท/

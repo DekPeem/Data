@@ -162,8 +162,17 @@ function renderBizCard(t) {
 
   const companies = companiesForBusinessType(t.code);
   const companiesHtml = companies.length
-    ? companies.map((c) => `<span class="company-chip">${c.company_name}${c.account_no ? ` · ${c.account_no}` : ""}</span>`).join("")
+    ? companies
+        .map(
+          (c) =>
+            `<button type="button" class="company-chip company-chip-btn" data-account="${c.account_no}">${c.company_name}${c.account_no ? ` · ${c.account_no}` : ""} 📈</button>`
+        )
+        .join("")
     : `<span class="hint">ยังไม่มีประวัติการนำเข้าในเครื่องนี้สำหรับประเภทนี้</span>`;
+  const siteCurvePanels = companies
+    .filter((c) => c.account_no)
+    .map((c) => `<div id="site-curve-panel-${c.account_no}" style="display:none;"></div>`)
+    .join("");
 
   const profileButtons = t.profiles.length
     ? t.profiles
@@ -188,6 +197,7 @@ function renderBizCard(t) {
         <button type="button" class="day-type-btn verify-toggle-btn" data-code="${t.code}">🔍 ตรวจสอบ TSIC</button>
       </div>
       <div class="biz-companies">${companiesHtml}</div>
+      ${siteCurvePanels}
       <div class="biz-profiles">${profileButtons}</div>
       <div id="verify-panel-${t.code}" style="display:none;"></div>
       ${curvePanels}
@@ -269,6 +279,9 @@ function renderBusinessTypesSections(allTypes) {
     businessTypesBySectionEl.querySelectorAll(".curve-toggle-btn").forEach((btn) => {
       btn.addEventListener("click", () => toggleCurvePanel(btn.dataset.code, btn.dataset.rate, btn.dataset.solar === "true"));
     });
+    businessTypesBySectionEl.querySelectorAll(".company-chip-btn").forEach((btn) => {
+      btn.addEventListener("click", () => toggleSiteCurvePanel(btn.dataset.account));
+    });
   } catch (err) {
     businessTypesBySectionEl.innerHTML = `<div style="padding:12px 10px;color:#d03b3b;">แสดงผลไม่สำเร็จ</div>`;
     console.error("แสดงผลหมวดหมู่ธุรกิจไม่สำเร็จ", err);
@@ -305,6 +318,40 @@ async function toggleCurvePanel(code, rateCode, hasSolar) {
     } catch (err) {
       panel.innerHTML = `<div class="hint" style="color:#d03b3b;">โหลดกราฟไม่สำเร็จ</div>`;
       console.error("โหลดกราฟไม่สำเร็จ", err);
+    }
+  }
+}
+
+// ── กราฟของแต่ละไซต์/บัญชีแยกต่างหาก (คนละกับ toggleCurvePanel ด้านบนที่เป็นค่าเฉลี่ยรวม) —
+//    กดที่ชื่อบริษัทในการ์ดเพื่อดูกราฟของไซต์นั้นไซต์เดียว ไม่ใช่ค่าเฉลี่ยรวมกับไซต์อื่น ──
+
+const openSiteCurvePanels = new Set();
+
+async function toggleSiteCurvePanel(accountNo) {
+  const panel = document.getElementById(`site-curve-panel-${accountNo}`);
+  if (!panel) return;
+
+  if (openSiteCurvePanels.has(accountNo)) {
+    openSiteCurvePanels.delete(accountNo);
+    panel.style.display = "none";
+    return;
+  }
+  openSiteCurvePanels.add(accountNo);
+  panel.style.display = "block";
+  if (!panel.dataset.built) {
+    panel.dataset.built = "1";
+    panel.innerHTML = `<div class="hint" style="padding:12px 0;">⏳ กำลังโหลดกราฟ...</div>`;
+    try {
+      const res = await fetch(`/api/admin/site-curve/${encodeURIComponent(accountNo)}`);
+      const curveData = await res.json();
+      if (!curveData.available) {
+        panel.innerHTML = `<div class="hint" style="padding:12px 0;">ยังไม่มีกราฟแยกของไซต์นี้ (นำเข้าไว้ก่อนฟีเจอร์นี้จะมี หรือใช้โหมดกรอกเองซึ่งไม่ทราบชื่อบริษัท — นำเข้าใหม่อีกครั้งด้วยโหมดอัตโนมัติเพื่อให้มีกราฟแยก)</div>`;
+        return;
+      }
+      initDailyCurveSection(panel, curveData);
+    } catch (err) {
+      panel.innerHTML = `<div class="hint" style="color:#d03b3b;">โหลดกราฟไม่สำเร็จ</div>`;
+      console.error("โหลดกราฟของไซต์ไม่สำเร็จ", err);
     }
   }
 }

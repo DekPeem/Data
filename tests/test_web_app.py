@@ -298,6 +298,31 @@ def test_import_log_local_returns_newest_first(client, monkeypatch, tmp_path):
     assert data[0]["company_name"] == "บริษัท บี จำกัด"  # ใหม่สุดขึ้นก่อน
 
 
+def test_get_site_curve_not_found_returns_no_curve_not_error(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    # ไม่มีไฟล์ site_curves_local.csv เลย (เช่น ยังไม่เคยนำเข้าแบบ auto มาก่อน)
+    res = client.get("/api/admin/site-curve/NOT-A-SITE")
+    assert res.status_code == 200
+    assert res.get_json() == {"available": False, "day_types": {}, "sample_size": 0}
+
+
+def test_get_site_curve_returns_that_sites_own_curve(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    (tmp_path / "site_curves_local.csv").write_text(
+        "company_name,account_no,business_type_code,rate_code,has_solar,day_type,contract_kva_ref,"
+        "sample_size,notes," + ",".join(f"h{h:02d}" for h in range(24)) + "\n"
+        "บริษัท เอ จำกัด,019900000001,34111,40,false,all,1000,12,ทดสอบ,"
+        + ",".join(["5.0" if h == 9 else "" for h in range(24)]) + "\n",
+        encoding="utf-8",
+    )
+
+    res = client.get("/api/admin/site-curve/019900000001")
+    data = res.get_json()
+    assert data["available"] is True
+    assert data["sample_size"] == 12
+    assert data["day_types"]["all"][9] == pytest.approx(5.0)
+
+
 def test_business_type_hierarchy_update_success(client, monkeypatch, tmp_path):
     import shutil
 

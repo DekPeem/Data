@@ -260,6 +260,29 @@ def test_import_amr_auto_saves_has_solar_and_logs_it(monkeypatch, data_dir):
     assert log_entries[0]["has_solar"] == "true"
 
 
+def test_import_amr_auto_saves_site_curve_local(monkeypatch, data_dir):
+    """โหมด auto ต้องบันทึกกราฟแยกของไซต์นี้ไว้ที่ site_curves_local.csv ด้วย (แยกจาก
+    load_curves.csv ซึ่งเป็นค่าเฉลี่ยรวม anonymized) เพราะมีชื่อบริษัท/เลขบัญชีจริงจาก scrape"""
+
+    monkeypatch.setattr(amr_import, "download_amr_with_profile", _fake_download_amr_with_profile)
+
+    amr_import.import_amr_auto(
+        username="019900000001", password="secret-pass",
+        start_date="2026-07-01", end_date="2026-08-31",
+        data_dir=data_dir, download_dir=data_dir.parent / "downloads",
+    )
+
+    from amr_mapping.loader import load_site_curves_local
+
+    site_curves = load_site_curves_local(data_dir / "site_curves_local.csv")
+    assert len(site_curves) == 1
+    assert site_curves[0]["company_name"] == "บริษัท ทดสอบออโต้ จำกัด"
+    assert site_curves[0]["account_no"] == "019900000001"
+    assert site_curves[0]["business_type_code"] == "34111"
+    # ข้อมูล synthetic มีจุดเดียวที่ชม.9 (RATE A 20.00 -> 80 kW) ในวันเสาร์ (01/08/2026)
+    assert site_curves[0]["hours"]["sat"][9] == pytest.approx(80.0)
+
+
 def test_import_amr_auto_does_not_overwrite_existing_business_type(monkeypatch, data_dir):
     def fake_download(username, password, start_date, end_date, download_dir, log, headless=True):
         profile_info = {
