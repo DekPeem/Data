@@ -215,26 +215,35 @@ function groupBySection(types) {
   return groups;
 }
 
-// กรองรายการในกล่อง dropdown ค้นหาบริษัท/ไซต์ ตามคำที่พิมพ์ — จับคู่แบบ "มีคำนี้อยู่ตรงไหนก็ได้"
-// ในชื่อ/เลขบัญชี (ไม่ต้องพิมพ์ตรงตั้งแต่ตัวแรก) ไม่สนตัวพิมพ์เล็ก-ใหญ่
-function filterCompanyDropdown(input) {
-  const wrap = input.closest(".company-combobox");
+// กรองรายการในกล่อง dropdown ค้นหา (ใช้ร่วมกันทั้งกล่องค้นหาบริษัท/ไซต์ และกล่องค้นหาประเภทธุรกิจ)
+// ตามคำที่พิมพ์ — จับคู่แบบ "มีคำนี้อยู่ตรงไหนก็ได้" ในข้อความของแต่ละรายการ (ไม่ต้องพิมพ์ตรงตั้งแต่
+// ตัวแรก) ไม่สนตัวพิมพ์เล็ก-ใหญ่
+function filterComboboxDropdown(input, comboboxSelector, itemSelector, emptySelector) {
+  const wrap = input.closest(comboboxSelector);
   const query = input.value.trim().toLowerCase();
-  const items = wrap.querySelectorAll(".company-dropdown-item");
+  const items = wrap.querySelectorAll(itemSelector);
   let anyVisible = false;
   items.forEach((item) => {
     const match = !query || item.textContent.toLowerCase().includes(query);
     item.style.display = match ? "" : "none";
     if (match) anyVisible = true;
   });
-  const emptyMsg = wrap.querySelector(".company-dropdown-empty");
+  const emptyMsg = wrap.querySelector(emptySelector);
   if (emptyMsg) emptyMsg.style.display = anyVisible ? "none" : "block";
+}
+
+function filterCompanyDropdown(input) {
+  filterComboboxDropdown(input, ".company-combobox", ".company-dropdown-item", ".company-dropdown-empty");
+}
+
+function filterBizTypeDropdown(input) {
+  filterComboboxDropdown(input, ".biz-type-combobox", ".biz-type-dropdown-item", ".biz-type-dropdown-empty");
 }
 
 // ปิด dropdown ที่เปิดค้างไว้เมื่อคลิกข้างนอกกล่องค้นหา (ผูกครั้งเดียวตอนโหลดสคริปต์ ไม่ใช่ทุกครั้ง
 // ที่ render การ์ดใหม่ เพราะ element การ์ดถูกสร้างใหม่ทุกครั้งอยู่แล้วแต่ document ตัวเดียวกันเสมอ)
 document.addEventListener("click", (e) => {
-  document.querySelectorAll(".company-combobox.open").forEach((box) => {
+  document.querySelectorAll(".company-combobox.open, .biz-type-combobox.open").forEach((box) => {
     if (!box.contains(e.target)) box.classList.remove("open");
   });
 });
@@ -311,6 +320,50 @@ function renderBizCard(t) {
     </div>`;
 }
 
+// รหัสประเภทธุรกิจที่ถูกเลือกไว้ (กดค้นหาแล้วเลือกจาก dropdown ของ section) ให้แสดงการ์ดอยู่ —
+// เก็บข้าม section ไว้ในตัวแปรเดียวกันได้เพราะรหัสไม่ซ้ำข้าม section (1 รหัส = 1 section เสมอ)
+const openBizTypeCards = new Set();
+
+// เนื้อหาในแต่ละ section: กล่องค้นหา/dropdown เลือกประเภทธุรกิจ (กันไม่ให้การ์ดทุกอันโชว์พร้อมกัน
+// หมดจนรก โดยเฉพาะ section ที่มีประเภทธุรกิจเยอะ) ตามด้วยการ์ดของแต่ละประเภทที่เลือกไว้ (ซ่อนโดย
+// default จนกว่าจะเลือกจาก dropdown)
+function renderSectionBody(types) {
+  const combobox = `
+    <div class="biz-type-combobox">
+      <input type="text" class="biz-type-search-input" placeholder="🔍 ค้นหาประเภทธุรกิจ (${types.length} รายการ)..." autocomplete="off">
+      <div class="biz-type-dropdown">
+        ${types
+          .map(
+            (t) =>
+              `<button type="button" class="biz-type-dropdown-item${openBizTypeCards.has(t.code) ? " active" : ""}" data-code="${t.code}">${t.code} · ${t.name_th}</button>`
+          )
+          .join("")}
+        <div class="biz-type-dropdown-empty" style="display:none;">ไม่พบประเภทธุรกิจที่ตรงกับคำค้นหา</div>
+      </div>
+    </div>`;
+  const cards = types
+    .map(
+      (t) =>
+        `<div class="biz-card-wrap" data-code="${t.code}" style="${openBizTypeCards.has(t.code) ? "" : "display:none;"}">${renderBizCard(t)}</div>`
+    )
+    .join("");
+  return combobox + cards;
+}
+
+function toggleBizTypeCard(code, btn) {
+  const wrap = businessTypesBySectionEl.querySelector(`.biz-card-wrap[data-code="${code}"]`);
+  if (!wrap) return;
+  if (openBizTypeCards.has(code)) {
+    openBizTypeCards.delete(code);
+    wrap.style.display = "none";
+    btn.classList.remove("active");
+  } else {
+    openBizTypeCards.add(code);
+    wrap.style.display = "";
+    btn.classList.add("active");
+  }
+}
+
 const openSections = new Set();
 
 function toggleSectionPanel(key) {
@@ -371,7 +424,7 @@ function renderBusinessTypesSections(allTypes) {
               <span class="section-count">${g.types.length} ประเภทธุรกิจ</span>
             </button>
             <div class="section-panel${isOpen ? " open" : ""}" id="section-panel-${key}">
-              ${g.types.map((t) => renderBizCard(t)).join("")}
+              ${renderSectionBody(g.types)}
             </div>
           </div>`;
       })
@@ -395,6 +448,16 @@ function renderBusinessTypesSections(allTypes) {
         filterCompanyDropdown(input);
       });
       input.addEventListener("input", () => filterCompanyDropdown(input));
+    });
+    businessTypesBySectionEl.querySelectorAll(".biz-type-dropdown-item").forEach((btn) => {
+      btn.addEventListener("click", () => toggleBizTypeCard(btn.dataset.code, btn));
+    });
+    businessTypesBySectionEl.querySelectorAll(".biz-type-search-input").forEach((input) => {
+      input.addEventListener("focus", () => {
+        input.closest(".biz-type-combobox").classList.add("open");
+        filterBizTypeDropdown(input);
+      });
+      input.addEventListener("input", () => filterBizTypeDropdown(input));
     });
   } catch (err) {
     businessTypesBySectionEl.innerHTML = `<div style="padding:12px 10px;color:#d03b3b;">แสดงผลไม่สำเร็จ</div>`;
