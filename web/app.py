@@ -16,6 +16,7 @@ import os
 import sys
 import threading
 import uuid
+from datetime import date, datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -643,6 +644,31 @@ def api_start_import():
         ]
     if missing:
         return jsonify({"error": "invalid_request", "message": f"กรอกข้อมูลไม่ครบ: {', '.join(missing)}"}), 400
+
+    # เช็คความสมเหตุสมผลของช่วงวันที่ก่อนเปิด Selenium session จริง — เคยเจอเคสที่ผู้ใช้พิมพ์ปีใน
+    # ช่อง date picker ไม่ครบ 4 หลัก (เช่น "25" แทน "2025") ทำให้ได้ช่วงวันที่ผิดเพี้ยนมาก (เช่น
+    # ปี 0025) ส่งไปให้เว็บ PEA แล้วเว็บนั้นตอบกลับมาในรูปแบบที่ทำให้ ChromeDriver ทั้งตัวพัง
+    # (native crash) แทนที่จะ error สวยๆ — เช็คตั้งแต่ต้นทางกันไว้ก่อนเลยดีกว่า
+    try:
+        parsed_start = datetime.strptime(start_date, "%Y-%m-%d").date()
+        parsed_end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    except ValueError:
+        return jsonify({"error": "invalid_request", "message": "รูปแบบวันที่ไม่ถูกต้อง (ต้องเป็น YYYY-MM-DD)"}), 400
+
+    _MIN_YEAR = 2015
+    max_year = date.today().year + 1
+    if not (_MIN_YEAR <= parsed_start.year <= max_year) or not (_MIN_YEAR <= parsed_end.year <= max_year):
+        return jsonify(
+            {
+                "error": "invalid_request",
+                "message": (
+                    f"ปีในวันที่ดูผิดปกติ ({parsed_start.year}-{parsed_end.year}) — ตรวจสอบว่าพิมพ์ปีครบ "
+                    "4 หลักในช่องวันที่เริ่มต้น/สิ้นสุด (เช่น 2025 ไม่ใช่ 25)"
+                ),
+            }
+        ), 400
+    if parsed_start > parsed_end:
+        return jsonify({"error": "invalid_request", "message": "วันที่เริ่มต้นต้องไม่มากกว่าวันที่สิ้นสุด"}), 400
 
     job_id = uuid.uuid4().hex
     with _JOBS_LOCK:

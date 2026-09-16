@@ -453,6 +453,34 @@ def test_start_import_invalid_request(client, monkeypatch):
     assert res.get_json()["error"] == "invalid_request"
 
 
+def test_start_import_rejects_implausible_year(client, monkeypatch):
+    """เคยเจอเคสจริง: ผู้ใช้พิมพ์ปีในช่อง date picker ไม่ครบ 4 หลัก (เช่น "25" แทน "2025")
+    ทำให้ได้วันที่ปี 0025 ส่งไปเปิด Selenium session จริงแล้วทำให้ ChromeDriver พัง — ต้องเช็ค
+    และ error ตั้งแต่ต้นทางก่อนเปิด session เลย ไม่ใช่ปล่อยผ่านไปพังทีหลัง"""
+    monkeypatch.setenv("PEA_AMR_USERNAME", "u")
+    monkeypatch.setenv("PEA_AMR_PASSWORD", "p")
+
+    res = client.post(
+        "/api/admin/import",
+        json={"start_date": "0025-10-01", "end_date": "0025-10-31"},
+    )
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+    assert "ปี" in res.get_json()["message"]
+
+
+def test_start_import_rejects_start_date_after_end_date(client, monkeypatch):
+    monkeypatch.setenv("PEA_AMR_USERNAME", "u")
+    monkeypatch.setenv("PEA_AMR_PASSWORD", "p")
+
+    res = client.post(
+        "/api/admin/import",
+        json={"start_date": "2026-08-31", "end_date": "2026-08-01"},
+    )
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+
 def test_start_import_and_poll_job_success(client, monkeypatch):
     monkeypatch.setenv("PEA_AMR_USERNAME", "u")
     monkeypatch.setenv("PEA_AMR_PASSWORD", "p")
