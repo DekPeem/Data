@@ -483,6 +483,17 @@ def _try_download_from_show_page(
                 if result:
                     return result
 
+        # ปุ่ม <button>...</button> จริง (ไม่ใช่ <input type="button"> แบบ ASP.NET classic
+        # webform เดิมที่เคยเจอ) — ยืนยันจากผู้ใช้ว่าหน้ารายงานบางหน้ามีปุ่ม "Download" ที่เป็น
+        # <button> แยกต่างหาก ซึ่งโค้ดเดิมไม่เคยสแกนหาเลย ทำให้พลาดปุ่มที่มีอยู่จริงบนหน้า
+        for btn in driver.find_elements(By.TAG_NAME, "button"):
+            text = (btn.text or btn.get_attribute("value") or "").strip().lower()
+            if any(kw in text for kw in _DOWNLOAD_KEYWORDS):
+                log(f"👉 กดปุ่มดาวน์โหลด (button) ในหน้า showPeriodProfile: {text}")
+                result = click_and_wait(btn)
+                if result:
+                    return result
+
         log("⚠️ ไม่พบปุ่ม/ลิงก์ดาวน์โหลดในหน้า showPeriodProfile.aspx")
     except Exception as e:  # noqa: BLE001
         log(f"⚠️ สแกนหาปุ่มดาวน์โหลดผิดพลาด: {e}")

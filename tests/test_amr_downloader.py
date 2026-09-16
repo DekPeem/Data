@@ -171,9 +171,10 @@ class _FakeShowPageDriver:
     """ตัวแทน driver สำหรับทดสอบ _try_download_from_show_page (ไม่มี popup เปิดขึ้นเลย
     ในทุกเทสต์นี้ — window_handles คงที่ตลอด)"""
 
-    def __init__(self, inputs=None, anchors=None):
+    def __init__(self, inputs=None, anchors=None, buttons=None):
         self._inputs = inputs or []
         self._anchors = anchors or []
+        self._buttons = buttons or []
         self.window_handles = ["main"]
 
     def find_elements(self, by, tag):
@@ -181,6 +182,8 @@ class _FakeShowPageDriver:
             return self._inputs
         if tag == "a":
             return self._anchors
+        if tag == "button":
+            return self._buttons
         return []
 
 
@@ -208,6 +211,22 @@ def test_try_download_from_show_page_clicks_matching_anchor_link(monkeypatch):
 
     assert link.clicked is True
     assert result == "/tmp/fake2.xls"
+
+
+def test_try_download_from_show_page_clicks_matching_button_element(monkeypatch):
+    """ยืนยันจากผู้ใช้จริง: หน้ารายงานบางหน้ามีปุ่ม "Download" ที่เป็น <button> แยกต่างหาก
+    (ไม่ใช่ <input>/<a> แบบที่เคยรองรับ) ต้องสแกนเจอและกดได้เหมือนกัน"""
+
+    btn = _FakeClickable(text="Download")
+    driver = _FakeShowPageDriver(buttons=[btn])
+
+    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60: "/tmp/fake3.xls")
+    monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
+
+    result = amr_downloader._try_download_from_show_page(driver, "main", "/tmp/dl", log=lambda m: None)
+
+    assert btn.clicked is True
+    assert result == "/tmp/fake3.xls"
 
 
 def test_cache_key_is_deterministic_and_filesystem_safe():
