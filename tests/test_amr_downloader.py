@@ -287,7 +287,38 @@ def test_try_download_from_show_page_no_matching_element_returns_none(monkeypatc
 
     monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
 
-    result = amr_downloader._try_download_from_show_page(driver, "main", "/tmp/dl", log=lambda m: None)
+    # timeout=0 กันไม่ให้เทสต์นี้ต้องรอจริงตามค่า default (15 วินาที) ของ retry loop
+    result = amr_downloader._try_download_from_show_page(driver, "main", "/tmp/dl", log=lambda m: None, timeout=0)
 
     assert unrelated.clicked is False
     assert result is None
+
+
+def test_try_download_from_show_page_retries_until_element_appears(monkeypatch):
+    """ยืนยันจากผู้ใช้จริง: บัญชี/เดือนเดียวกัน บางรอบหาปุ่มเจอ บางรอบไม่เจอ ทั้งที่หน้าเว็บมี
+    ปุ่มอยู่จริงเหมือนกันทุกครั้ง (โหลดหน้าช้าไม่คงที่) — ต้องรอ+ลองสแกนใหม่ได้ ไม่ใช่ scan
+    ครั้งเดียวแล้วยอมแพ้เลย"""
+
+    btn = _FakeClickable(text="Download")
+    driver = _FakeShowPageDriver()  # ยังไม่มีปุ่มปรากฏเลยตอนเริ่ม (จำลองหน้าโหลดช้า)
+
+    button_scan_count = {"n": 0}
+    real_find_elements = driver.find_elements
+
+    def delayed_find_elements(by, tag):
+        if tag == "button":
+            button_scan_count["n"] += 1
+            if button_scan_count["n"] >= 2:  # ปุ่มปรากฏตั้งแต่รอบสแกนที่ 2 เป็นต้นไป (รอบแรกยังไม่เจอ)
+                driver._buttons = [btn]
+        return real_find_elements(by, tag)
+
+    driver.find_elements = delayed_find_elements
+
+    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60: "/tmp/fake4.xls")
+    monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
+    monkeypatch.setattr(amr_downloader.time, "sleep", lambda s: None)  # ข้าม sleep จริงระหว่าง retry
+
+    result = amr_downloader._try_download_from_show_page(driver, "main", "/tmp/dl", log=lambda m: None, timeout=5)
+
+    assert btn.clicked is True
+    assert result == "/tmp/fake4.xls"

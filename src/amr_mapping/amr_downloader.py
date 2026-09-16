@@ -438,17 +438,45 @@ def _handle_popup(driver, main_handle, download_dir: str, log: ProgressCallback)
 _DOWNLOAD_KEYWORDS = ("excel", "download", "ดาวน์โหลด", "ส่งออก", "export")
 
 
+def _find_download_element(driver):
+    """ไล่หาปุ่ม/ลิงก์ที่มีคำว่า download/excel/ดาวน์โหลด/ส่งออก อยู่บนหน้าปัจจุบัน — เช็คทั้ง
+    <input> (ASP.NET classic webform), <a> (ลิงก์), และ <button> (ยืนยันจากผู้ใช้จริงว่าบาง
+    หน้ามีปุ่มแบบนี้) คืน (element, ข้อความที่จับคู่ได้) หรือ (None, None) ถ้าไม่เจอเลย"""
+
+    from selenium.webdriver.common.by import By
+
+    for b in driver.find_elements(By.TAG_NAME, "input"):
+        value = (b.get_attribute("value") or "").lower()
+        if any(kw in value for kw in _DOWNLOAD_KEYWORDS):
+            return b, value
+
+    for a in driver.find_elements(By.TAG_NAME, "a"):
+        text = (a.text or "").strip().lower()
+        if any(kw in text for kw in _DOWNLOAD_KEYWORDS):
+            return a, text
+
+    for btn in driver.find_elements(By.TAG_NAME, "button"):
+        text = (btn.text or btn.get_attribute("value") or "").strip().lower()
+        if any(kw in text for kw in _DOWNLOAD_KEYWORDS):
+            return btn, text
+
+    return None, None
+
+
 def _try_download_from_show_page(
-    driver, main_handle, download_dir: str, log: ProgressCallback
+    driver, main_handle, download_dir: str, log: ProgressCallback, timeout: float = 15.0
 ) -> Optional[str]:
     """กรณีกด "ตกลง" แล้วเว็บไม่เปิด popup แต่ redirect ไปหน้า showPeriodProfile.aspx ตรงๆ
     แทน (พบจริงจากผู้ใช้ — เว็บ PEA มีพฤติกรรมนี้ได้บางครั้ง ไม่ใช่แค่ทาง popup เท่านั้น)
 
-    ไล่หาปุ่ม/ลิงก์ที่มีคำว่า download/excel/ดาวน์โหลด/ส่งออก บนหน้านี้ กดแล้วดูว่ามี
-    popup เปิดขึ้นตามมา (เรียก _handle_popup ต่อ) หรือดาวน์โหลดไฟล์ลงมาตรงๆ เลย
-    """
+    ไล่หาปุ่มดาวน์โหลดด้วย _find_download_element แบบ "รอ+ลองใหม่" นานสูงสุด timeout วินาที
+    (ไม่ใช่สแกนครั้งเดียวจบแบบเดิม) เพราะยืนยันจากผู้ใช้จริงแล้วว่าบัญชี/เดือนเดียวกัน บางรอบ
+    หาปุ่มเจอ บางรอบหาไม่เจอ ทั้งที่หน้าเว็บมีข้อมูล+ปุ่ม Download อยู่จริงเหมือนกันทุกครั้ง —
+    สาเหตุน่าจะเป็นความช้าไม่คงที่ของการโหลดหน้า (เดือนที่มีข้อมูลราย 15 นาทีเยอะกว่า render
+    ช้ากว่า) ทำให้ scan ครั้งเดียวหลัง delay คงที่ (1-2 วินาที) มาไม่ทันบางครั้ง
 
-    from selenium.webdriver.common.by import By
+    กดแล้วดูว่ามี popup เปิดขึ้นตามมา (เรียก _handle_popup ต่อ) หรือดาวน์โหลดไฟล์ลงมาตรงๆ เลย
+    """
 
     initial_handles = set(driver.window_handles)
 
@@ -467,32 +495,17 @@ def _try_download_from_show_page(
         return _wait_for_download(download_dir, timeout=60)
 
     try:
-        for b in driver.find_elements(By.TAG_NAME, "input"):
-            value = (b.get_attribute("value") or "").lower()
-            if any(kw in value for kw in _DOWNLOAD_KEYWORDS):
-                log(f"👉 กดปุ่มดาวน์โหลดในหน้า showPeriodProfile: {value}")
-                result = click_and_wait(b)
-                if result:
-                    return result
+        deadline = time.time() + timeout
+        element, matched_text = _find_download_element(driver)
+        while element is None and time.time() < deadline:
+            time.sleep(0.5)
+            element, matched_text = _find_download_element(driver)
 
-        for a in driver.find_elements(By.TAG_NAME, "a"):
-            text = (a.text or "").strip().lower()
-            if any(kw in text for kw in _DOWNLOAD_KEYWORDS):
-                log(f"👉 กดลิงก์ดาวน์โหลดในหน้า showPeriodProfile: {a.text.strip()}")
-                result = click_and_wait(a)
-                if result:
-                    return result
-
-        # ปุ่ม <button>...</button> จริง (ไม่ใช่ <input type="button"> แบบ ASP.NET classic
-        # webform เดิมที่เคยเจอ) — ยืนยันจากผู้ใช้ว่าหน้ารายงานบางหน้ามีปุ่ม "Download" ที่เป็น
-        # <button> แยกต่างหาก ซึ่งโค้ดเดิมไม่เคยสแกนหาเลย ทำให้พลาดปุ่มที่มีอยู่จริงบนหน้า
-        for btn in driver.find_elements(By.TAG_NAME, "button"):
-            text = (btn.text or btn.get_attribute("value") or "").strip().lower()
-            if any(kw in text for kw in _DOWNLOAD_KEYWORDS):
-                log(f"👉 กดปุ่มดาวน์โหลด (button) ในหน้า showPeriodProfile: {text}")
-                result = click_and_wait(btn)
-                if result:
-                    return result
+        if element is not None:
+            log(f"👉 กดปุ่ม/ลิงก์ดาวน์โหลดในหน้า showPeriodProfile: {matched_text}")
+            result = click_and_wait(element)
+            if result:
+                return result
 
         log("⚠️ ไม่พบปุ่ม/ลิงก์ดาวน์โหลดในหน้า showPeriodProfile.aspx")
     except Exception as e:  # noqa: BLE001
