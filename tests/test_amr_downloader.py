@@ -281,6 +281,63 @@ def test_download_reports_for_account_skips_redownload_on_cache_hit(monkeypatch,
     assert results2[0].file_path == results1[0].file_path
 
 
+def test_download_reports_for_account_retries_whole_month_after_transient_failure(monkeypatch, tmp_path):
+    """ยืนยันจากผู้ใช้จริง: บัญชี/เดือนเดียวกัน บางรอบดาวน์โหลดไม่สำเร็จ บางรอบสำเร็จ ทั้งที่ไม่ได้
+    เปลี่ยนอะไรเลย — ต้องลองใหม่ทั้งเดือน (โหลดหน้าใหม่) ก่อนจะยอมแพ้ ไม่ใช่เจอไม่สำเร็จครั้งเดียว
+    แล้วเลิกเลย"""
+
+    download_dir = str(tmp_path)
+    monkeypatch.setattr(
+        amr_downloader, "get_meter_options",
+        lambda driver, account, log=lambda m: None: [{"value": "M1", "text": "มิเตอร์ 1"}],
+    )
+    monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
+
+    call_count = {"n": 0}
+
+    def flaky_download_month(driver, cust_code, meter_point, meter_text, date_from, date_to, dl_dir, log):
+        call_count["n"] += 1
+        if call_count["n"] < 2:  # รอบแรกไม่สำเร็จ (จำลองหาปุ่มไม่เจอ/หน้าโหลดไม่ทัน)
+            return None
+        path = os.path.join(dl_dir, "raw_download.xls")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("ข้อมูลดิบจำลอง")
+        return path
+
+    monkeypatch.setattr(amr_downloader, "download_month", flaky_download_month)
+
+    month_ranges = [("01/07/2026", "31/07/2026")]
+    results = amr_downloader._download_reports_for_account(None, "ACC1", month_ranges, download_dir, log=lambda m: None)
+
+    assert call_count["n"] == 2, "ต้องลองใหม่ทั้งเดือนหลังรอบแรกไม่สำเร็จ"
+    assert results[0].success is True
+    assert results[0].file_path is not None
+
+
+def test_download_reports_for_account_gives_up_after_max_attempts(monkeypatch, tmp_path):
+    download_dir = str(tmp_path)
+    monkeypatch.setattr(
+        amr_downloader, "get_meter_options",
+        lambda driver, account, log=lambda m: None: [{"value": "M1", "text": "มิเตอร์ 1"}],
+    )
+    monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
+
+    call_count = {"n": 0}
+
+    def always_fails(driver, cust_code, meter_point, meter_text, date_from, date_to, dl_dir, log):
+        call_count["n"] += 1
+        return None
+
+    monkeypatch.setattr(amr_downloader, "download_month", always_fails)
+
+    month_ranges = [("01/07/2026", "31/07/2026")]
+    results = amr_downloader._download_reports_for_account(None, "ACC1", month_ranges, download_dir, log=lambda m: None)
+
+    assert call_count["n"] == amr_downloader._MAX_MONTH_ATTEMPTS
+    assert results[0].success is False
+    assert results[0].file_path is None
+
+
 def test_try_download_from_show_page_no_matching_element_returns_none(monkeypatch):
     unrelated = _FakeClickable(value="Cancel")
     driver = _FakeShowPageDriver(inputs=[unrelated])

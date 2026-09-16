@@ -559,6 +559,11 @@ def download_month(
     return None
 
 
+# จำนวนครั้งสูงสุดที่ลองดาวน์โหลด 1 เดือนใหม่ทั้งหมด (โหลดหน้าใหม่ ไม่ใช่แค่สแกนซ้ำ) ก่อนจะยอม
+# แพ้จริงๆ — ดูเหตุผลใน _download_reports_for_account
+_MAX_MONTH_ATTEMPTS = 3
+
+
 def _download_reports_for_account(
     driver, account: str, month_ranges: List[tuple], download_dir: str, log: ProgressCallback
 ) -> List[DownloadResult]:
@@ -593,41 +598,56 @@ def _download_reports_for_account(
                 )
                 continue
 
-            try:
-                path = download_month(
-                    driver, account, meter["value"], meter["text"], date_from, date_to,
-                    download_dir, log=log,
-                )
-                if path:
-                    # เว็บ PEA ตั้งชื่อไฟล์ที่ดาวน์โหลดมาเอง (ไม่ deterministic) — เปลี่ยนชื่อเป็น
-                    # cache_key ก่อนเก็บไว้ เพื่อให้รอบถัดไปหาไฟล์แคชนี้เจอ
-                    ext = os.path.splitext(path)[1]
-                    cached_target = os.path.join(download_dir, cache_key + ext)
-                    try:
-                        os.replace(path, cached_target)
-                        path = cached_target
-                    except OSError as e:  # noqa: BLE001
-                        log(f"⚠️ เปลี่ยนชื่อไฟล์เป็นชื่อแคชไม่ได้ (ใช้ไฟล์เดิมต่อได้ปกติ แค่รอบหน้าจะหาไม่เจอ): {e}")
-                results.append(
-                    DownloadResult(
-                        account_no=account, meter_text=meter["text"],
-                        date_from=date_from, date_to=date_to,
-                        file_path=path, success=bool(path),
+            path = None
+            last_error: Optional[str] = None
+            # ลองใหม่ทั้งเดือน (โหลดหน้าใหม่ทั้งหมด ไม่ใช่แค่สแกนซ้ำในหน้าเดิม) สูงสุด
+            # _MAX_MONTH_ATTEMPTS ครั้ง — ยืนยันจากผู้ใช้จริงว่าบัญชี/เดือนเดียวกัน บางรอบหาปุ่ม
+            # ดาวน์โหลดเจอ บางรอบไม่เจอ ทั้งที่หน้าเว็บมีข้อมูลอยู่จริงเหมือนกันทุกครั้ง (เดือนที่
+            # เพิ่งพังก็กลับมาสำเร็จได้เองถ้าลองใหม่) น่าจะเป็นปัญหาโหลดหน้า/เซิร์ฟเวอร์แบบไม่คงที่
+            # ที่รอนานขึ้นในหน้าเดิมอย่างเดียว (ดู _try_download_from_show_page) ไม่พอจะแก้ได้เสมอ
+            for attempt in range(1, _MAX_MONTH_ATTEMPTS + 1):
+                try:
+                    path = download_month(
+                        driver, account, meter["value"], meter["text"], date_from, date_to,
+                        download_dir, log=log,
                     )
-                )
+                    last_error = None
+                except Exception as e:  # noqa: BLE001
+                    path = None
+                    last_error = str(e)
+
                 if path:
-                    log(f"✅ สำเร็จ: {os.path.basename(path)}")
-                else:
-                    log(f"❌ ไม่สำเร็จ: {account} {meter['text']} {date_from}-{date_to}")
-            except Exception as e:  # noqa: BLE001
-                log(f"❌ error: {account} {meter['text']} {date_from}-{date_to}: {e}")
-                results.append(
-                    DownloadResult(
-                        account_no=account, meter_text=meter["text"],
-                        date_from=date_from, date_to=date_to,
-                        file_path=None, success=False, error=str(e),
+                    break
+                if attempt < _MAX_MONTH_ATTEMPTS:
+                    log(
+                        f"🔁 ลองใหม่ (ครั้งที่ {attempt + 1}/{_MAX_MONTH_ATTEMPTS}): "
+                        f"{account} {meter['text']} {date_from}-{date_to}"
                     )
+                    random_delay(2, 4)
+
+            if path:
+                # เว็บ PEA ตั้งชื่อไฟล์ที่ดาวน์โหลดมาเอง (ไม่ deterministic) — เปลี่ยนชื่อเป็น
+                # cache_key ก่อนเก็บไว้ เพื่อให้รอบถัดไปหาไฟล์แคชนี้เจอ
+                ext = os.path.splitext(path)[1]
+                cached_target = os.path.join(download_dir, cache_key + ext)
+                try:
+                    os.replace(path, cached_target)
+                    path = cached_target
+                except OSError as e:  # noqa: BLE001
+                    log(f"⚠️ เปลี่ยนชื่อไฟล์เป็นชื่อแคชไม่ได้ (ใช้ไฟล์เดิมต่อได้ปกติ แค่รอบหน้าจะหาไม่เจอ): {e}")
+                log(f"✅ สำเร็จ: {os.path.basename(path)}")
+            elif last_error:
+                log(f"❌ error หลังลอง {_MAX_MONTH_ATTEMPTS} ครั้ง: {account} {meter['text']} {date_from}-{date_to}: {last_error}")
+            else:
+                log(f"❌ ไม่สำเร็จหลังลอง {_MAX_MONTH_ATTEMPTS} ครั้ง: {account} {meter['text']} {date_from}-{date_to}")
+
+            results.append(
+                DownloadResult(
+                    account_no=account, meter_text=meter["text"],
+                    date_from=date_from, date_to=date_to,
+                    file_path=path, success=bool(path), error=last_error if not path else None,
                 )
+            )
             random_delay(0.5, 1)
 
     return results
