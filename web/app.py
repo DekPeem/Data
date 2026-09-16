@@ -17,14 +17,20 @@ import sys
 import threading
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from flask import Flask, jsonify, redirect, request
+from werkzeug.utils import secure_filename
 
 from amr_mapping import estimate_customer_load, load_reference_data
-from amr_mapping.amr_import import import_amr_auto, import_amr_for_business
+from amr_mapping.amr_import import (
+    DEFAULT_DOWNLOAD_DIR,
+    import_amr_auto,
+    import_amr_for_business,
+    import_amr_from_files,
+)
 from amr_mapping.dbd_lookup import find_exact_match, lookup_business_type_for_company
 from amr_mapping.loader import (
     DEFAULT_DATA_DIR,
@@ -658,6 +664,102 @@ def api_start_import():
     }
 
     thread = threading.Thread(target=_run_import_job, args=(job_id, username, password, params), daemon=True)
+    thread.start()
+
+    return jsonify({"job_id": job_id})
+
+
+def _run_import_file_job(job_id: str, file_paths: List[str], params: dict) -> None:
+    def log(msg: str) -> None:
+        with _JOBS_LOCK:
+            _JOBS[job_id]["logs"].append(msg)
+
+    try:
+        profile = import_amr_from_files(
+            file_paths=file_paths,
+            business_type_code=params["business_type_code"],
+            rate_code=params["rate_code"],
+            contract_kva=params.get("contract_kva"),
+            source_label=params.get("source_label", ""),
+            has_solar=params.get("has_solar", False),
+            log=log,
+        )
+        with _JOBS_LOCK:
+            _JOBS[job_id]["status"] = "success"
+            _JOBS[job_id]["result"] = {
+                "business_type_code": profile.business_type_code,
+                "rate_code": profile.rate_code,
+                "demand_kw": profile.demand_kw,
+                "energy_kwh": profile.energy_kwh,
+                "sample_size": profile.sample_size,
+                "contract_kva_ref": profile.contract_kva_ref,
+                "notes": profile.notes,
+                "has_solar": profile.has_solar,
+            }
+    except Exception as e:  # noqa: BLE001 — ต้อง catch ทุก error เพื่อรายงานสถานะ job ให้ถูกต้อง
+        with _JOBS_LOCK:
+            _JOBS[job_id]["status"] = "error"
+            _JOBS[job_id]["error"] = str(e)
+
+
+@app.route("/api/admin/import-file", methods=["POST"])
+def api_start_import_file():
+    """เริ่ม job นำเข้า AMR จากไฟล์ที่แนบมาโดยตรง (ไม่ต้อง login เว็บ PEA เลย) — ใช้เมื่อมีไฟล์
+    "รายงานข้อมูลกิโลวัตต์ชั่วโมงแบบช่วงเวลา" (รูปแบบเดียวกับที่โหมดดึงจากเว็บดาวน์โหลดมาให้เอง —
+    ดู pea_ingest.parse_interval_report) อยู่แล้วในเครื่อง แต่ไม่มี username/password ของบัญชีนั้น
+
+    ต้องกรอกประเภทธุรกิจ/รหัสอัตราเองเสมอ (ไม่มีการตรวจจับอัตโนมัติ เพราะไม่ได้เข้าหน้าข้อมูล
+    ผู้ใช้ไฟของ PEA เลย)
+    """
+
+    files = request.files.getlist("files")
+    business_type_code = (request.form.get("business_type_code") or "").strip()
+    rate_code = (request.form.get("rate_code") or "").strip()
+    contract_kva_raw = (request.form.get("contract_kva") or "").strip()
+    source_label = (request.form.get("source_label") or "").strip()
+    has_solar = (request.form.get("has_solar") or "").strip().lower() in ("1", "true", "yes", "on")
+
+    missing = [
+        name
+        for name, val in [("files", files), ("business_type_code", business_type_code), ("rate_code", rate_code)]
+        if not val
+    ]
+    if missing:
+        return jsonify({"error": "invalid_request", "message": f"กรอกข้อมูลไม่ครบ: {', '.join(missing)}"}), 400
+
+    contract_kva: Optional[float] = None
+    if contract_kva_raw:
+        try:
+            contract_kva = float(contract_kva_raw)
+        except ValueError:
+            return jsonify({"error": "invalid_request", "message": "KVA ตามสัญญาต้องเป็นตัวเลข"}), 400
+
+    job_id = uuid.uuid4().hex
+
+    # เก็บไฟล์ที่แนบไว้ที่ amr_downloads/uploaded/<job_id>/ (โฟลเดอร์เดียวกับไฟล์ที่ดาวน์โหลด
+    # จากเว็บ PEA เอง — อยู่ใน .gitignore แล้ว ไม่มีทางหลุดเข้า repo public) sanitize ชื่อไฟล์
+    # ด้วย secure_filename เสมอเพราะชื่อไฟล์มาจากผู้ใช้ (กัน path traversal)
+    upload_dir = DEFAULT_DOWNLOAD_DIR / "uploaded" / job_id
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    file_paths = []
+    for f in files:
+        filename = secure_filename(f.filename or "") or f"upload_{len(file_paths) + 1}"
+        dest = upload_dir / filename
+        f.save(dest)
+        file_paths.append(str(dest))
+
+    with _JOBS_LOCK:
+        _JOBS[job_id] = {"status": "running", "logs": [], "result": None, "error": None, "customer_profile": None}
+
+    params = {
+        "business_type_code": business_type_code,
+        "rate_code": rate_code,
+        "contract_kva": contract_kva,
+        "source_label": source_label,
+        "has_solar": has_solar,
+    }
+
+    thread = threading.Thread(target=_run_import_file_job, args=(job_id, file_paths, params), daemon=True)
     thread.start()
 
     return jsonify({"job_id": job_id})

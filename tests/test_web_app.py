@@ -545,6 +545,121 @@ def test_import_job_not_found(client):
     assert res.status_code == 404
 
 
+# ── โหมดแนบไฟล์ที่มีอยู่แล้ว (ไม่ต้อง login เว็บ PEA เลย — /api/admin/import-file) ──
+
+
+def test_start_import_file_invalid_request_when_missing_fields(client):
+    import io
+
+    res = client.post(
+        "/api/admin/import-file",
+        data={"files": (io.BytesIO(b"<html></html>"), "a.xls")},  # ขาด business_type_code/rate_code
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+
+def test_start_import_file_invalid_request_when_no_files(client):
+    res = client.post(
+        "/api/admin/import-file",
+        data={"business_type_code": "63201", "rate_code": "50"},
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+
+def test_start_import_file_success(client, monkeypatch, tmp_path):
+    import io
+
+    monkeypatch.setattr(app_module, "DEFAULT_DOWNLOAD_DIR", tmp_path / "amr_downloads")
+
+    received = {}
+
+    def fake_import_amr_from_files(**kwargs):
+        received["file_paths"] = kwargs["file_paths"]
+        from amr_mapping.models import LoadProfile
+
+        return LoadProfile(
+            business_type_code=kwargs["business_type_code"], rate_code=kwargs["rate_code"],
+            billing_method="TOU", demand_kw={"P": 1, "OP": 1, "H": 1},
+            energy_kwh={"P": 1, "OP": 1, "H": 1}, contract_kva_ref=kwargs["contract_kva"],
+            sample_size=2, notes="fake", has_solar=kwargs["has_solar"],
+        )
+
+    monkeypatch.setattr(app_module, "import_amr_from_files", fake_import_amr_from_files)
+
+    res = client.post(
+        "/api/admin/import-file",
+        data={
+            "files": [
+                (io.BytesIO("<html>เดือนที่ 1</html>".encode("utf-8")), "amr_2026_07.xls"),
+                (io.BytesIO("<html>เดือนที่ 2</html>".encode("utf-8")), "amr_2026_08.xls"),
+            ],
+            "business_type_code": "63201",
+            "rate_code": "50",
+            "contract_kva": "1000",
+            "source_label": "unit test upload",
+            "has_solar": "true",
+        },
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 200
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/import/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    assert status["result"]["business_type_code"] == "63201"
+    assert status["result"]["has_solar"] is True
+
+    # ไฟล์ที่แนบมาต้องถูกบันทึกลงดิสก์จริง (คนละไฟล์กัน) ก่อนส่งต่อ path ไปประมวลผล
+    assert len(received["file_paths"]) == 2
+    for path in received["file_paths"]:
+        assert Path(path).exists()
+    contents = {Path(p).read_text(encoding="utf-8") for p in received["file_paths"]}
+    assert contents == {"<html>เดือนที่ 1</html>", "<html>เดือนที่ 2</html>"}
+
+
+
+def test_start_import_file_error_from_import_surfaces_in_job_status(client, monkeypatch, tmp_path):
+    import io
+
+    monkeypatch.setattr(app_module, "DEFAULT_DOWNLOAD_DIR", tmp_path / "amr_downloads")
+
+    def fake_import_amr_from_files(**kwargs):
+        raise RuntimeError("ไม่สามารถอ่านข้อมูลจากไฟล์ที่ดาวน์โหลดมาได้เลย")
+
+    monkeypatch.setattr(app_module, "import_amr_from_files", fake_import_amr_from_files)
+
+    res = client.post(
+        "/api/admin/import-file",
+        data={
+            "files": (io.BytesIO(b"not real data"), "bad.xls"),
+            "business_type_code": "63201",
+            "rate_code": "50",
+        },
+        content_type="multipart/form-data",
+    )
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/import/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "error"
+    assert "ไม่สามารถอ่านข้อมูล" in status["error"]
+
+
 def test_start_import_auto_mode_when_business_type_and_rate_omitted(client, monkeypatch):
     """ไม่กรอกประเภทธุรกิจ/อัตรา -> ต้องเรียก import_amr_auto (ตรวจจับอัตโนมัติ) แทน
     import_amr_for_business และไม่ต้องมี accounts ก็ยังผ่าน validation ได้"""

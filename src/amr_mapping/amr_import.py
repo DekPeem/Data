@@ -207,6 +207,38 @@ def import_amr_for_business(
     )
 
 
+def import_amr_from_files(
+    file_paths: List[str],
+    business_type_code: str,
+    rate_code: str,
+    contract_kva: Optional[float],
+    source_label: str,
+    billing_method: str = "TOU",
+    has_solar: bool = False,
+    data_dir: Optional[Path] = None,
+    log: ProgressCallback = _noop,
+) -> LoadProfile:
+    """เหมือน import_amr_for_business ทุกอย่าง ยกเว้นไม่ต้อง login/ดาวน์โหลดจากเว็บ PEA เลย —
+    ใช้ตอนมีไฟล์ "รายงานข้อมูลกิโลวัตต์ชั่วโมงแบบช่วงเวลา" (รูปแบบเดียวกับที่
+    download_amr_kw_reports ดาวน์โหลดมาให้เอง — ดู pea_ingest.parse_interval_report) อยู่แล้ว
+    ในเครื่อง (เช่น ได้รับมาจากที่อื่น ไม่มี username/password ของบัญชีนั้นเอง)
+
+    business_type_code/rate_code ต้องกรอกเองเสมอ (ไม่มีการตรวจจับอัตโนมัติ เพราะไม่ได้เข้าหน้า
+    ข้อมูลผู้ใช้ไฟของ PEA เลย) คืนค่า LoadProfile ที่บันทึกไปแล้ว
+    """
+
+    data_dir = Path(data_dir) if data_dir else DEFAULT_DATA_DIR
+
+    notes = "ค่าเฉลี่ยจาก AMR จริง (นำเข้าจากไฟล์ที่แนบเอง, anonymized)"
+    if source_label:
+        notes += f" - {source_label}"
+
+    return _build_profile_from_downloads(
+        file_paths, business_type_code, rate_code, billing_method, contract_kva, notes, data_dir, log,
+        has_solar=has_solar,
+    )
+
+
 def import_amr_auto(
     username: str,
     password: str,

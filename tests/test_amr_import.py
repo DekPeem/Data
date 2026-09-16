@@ -182,6 +182,82 @@ def test_import_amr_for_business_raises_when_no_files_downloaded(monkeypatch, da
         )
 
 
+def _write_synthetic_files(tmp_path, n=2):
+    """เขียนไฟล์ synthetic n ไฟล์ (จำลองไฟล์ AMR ที่ผู้ใช้แนบมาเอง ไม่ใช่ดาวน์โหลดจากเว็บ)"""
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    paths = []
+    for i in range(n):
+        path = tmp_path / f"attached_{i}.xls"
+        path.write_text(_SYNTHETIC_INTERVAL_HTML, encoding="utf-8")
+        paths.append(str(path))
+    return paths
+
+
+def test_import_amr_from_files_updates_load_profiles(data_dir, tmp_path):
+    file_paths = _write_synthetic_files(tmp_path / "attached")
+
+    logs = []
+    profile = amr_import.import_amr_from_files(
+        file_paths=file_paths,
+        business_type_code="TESTBIZ",
+        rate_code="50",
+        contract_kva=1000,
+        source_label="unit test file upload",
+        data_dir=data_dir,
+        log=logs.append,
+    )
+
+    assert profile.business_type_code == "TESTBIZ"
+    assert profile.rate_code == "50"
+    assert profile.energy_kwh == {"P": 20.0, "OP": 5.0, "H": 10.0}
+    assert profile.demand_kw == {"P": 80.0, "OP": 20.0, "H": 40.0}
+    assert profile.sample_size == 2
+    assert profile.contract_kva_ref == 1000
+    assert "แนบเอง" in profile.notes
+    assert "unit test file upload" in profile.notes
+
+    reference = load_reference_data(data_dir)
+    saved = next(p for p in reference.load_profiles if p.business_type_code == "TESTBIZ")
+    assert saved.energy_kwh["P"] == 20.0
+
+    curve = next(c for c in reference.load_curves if c.key() == ("TESTBIZ", "50", False))
+    assert curve.hours["sat"][9] == pytest.approx(80.0)
+
+
+def test_import_amr_from_files_saves_has_solar_flag(data_dir, tmp_path):
+    file_paths = _write_synthetic_files(tmp_path / "attached")
+
+    profile = amr_import.import_amr_from_files(
+        file_paths=file_paths,
+        business_type_code="TESTBIZ",
+        rate_code="50",
+        contract_kva=1000,
+        source_label="",
+        has_solar=True,
+        data_dir=data_dir,
+    )
+
+    assert profile.has_solar is True
+    reference = load_reference_data(data_dir)
+    curve = next(c for c in reference.load_curves if c.key() == ("TESTBIZ", "50", True))
+    assert curve.has_solar is True
+
+
+def test_import_amr_from_files_raises_when_no_readable_files(data_dir, tmp_path):
+    bad_file = tmp_path / "not_amr_data.xls"
+    bad_file.write_text("<html><body>ไม่มีตารางข้อมูลอยู่เลย</body></html>", encoding="utf-8")
+
+    with pytest.raises(RuntimeError):
+        amr_import.import_amr_from_files(
+            file_paths=[str(bad_file)],
+            business_type_code="TESTBIZ",
+            rate_code="50",
+            contract_kva=None,
+            source_label="",
+            data_dir=data_dir,
+        )
+
+
 def _fake_download_amr_with_profile(username, password, start_date, end_date, download_dir, log, headless=True):
     """แทนที่ login+scrape+download จริงด้วยค่า profile สมมติ + ไฟล์ synthetic"""
     profile_info = {

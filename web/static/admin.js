@@ -1,7 +1,9 @@
 const PERIOD_TH = { P: "Peak (P)", OP: "Off-Peak (OP)", H: "Holiday (H)" };
 
 const businessTypeSelect = document.getElementById("f-business-type");
+const fileBusinessTypeSelect = document.getElementById("f-file-business-type");
 const submitBtn = document.getElementById("submit-btn");
+const submitFileBtn = document.getElementById("submit-file-btn");
 const formHint = document.getElementById("form-hint");
 const jobArea = document.getElementById("job-area");
 const jobStatusPill = document.getElementById("job-status-pill");
@@ -9,6 +11,22 @@ const jobLog = document.getElementById("job-log");
 const jobResult = document.getElementById("job-result");
 const usernameInput = document.getElementById("f-username");
 const accountsInput = document.getElementById("f-accounts");
+
+// ── สลับโหมดนำเข้า: ดึงจากเว็บ PEA (username/password) vs แนบไฟล์ที่มีอยู่แล้ว ──
+
+const importModeWebEl = document.getElementById("import-mode-web");
+const importModeFileEl = document.getElementById("import-mode-file");
+
+document.querySelectorAll(".import-mode-tab-btn").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".import-mode-tab-btn").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    const isFileMode = btn.dataset.mode === "file";
+    importModeWebEl.style.display = isFileMode ? "none" : "block";
+    importModeFileEl.style.display = isFileMode ? "block" : "none";
+    formHint.textContent = "";
+  });
+});
 
 // username ที่ใช้ login เข้าเว็บ AMR ของ PEA ส่วนใหญ่คือเลขบัญชีผู้ใช้ไฟนั้นเอง (login
 // แบบลูกค้ารายบุคคล 1 login = 1 บัญชี) — เติมช่องเลขบัญชีให้อัตโนมัติเมื่อพิมพ์ username
@@ -28,9 +46,11 @@ async function loadBusinessTypes() {
   try {
     const res = await fetch("/api/business-types");
     const types = await res.json();
-    const autoOption = `<option value="">-- ให้ระบบตรวจจับอัตโนมัติ --</option>`;
-    businessTypeSelect.innerHTML =
-      autoOption + types.map((t) => `<option value="${t.code}">${t.name_th} (${t.code})</option>`).join("");
+    const optionsHtml = types.map((t) => `<option value="${t.code}">${t.name_th} (${t.code})</option>`).join("");
+    // โหมดดึงจากเว็บ: ปล่อยว่างได้ (ให้ระบบตรวจจับอัตโนมัติ) — โหมดแนบไฟล์ไม่มีการตรวจจับ
+    // อัตโนมัติเลย (ไม่ได้เข้าหน้าข้อมูลผู้ใช้ไฟของ PEA) จึงบังคับต้องเลือกเอง
+    businessTypeSelect.innerHTML = `<option value="">-- ให้ระบบตรวจจับอัตโนมัติ --</option>` + optionsHtml;
+    fileBusinessTypeSelect.innerHTML = `<option value="">-- เลือกประเภทธุรกิจ --</option>` + optionsHtml;
   } catch (err) {
     console.error("โหลดประเภทธุรกิจไม่สำเร็จ", err);
   }
@@ -783,7 +803,7 @@ function renderResult(result, customerProfile) {
   `;
 }
 
-async function pollJob(jobId) {
+async function pollJob(jobId, activeBtn) {
   const res = await fetch(`/api/admin/import/${jobId}`);
   const data = await res.json();
 
@@ -792,11 +812,11 @@ async function pollJob(jobId) {
   jobLog.scrollTop = jobLog.scrollHeight;
 
   if (data.status === "running") {
-    setTimeout(() => pollJob(jobId), 1000);
+    setTimeout(() => pollJob(jobId, activeBtn), 1000);
     return;
   }
 
-  submitBtn.disabled = false;
+  activeBtn.disabled = false;
 
   if (data.status === "success") {
     renderResult(data.result, data.customer_profile);
@@ -873,7 +893,7 @@ async function startImport() {
       return;
     }
 
-    pollJob(data.job_id);
+    pollJob(data.job_id, submitBtn);
   } catch (err) {
     submitBtn.disabled = false;
     formHint.textContent = "เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ";
@@ -882,6 +902,63 @@ async function startImport() {
 }
 
 submitBtn.addEventListener("click", startImport);
+
+// ── โหมดแนบไฟล์ที่มีอยู่แล้ว (ไม่ต้อง login เว็บ PEA เลย) ──
+
+async function startFileImport() {
+  formHint.textContent = "";
+
+  const filesInput = document.getElementById("f-file-files");
+  const files = filesInput.files;
+  const business_type_code = fileBusinessTypeSelect.value;
+  const rate_code = document.getElementById("f-file-rate-code").value.trim();
+  const contract_kva = document.getElementById("f-file-kva").value;
+  const source_label = document.getElementById("f-file-source-label").value.trim();
+  const has_solar = document.getElementById("f-file-has-solar").checked;
+
+  if (!files || files.length === 0) {
+    formHint.textContent = "กรุณาแนบไฟล์ AMR อย่างน้อย 1 ไฟล์";
+    return;
+  }
+  if (!business_type_code || !rate_code) {
+    formHint.textContent = "กรุณาเลือกประเภทธุรกิจและกรอกรหัสอัตราให้ครบ";
+    return;
+  }
+
+  const formData = new FormData();
+  for (const file of files) formData.append("files", file);
+  formData.append("business_type_code", business_type_code);
+  formData.append("rate_code", rate_code);
+  if (contract_kva) formData.append("contract_kva", contract_kva);
+  formData.append("source_label", source_label);
+  formData.append("has_solar", has_solar ? "true" : "false");
+
+  submitFileBtn.disabled = true;
+  jobArea.style.display = "flex";
+  jobLog.textContent = "";
+  jobResult.innerHTML = "";
+  setStatusPill("running");
+
+  try {
+    const res = await fetch("/api/admin/import-file", { method: "POST", body: formData });
+    const data = await res.json();
+
+    if (!res.ok) {
+      submitFileBtn.disabled = false;
+      setStatusPill("error");
+      jobLog.textContent = data.message || "เกิดข้อผิดพลาด";
+      return;
+    }
+
+    pollJob(data.job_id, submitFileBtn);
+  } catch (err) {
+    submitFileBtn.disabled = false;
+    formHint.textContent = "เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ";
+    console.error(err);
+  }
+}
+
+submitFileBtn.addEventListener("click", startFileImport);
 loadBusinessTypes();
 // ต้องโหลด import log ให้เสร็จก่อน (เติม importLogEntries) แล้วค่อยวาดการ์ดประเภทธุรกิจ ไม่งั้น
 // ชื่อบริษัทในการ์ดจะว่างเพราะ fetch สองอันแข่งกัน (race condition)
