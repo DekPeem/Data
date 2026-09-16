@@ -19,6 +19,19 @@ def _to_float(value: str) -> Optional[float]:
     return float(value)
 
 
+def _to_bool(value: str) -> bool:
+    return (value or "").strip().lower() in ("1", "true", "yes")
+
+
+def _to_optional_bool(value: str) -> Optional[bool]:
+    """แปลงค่า tri-state: "" (ไม่ทราบ) -> None, "true"/"1"/"yes" -> True, อย่างอื่น -> False"""
+
+    value = (value or "").strip().lower()
+    if value == "":
+        return None
+    return value in ("1", "true", "yes")
+
+
 def _load_business_types(path: Path) -> Dict[str, BusinessType]:
     result: Dict[str, BusinessType] = {}
     with path.open(encoding="utf-8-sig", newline="") as f:
@@ -112,6 +125,9 @@ def _load_load_profiles(path: Path) -> List[LoadProfile]:
                     contract_kva_ref=_to_float(row.get("contract_kva_ref", "")),
                     sample_size=int((row.get("sample_size") or "0").strip() or 0),
                     notes=row.get("notes", "").strip(),
+                    # has_solar เป็นคอลัมน์ที่เพิ่มเข้ามาทีหลัง — ไฟล์เก่าที่ไม่มีคอลัมน์นี้
+                    # (row.get คืน None) ต้องโหลดได้ตามปกติ ถือว่าไม่ติด Solar (False)
+                    has_solar=_to_bool(row.get("has_solar", "")),
                 )
             )
     return profiles
@@ -125,6 +141,7 @@ _LOAD_CURVE_FIELDNAMES = [
     "contract_kva_ref",
     "sample_size",
     "notes",
+    "has_solar",
 ] + _CURVE_HOUR_FIELDNAMES
 
 
@@ -141,12 +158,17 @@ def _load_load_curves(path: Path) -> List[LoadCurve]:
             business_type_code = row["business_type_code"].strip()
             rate_code = row["rate_code"].strip()
             day_type = row["day_type"].strip()
-            key = (business_type_code, rate_code)
+            # has_solar เป็นคอลัมน์ที่เพิ่มเข้ามาทีหลัง (เหมือน load_profiles.csv) — ไฟล์เก่า
+            # ที่ไม่มีคอลัมน์นี้ถือว่าไม่ติด Solar (False) และเป็นส่วนหนึ่งของ key เพื่อไม่ให้
+            # เส้นโค้งที่ติด/ไม่ติด Solar ของธุรกิจ+อัตราเดียวกันถูกรวมเป็นแถวเดียวกันโดยไม่ตั้งใจ
+            has_solar = _to_bool(row.get("has_solar", ""))
+            key = (business_type_code, rate_code, has_solar)
             entry = curves_by_key.setdefault(
                 key,
                 {
                     "business_type_code": business_type_code,
                     "rate_code": rate_code,
+                    "has_solar": has_solar,
                     "hours": {},
                     "contract_kva_ref": _to_float(row.get("contract_kva_ref", "")),
                     "sample_size": int((row.get("sample_size") or "0").strip() or 0),
@@ -163,6 +185,7 @@ def _load_load_curves(path: Path) -> List[LoadCurve]:
             contract_kva_ref=e["contract_kva_ref"],
             sample_size=e["sample_size"],
             notes=e["notes"],
+            has_solar=e["has_solar"],
         )
         for e in curves_by_key.values()
     ]
@@ -186,6 +209,7 @@ def save_load_curves(curves: List[LoadCurve], path: Path) -> None:
                     "contract_kva_ref": "" if curve.contract_kva_ref is None else curve.contract_kva_ref,
                     "sample_size": curve.sample_size,
                     "notes": curve.notes,
+                    "has_solar": "true" if curve.has_solar else "false",
                 }
                 for h, val in enumerate(curve.hours[day_type]):
                     row[f"h{h:02d}"] = "" if val is None else val
@@ -216,7 +240,6 @@ def _load_customers(path: Path) -> List[Customer]:
         for row in csv.DictReader(lines):
             if not row.get("account_no", "").strip():
                 continue
-            has_amr_raw = (row.get("has_amr") or "").strip().lower()
             customers.append(
                 Customer(
                     account_no=row["account_no"].strip(),
@@ -224,7 +247,11 @@ def _load_customers(path: Path) -> List[Customer]:
                     business_type_code=(row.get("business_type_code") or "").strip() or None,
                     rate_code=(row.get("rate_code") or "").strip() or None,
                     contract_kva=_to_float(row.get("contract_kva", "")),
-                    has_amr=has_amr_raw in ("1", "true", "yes"),
+                    has_amr=_to_bool(row.get("has_amr", "")),
+                    # has_solar เป็นคอลัมน์ที่เพิ่มเข้ามาทีหลัง (เหมือน load_profiles.csv) —
+                    # ต่างจาก has_amr ตรงที่ไม่ทราบ (คอลัมน์ว่าง/ไม่มีคอลัมน์) ต้องเป็น None
+                    # ไม่ใช่ False เพราะ "ไม่ทราบ" กับ "ไม่ติด Solar แน่ๆ" มีความหมายต่างกัน
+                    has_solar=_to_optional_bool(row.get("has_solar", "")),
                 )
             )
     return customers
@@ -243,6 +270,7 @@ _LOAD_PROFILE_FIELDNAMES = [
     "contract_kva_ref",
     "sample_size",
     "notes",
+    "has_solar",
 ]
 
 
@@ -267,6 +295,7 @@ def save_load_profiles(profiles: List[LoadProfile], path: Path) -> None:
                     "contract_kva_ref": "" if p.contract_kva_ref is None else p.contract_kva_ref,
                     "sample_size": p.sample_size,
                     "notes": p.notes,
+                    "has_solar": "true" if p.has_solar else "false",
                 }
             )
 
@@ -323,7 +352,7 @@ def load_reference_data(data_dir: Optional[Path] = None) -> ReferenceData:
     )
 
 
-_IMPORT_LOG_FIELDNAMES = ["imported_at", "business_type_code", "rate_code", "company_name", "account_no"]
+_IMPORT_LOG_FIELDNAMES = ["imported_at", "business_type_code", "rate_code", "company_name", "account_no", "has_solar"]
 
 
 def append_import_log_local(entry: dict, path: Path) -> None:
@@ -348,3 +377,82 @@ def load_import_log_local(path: Path) -> List[dict]:
         return []
     with path.open(encoding="utf-8-sig", newline="") as f:
         return list(csv.DictReader(f))
+
+
+# ── เส้นโค้งรายชั่วโมงของ "แต่ละไซต์/บัญชี" แยกต่างหากจากค่าเฉลี่ยรวมใน load_curves.csv ──
+# ไฟล์นี้มีชื่อบริษัท/เลขบัญชีจริงอยู่ (หลักการเดียวกับ import_log_local.csv) จึงต้องอยู่ใน
+# .gitignore เท่านั้น ห้าม commit เด็ดขาด — ใช้ตอนกดดูกราฟของบริษัท/ไซต์ใดไซต์หนึ่งโดยเฉพาะใน
+# หน้า Admin (ต่างจาก load_curves.csv ซึ่งเป็นค่าเฉลี่ยรวมของทุกไซต์แบบ anonymized แล้ว)
+# บันทึกเฉพาะตอนนำเข้าแบบอัตโนมัติ (import_amr_auto) เท่านั้น เพราะโหมดกรอกเอง
+# (import_amr_for_business) ไม่เคยทราบชื่อบริษัทจริงเลย (เหมือนหลักการของ import_log_local.csv)
+
+_SITE_CURVE_FIELDNAMES = [
+    "company_name",
+    "account_no",
+    "business_type_code",
+    "rate_code",
+    "has_solar",
+    "day_type",
+    "contract_kva_ref",
+    "sample_size",
+    "notes",
+] + _CURVE_HOUR_FIELDNAMES
+
+
+def append_site_curve_local(company_name: str, account_no: str, curve: LoadCurve, path: Path) -> None:
+    """บันทึกเส้นโค้งรายชั่วโมงของไซต์หนึ่งราย (มีชื่อบริษัท/เลขบัญชีจริง) ต่อท้ายไฟล์
+    site_curves_local.csv — ถ้าเคยนำเข้าเลขบัญชีนี้มาก่อนแล้ว แถวเก่าจะไม่ถูกลบ (ไฟล์นี้เป็นแค่
+    ประวัติ append-only เหมือน import_log_local.csv ไม่ใช่ตาราง upsert) ผู้เรียกที่อ่านกลับมา
+    (load_site_curves_local) จะใช้แถวล่าสุดของแต่ละ account_no เสมอ"""
+
+    file_exists = path.exists()
+    with path.open("a", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=_SITE_CURVE_FIELDNAMES)
+        if not file_exists:
+            writer.writeheader()
+        for day_type in DAY_TYPES:
+            if day_type not in curve.hours:
+                continue
+            row = {
+                "company_name": company_name,
+                "account_no": account_no,
+                "business_type_code": curve.business_type_code,
+                "rate_code": curve.rate_code,
+                "has_solar": "true" if curve.has_solar else "false",
+                "day_type": day_type,
+                "contract_kva_ref": "" if curve.contract_kva_ref is None else curve.contract_kva_ref,
+                "sample_size": curve.sample_size,
+                "notes": curve.notes,
+            }
+            for h, val in enumerate(curve.hours[day_type]):
+                row[f"h{h:02d}"] = "" if val is None else val
+            writer.writerow(row)
+
+
+def load_site_curves_local(path: Path) -> List[dict]:
+    """อ่านเส้นโค้งของแต่ละไซต์ทั้งหมด จัดกลุ่มกลับเป็น list ของ dict {company_name, account_no,
+    business_type_code, rate_code, has_solar, sample_size, hours} หนึ่งรายการต่อ account_no —
+    ถ้าเลขบัญชีเดียวกันถูกนำเข้าซ้ำหลายครั้ง (append หลายรอบ) ใช้ข้อมูลจากรอบล่าสุดเสมอ
+
+    ไฟล์นี้ไม่บังคับต้องมี — คืน list ว่างถ้ายังไม่เคยนำเข้าแบบอัตโนมัติมาก่อนเลย (หรือไฟล์เก่า
+    ก่อนฟีเจอร์นี้ ที่มีแค่ import_log_local.csv แต่ไม่มี site_curves_local.csv)"""
+
+    if not path.exists():
+        return []
+
+    # แถวของ account_no เดียวกันจากรอบนำเข้าใหม่กว่า (อยู่ท้ายไฟล์กว่า เพราะเป็น append-only)
+    # จะเขียนทับค่า metadata และชั่วโมงของ day_type เดียวกันจากรอบเก่าไปเรื่อยๆ ผลลัพธ์สุดท้าย
+    # คือข้อมูลจากรอบล่าสุดเสมอ โดยไม่ต้องเรียงลำดับ/กรองเองเพิ่ม
+    grouped: Dict[str, dict] = {}
+    with path.open(encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            account_no = row["account_no"].strip()
+            entry = grouped.setdefault(account_no, {"account_no": account_no, "hours": {}})
+            entry["company_name"] = row["company_name"].strip()
+            entry["business_type_code"] = row["business_type_code"].strip()
+            entry["rate_code"] = row["rate_code"].strip()
+            entry["has_solar"] = _to_bool(row.get("has_solar", ""))
+            entry["sample_size"] = int((row.get("sample_size") or "0").strip() or 0)
+            entry["hours"][row["day_type"].strip()] = [_to_float(row.get(f"h{h:02d}", "")) for h in range(24)]
+
+    return list(grouped.values())

@@ -24,6 +24,7 @@ from .loader import (
     DEFAULT_DATA_DIR,
     ReferenceData,
     append_import_log_local,
+    append_site_curve_local,
     load_reference_data,
     save_business_types,
     save_load_curves,
@@ -59,9 +60,16 @@ def _build_profile_from_downloads(
     notes: str,
     data_dir: Path,
     log: ProgressCallback,
+    has_solar: bool = False,
+    site_info: Optional[dict] = None,
 ) -> LoadProfile:
     """แปลงไฟล์ AMR ที่ดาวน์โหลดมาแล้วเป็น LoadProfile เฉลี่ยหลายเดือน แล้ว upsert ลง
-    load_profiles.csv — ใช้ร่วมกันทั้ง import_amr_for_business และ import_amr_auto"""
+    load_profiles.csv — ใช้ร่วมกันทั้ง import_amr_for_business และ import_amr_auto
+
+    site_info (ถ้าระบุ — {"company_name": ..., "account_no": ...}) จะทำให้บันทึกเส้นโค้งของ
+    ไซต์นี้แยกต่างหากไว้ที่ site_curves_local.csv ด้วย (ไฟล์ local-only มีชื่อบริษัทจริง — ดู
+    loader.append_site_curve_local) เพื่อให้กดดูกราฟของไซต์นี้แยกจากค่าเฉลี่ยรวมได้ทีหลังในหน้า
+    Admin — ใช้เฉพาะโหมด auto (import_amr_auto) เพราะเป็นโหมดเดียวที่ทราบชื่อบริษัทจริง"""
 
     log(f"📊 ประมวลผล {len(downloaded_files)} ไฟล์ ...")
     monthly_profiles = []
@@ -92,12 +100,16 @@ def _build_profile_from_downloads(
         contract_kva_ref=contract_kva,
         sample_size=agg["n_months"],
         notes=notes,
+        has_solar=has_solar,
     )
 
     reference: ReferenceData = load_reference_data(data_dir)
     updated_profiles = upsert_load_profile(reference.load_profiles, new_profile)
     save_load_profiles(updated_profiles, data_dir / "load_profiles.csv")
-    log(f"💾 บันทึกลง {data_dir / 'load_profiles.csv'} แล้ว (key: {business_type_code}, {rate_code})")
+    log(
+        f"💾 บันทึกลง {data_dir / 'load_profiles.csv'} แล้ว "
+        f"(key: {business_type_code}, {rate_code}, ติด Solar: {'ใช่' if has_solar else 'ไม่'})"
+    )
 
     # เส้นโค้งกำลังไฟฟ้าเฉลี่ยรายชั่วโมง (ใช้ raw interval readings ทั้งหมดที่รวมมาจากทุกไฟล์
     # โดยตรง ไม่ใช่ค่าเฉลี่ยรายเดือน — ละเอียดกว่า P/OP/H ที่เป็นแค่ยอดรวม/พีค ใช้แสดงกราฟว่า
@@ -110,10 +122,23 @@ def _build_profile_from_downloads(
         contract_kva_ref=contract_kva,
         sample_size=agg["n_months"],
         notes=notes,
+        has_solar=has_solar,
     )
     updated_curves = upsert_load_curve(reference.load_curves, new_curve)
     save_load_curves(updated_curves, data_dir / "load_curves.csv")
     log(f"💾 บันทึกเส้นโค้งรายชั่วโมงลง {data_dir / 'load_curves.csv'} แล้ว")
+
+    if site_info and site_info.get("account_no"):
+        try:
+            append_site_curve_local(
+                site_info.get("company_name") or "",
+                site_info["account_no"],
+                new_curve,
+                data_dir / "site_curves_local.csv",
+            )
+            log("💾 บันทึกกราฟแยกของไซต์นี้ไว้ในเครื่อง (site_curves_local.csv — ไม่ commit เข้า repo)")
+        except OSError as e:  # noqa: BLE001 — บันทึกกราฟแยกของไซต์ไม่สำเร็จ ต้องไม่ทำให้ผลหลักพังไปด้วย
+            log(f"⚠️ บันทึกกราฟแยกของไซต์ไม่สำเร็จ (ไม่กระทบผลลัพธ์หลัก): {e}")
 
     return new_profile
 
@@ -129,13 +154,18 @@ def import_amr_for_business(
     contract_kva: Optional[float],
     source_label: str,
     billing_method: str = "TOU",
+    has_solar: bool = False,
     data_dir: Optional[Path] = None,
     download_dir: Optional[Path] = None,
     log: ProgressCallback = _noop,
     headless: bool = True,
 ) -> LoadProfile:
     """ดาวน์โหลด + ประมวลผล AMR จริงของบัญชีที่ระบุ แล้วอัปเดตโปรไฟล์อ้างอิงของ
-    (business_type_code, rate_code) ใน load_profiles.csv ด้วยค่าเฉลี่ยที่ได้
+    (business_type_code, rate_code, has_solar) ใน load_profiles.csv ด้วยค่าเฉลี่ยที่ได้
+
+    has_solar ต้องกรอกเอง (ไม่มีการตรวจจับอัตโนมัติ) เพราะหน้าข้อมูลผู้ใช้ไฟของ PEA ไม่มีฟิลด์
+    บอกสถานะ Solar/Net Metering ให้ตรวจจับได้ — แยกเป็นโปรไฟล์อ้างอิงคนละชุดจากคู่ธุรกิจ+อัตรา
+    เดียวกันที่ไม่ติด Solar เพราะรูปแบบการใช้ไฟช่วงกลางวันต่างกันมาก (ดู models.LoadProfile)
 
     ไฟล์ดิบที่ดาวน์โหลดมาจะถูกเก็บไว้ที่ download_dir (ค่า default: DEFAULT_DOWNLOAD_DIR =
     amr_downloads/ ที่ root ของ repo — gitignored) ไม่ลบทิ้งอัตโนมัติแล้ว เพื่อให้รันซ้ำ/นำเข้า
@@ -173,6 +203,7 @@ def import_amr_for_business(
 
     return _build_profile_from_downloads(
         downloaded_files, business_type_code, rate_code, billing_method, contract_kva, notes, data_dir, log,
+        has_solar=has_solar,
     )
 
 
@@ -182,6 +213,7 @@ def import_amr_auto(
     start_date: str,
     end_date: str,
     source_label: str = "",
+    has_solar: bool = False,
     data_dir: Optional[Path] = None,
     download_dir: Optional[Path] = None,
     on_profile: Optional[Callable[[dict], None]] = None,
@@ -191,6 +223,9 @@ def import_amr_auto(
     """เวอร์ชัน "ใส่แค่ Username/Password" — ดึงประเภทอัตรา/ประเภทธุรกิจ/KVA จากหน้า
     ข้อมูลผู้ใช้ไฟของ PEA เองอัตโนมัติ (ไม่ต้องเลือก/กรอกเอง) แล้วดาวน์โหลด + ประมวลผล
     AMR ของบัญชีนั้น (username = เลขบัญชี, 1 login = 1 บัญชี) เหมือน import_amr_for_business
+
+    has_solar ต้องกรอกเอง (ไม่ตรวจจับอัตโนมัติ — ดู import_amr_for_business) เพราะหน้าข้อมูล
+    ผู้ใช้ไฟของ PEA ไม่มีฟิลด์บอกสถานะ Solar/Net Metering ให้ตรวจจับได้
 
     ถ้าเจอรหัสประเภทธุรกิจ (TSIC) ที่ยังไม่มีใน business_types.csv จะเพิ่มแถวใหม่ให้อัตโนมัติ
     ด้วย (ชื่อธุรกิจตามที่สแกนได้จากหน้า PEA) คืนค่า LoadProfile ที่บันทึกไปแล้ว
@@ -273,6 +308,8 @@ def import_amr_auto(
 
     result_profile = _build_profile_from_downloads(
         downloaded_files, business_type_code, rate_code, billing_method, contract_kva, notes, data_dir, log,
+        has_solar=has_solar,
+        site_info={"company_name": profile_info.get("name") or "", "account_no": profile_info.get("account_no") or ""},
     )
 
     # บันทึกประวัติ "ทำอะไรไปแล้วบ้าง มีข้อมูลของใครบ้าง" ไว้ในเครื่องตัวเองเท่านั้น (ชื่อบริษัท/
@@ -288,6 +325,7 @@ def import_amr_auto(
                 "rate_code": rate_code,
                 "company_name": profile_info.get("name") or "",
                 "account_no": profile_info.get("account_no") or "",
+                "has_solar": "true" if has_solar else "false",
             },
             data_dir / "import_log_local.csv",
         )

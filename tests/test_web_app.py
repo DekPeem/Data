@@ -132,7 +132,7 @@ def test_list_load_profile_keys_excludes_default_fallback_row(client):
     res = client.get("/api/load-profile-keys")
     assert res.status_code == 200
     data = res.get_json()
-    assert {"business_type_code": "63201", "rate_code": "50", "sample_size": 12} in data
+    assert {"business_type_code": "63201", "rate_code": "50", "sample_size": 12, "has_solar": False} in data
     # แถว DEFAULT/DEFAULT เป็นแค่ fallback ไม่ใช่ธุรกิจจริง ต้องไม่อยู่ในรายการนี้
     assert not any(k["business_type_code"] == "DEFAULT" and k["rate_code"] == "DEFAULT" for k in data)
 
@@ -144,6 +144,76 @@ def test_forecast_adhoc_exact_match(client):
     assert data["match"]["level"] == "exact_business_and_rate"
     assert "customer" not in data  # ไม่มี account_no/name จริงให้คืน — ไม่ควรมี key นี้เลย
     assert data["curve"] == {"available": False, "day_types": {}, "sample_size": 0}
+
+
+def test_forecast_adhoc_with_has_solar_picks_solar_profile(client, monkeypatch):
+    """ระบุ has_solar=true มาด้วย ต้องได้โปรไฟล์ที่ has_solar=True กลับมา ไม่ใช่ตัวที่ไม่ติด
+    Solar ที่เป็นค่าเริ่มต้นเมื่อไม่ทราบสถานะ"""
+
+    from amr_mapping.models import LoadProfile
+
+    original = app_module.load_reference_data()
+    non_solar = LoadProfile(
+        business_type_code="63201", rate_code="50", billing_method="TOU",
+        demand_kw={"P": 100, "OP": 100, "H": 100}, energy_kwh={"P": 100, "OP": 100, "H": 100},
+        has_solar=False,
+    )
+    solar = LoadProfile(
+        business_type_code="63201", rate_code="50", billing_method="TOU",
+        demand_kw={"P": 40, "OP": 100, "H": 100}, energy_kwh={"P": 40, "OP": 100, "H": 100},
+        has_solar=True,
+    )
+    patched = replace(original, load_profiles=[non_solar, solar])
+    monkeypatch.setattr(app_module, "get_reference", lambda: patched)
+
+    res = client.post("/api/forecast-adhoc", json={"business_type_code": "63201", "rate_code": "50", "has_solar": True})
+    data = res.get_json()
+    assert data["match"]["level"] == "exact_business_and_rate"
+    assert data["matched_profile"]["has_solar"] is True
+    assert data["forecast"]["demand_kw"]["P"] == 40
+
+
+def test_forecast_adhoc_defaults_to_non_solar_when_unspecified(client, monkeypatch):
+    from amr_mapping.models import LoadProfile
+
+    original = app_module.load_reference_data()
+    non_solar = LoadProfile(
+        business_type_code="63201", rate_code="50", billing_method="TOU",
+        demand_kw={"P": 100, "OP": 100, "H": 100}, energy_kwh={"P": 100, "OP": 100, "H": 100},
+        has_solar=False,
+    )
+    solar = LoadProfile(
+        business_type_code="63201", rate_code="50", billing_method="TOU",
+        demand_kw={"P": 40, "OP": 100, "H": 100}, energy_kwh={"P": 40, "OP": 100, "H": 100},
+        has_solar=True,
+    )
+    patched = replace(original, load_profiles=[solar, non_solar])  # solar มาก่อนใน list โดยตั้งใจ
+    monkeypatch.setattr(app_module, "get_reference", lambda: patched)
+
+    res = client.post("/api/forecast-adhoc", json={"business_type_code": "63201", "rate_code": "50"})
+    data = res.get_json()
+    assert data["matched_profile"]["has_solar"] is False
+
+
+def test_admin_curve_selects_by_has_solar_query_param(client, monkeypatch):
+    from amr_mapping.models import LoadCurve
+
+    original = app_module.load_reference_data()
+    curves = [
+        LoadCurve(business_type_code="63201", rate_code="50", hours={"all": [10.0] * 24}, has_solar=False),
+        LoadCurve(business_type_code="63201", rate_code="50", hours={"all": [4.0] * 24}, has_solar=True),
+    ]
+    patched = replace(original, load_curves=curves)
+    monkeypatch.setattr(app_module, "get_reference", lambda: patched)
+
+    res_solar = client.get("/api/admin/curve/63201/50?has_solar=true")
+    assert res_solar.get_json()["day_types"]["all"][0] == 4.0
+
+    res_non_solar = client.get("/api/admin/curve/63201/50?has_solar=false")
+    assert res_non_solar.get_json()["day_types"]["all"][0] == 10.0
+
+    res_unspecified = client.get("/api/admin/curve/63201/50")
+    assert res_unspecified.get_json()["day_types"]["all"][0] == 10.0
 
 
 def test_forecast_adhoc_missing_both_fields(client):
@@ -226,6 +296,31 @@ def test_import_log_local_returns_newest_first(client, monkeypatch, tmp_path):
     data = res.get_json()
     assert len(data) == 2
     assert data[0]["company_name"] == "บริษัท บี จำกัด"  # ใหม่สุดขึ้นก่อน
+
+
+def test_get_site_curve_not_found_returns_no_curve_not_error(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    # ไม่มีไฟล์ site_curves_local.csv เลย (เช่น ยังไม่เคยนำเข้าแบบ auto มาก่อน)
+    res = client.get("/api/admin/site-curve/NOT-A-SITE")
+    assert res.status_code == 200
+    assert res.get_json() == {"available": False, "day_types": {}, "sample_size": 0}
+
+
+def test_get_site_curve_returns_that_sites_own_curve(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    (tmp_path / "site_curves_local.csv").write_text(
+        "company_name,account_no,business_type_code,rate_code,has_solar,day_type,contract_kva_ref,"
+        "sample_size,notes," + ",".join(f"h{h:02d}" for h in range(24)) + "\n"
+        "บริษัท เอ จำกัด,019900000001,34111,40,false,all,1000,12,ทดสอบ,"
+        + ",".join(["5.0" if h == 9 else "" for h in range(24)]) + "\n",
+        encoding="utf-8",
+    )
+
+    res = client.get("/api/admin/site-curve/019900000001")
+    data = res.get_json()
+    assert data["available"] is True
+    assert data["sample_size"] == 12
+    assert data["day_types"]["all"][9] == pytest.approx(5.0)
 
 
 def test_business_type_hierarchy_update_success(client, monkeypatch, tmp_path):
@@ -396,6 +491,44 @@ def test_start_import_and_poll_job_success(client, monkeypatch):
     assert status["status"] == "success"
     assert status["result"]["business_type_code"] == "86101"
     assert status["result"]["demand_kw"] == {"P": 1.0, "OP": 2.0, "H": 3.0}
+
+
+def test_start_import_passes_has_solar_checkbox_through(client, monkeypatch):
+    monkeypatch.setenv("PEA_AMR_USERNAME", "u")
+    monkeypatch.setenv("PEA_AMR_PASSWORD", "p")
+
+    received = {}
+
+    def fake_import_amr_for_business(**kwargs):
+        received["has_solar"] = kwargs["has_solar"]
+        from amr_mapping.models import LoadProfile
+
+        return LoadProfile(
+            business_type_code=kwargs["business_type_code"], rate_code=kwargs["rate_code"], billing_method="TOU",
+            demand_kw={"P": 1.0, "OP": 2.0, "H": 3.0}, energy_kwh={"P": 10.0, "OP": 20.0, "H": 30.0},
+            has_solar=kwargs["has_solar"],
+        )
+
+    monkeypatch.setattr(app_module, "import_amr_for_business", fake_import_amr_for_business)
+
+    res = client.post(
+        "/api/admin/import",
+        json={
+            "accounts": "TEST-001", "business_type_code": "86101", "rate_code": "50",
+            "start_date": "2026-01-01", "end_date": "2026-02-28", "has_solar": True,
+        },
+    )
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/import/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert received["has_solar"] is True
+    assert status["result"]["has_solar"] is True
 
 
 def test_import_job_not_found(client):

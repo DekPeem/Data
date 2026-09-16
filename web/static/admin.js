@@ -162,20 +162,32 @@ function renderBizCard(t) {
 
   const companies = companiesForBusinessType(t.code);
   const companiesHtml = companies.length
-    ? companies.map((c) => `<span class="company-chip">${c.company_name}${c.account_no ? ` · ${c.account_no}` : ""}</span>`).join("")
+    ? companies
+        .map(
+          (c) =>
+            `<button type="button" class="company-chip company-chip-btn" data-account="${c.account_no}">${c.company_name}${c.account_no ? ` · ${c.account_no}` : ""} 📈</button>`
+        )
+        .join("")
     : `<span class="hint">ยังไม่มีประวัติการนำเข้าในเครื่องนี้สำหรับประเภทนี้</span>`;
+  const siteCurvePanels = companies
+    .filter((c) => c.account_no)
+    .map((c) => `<div id="site-curve-panel-${c.account_no}" style="display:none;"></div>`)
+    .join("");
 
   const profileButtons = t.profiles.length
     ? t.profiles
-        .map(
-          (p) =>
-            `<button type="button" class="day-type-btn curve-toggle-btn" data-code="${t.code}" data-rate="${p.rate_code}">📈 ดูกราฟ · อัตรา ${p.rate_code} (${p.sample_size} ตัวอย่าง)</button>`
-        )
+        .map((p) => {
+          const solarLabel = p.has_solar ? " · ☀️ ติด Solar" : "";
+          return `<button type="button" class="day-type-btn curve-toggle-btn" data-code="${t.code}" data-rate="${p.rate_code}" data-solar="${p.has_solar}">📈 ดูกราฟ · อัตรา ${p.rate_code}${solarLabel} (${p.sample_size} ตัวอย่าง)</button>`;
+        })
         .join("")
     : `<span class="hint">ยังไม่มีโปรไฟล์อ้างอิง</span>`;
 
   const curvePanels = t.profiles
-    .map((p) => `<div id="curve-panel-${t.code}-${p.rate_code}" style="display:none;"></div>`)
+    .map((p) => {
+      const solarTag = p.has_solar ? "solar" : "nosolar";
+      return `<div id="curve-panel-${t.code}-${p.rate_code}-${solarTag}" style="display:none;"></div>`;
+    })
     .join("");
 
   return `
@@ -185,6 +197,7 @@ function renderBizCard(t) {
         <button type="button" class="day-type-btn verify-toggle-btn" data-code="${t.code}">🔍 ตรวจสอบ TSIC</button>
       </div>
       <div class="biz-companies">${companiesHtml}</div>
+      ${siteCurvePanels}
       <div class="biz-profiles">${profileButtons}</div>
       <div id="verify-panel-${t.code}" style="display:none;"></div>
       ${curvePanels}
@@ -264,7 +277,10 @@ function renderBusinessTypesSections(allTypes) {
       btn.addEventListener("click", () => toggleVerifyPanel(btn.dataset.code));
     });
     businessTypesBySectionEl.querySelectorAll(".curve-toggle-btn").forEach((btn) => {
-      btn.addEventListener("click", () => toggleCurvePanel(btn.dataset.code, btn.dataset.rate));
+      btn.addEventListener("click", () => toggleCurvePanel(btn.dataset.code, btn.dataset.rate, btn.dataset.solar === "true"));
+    });
+    businessTypesBySectionEl.querySelectorAll(".company-chip-btn").forEach((btn) => {
+      btn.addEventListener("click", () => toggleSiteCurvePanel(btn.dataset.account));
     });
   } catch (err) {
     businessTypesBySectionEl.innerHTML = `<div style="padding:12px 10px;color:#d03b3b;">แสดงผลไม่สำเร็จ</div>`;
@@ -279,9 +295,10 @@ businessTypesRefreshBtn.addEventListener("click", loadBusinessTypesTable);
 
 const openCurvePanels = new Set();
 
-async function toggleCurvePanel(code, rateCode) {
-  const key = `${code}|${rateCode}`;
-  const panel = document.getElementById(`curve-panel-${code}-${rateCode}`);
+async function toggleCurvePanel(code, rateCode, hasSolar) {
+  const solarTag = hasSolar ? "solar" : "nosolar";
+  const key = `${code}|${rateCode}|${solarTag}`;
+  const panel = document.getElementById(`curve-panel-${code}-${rateCode}-${solarTag}`);
   if (openCurvePanels.has(key)) {
     openCurvePanels.delete(key);
     panel.style.display = "none";
@@ -293,12 +310,48 @@ async function toggleCurvePanel(code, rateCode) {
     panel.dataset.built = "1";
     panel.innerHTML = `<div class="hint" style="padding:12px 0;">⏳ กำลังโหลดกราฟ...</div>`;
     try {
-      const res = await fetch(`/api/admin/curve/${encodeURIComponent(code)}/${encodeURIComponent(rateCode)}`);
+      const res = await fetch(
+        `/api/admin/curve/${encodeURIComponent(code)}/${encodeURIComponent(rateCode)}?has_solar=${hasSolar}`
+      );
       const curveData = await res.json();
       initDailyCurveSection(panel, curveData);
     } catch (err) {
       panel.innerHTML = `<div class="hint" style="color:#d03b3b;">โหลดกราฟไม่สำเร็จ</div>`;
       console.error("โหลดกราฟไม่สำเร็จ", err);
+    }
+  }
+}
+
+// ── กราฟของแต่ละไซต์/บัญชีแยกต่างหาก (คนละกับ toggleCurvePanel ด้านบนที่เป็นค่าเฉลี่ยรวม) —
+//    กดที่ชื่อบริษัทในการ์ดเพื่อดูกราฟของไซต์นั้นไซต์เดียว ไม่ใช่ค่าเฉลี่ยรวมกับไซต์อื่น ──
+
+const openSiteCurvePanels = new Set();
+
+async function toggleSiteCurvePanel(accountNo) {
+  const panel = document.getElementById(`site-curve-panel-${accountNo}`);
+  if (!panel) return;
+
+  if (openSiteCurvePanels.has(accountNo)) {
+    openSiteCurvePanels.delete(accountNo);
+    panel.style.display = "none";
+    return;
+  }
+  openSiteCurvePanels.add(accountNo);
+  panel.style.display = "block";
+  if (!panel.dataset.built) {
+    panel.dataset.built = "1";
+    panel.innerHTML = `<div class="hint" style="padding:12px 0;">⏳ กำลังโหลดกราฟ...</div>`;
+    try {
+      const res = await fetch(`/api/admin/site-curve/${encodeURIComponent(accountNo)}`);
+      const curveData = await res.json();
+      if (!curveData.available) {
+        panel.innerHTML = `<div class="hint" style="padding:12px 0;">ยังไม่มีกราฟแยกของไซต์นี้ (นำเข้าไว้ก่อนฟีเจอร์นี้จะมี หรือใช้โหมดกรอกเองซึ่งไม่ทราบชื่อบริษัท — นำเข้าใหม่อีกครั้งด้วยโหมดอัตโนมัติเพื่อให้มีกราฟแยก)</div>`;
+        return;
+      }
+      initDailyCurveSection(panel, curveData);
+    } catch (err) {
+      panel.innerHTML = `<div class="hint" style="color:#d03b3b;">โหลดกราฟไม่สำเร็จ</div>`;
+      console.error("โหลดกราฟของไซต์ไม่สำเร็จ", err);
     }
   }
 }
@@ -542,7 +595,10 @@ function renderResult(result, customerProfile) {
         )
         .join("")}
     </div>
-    <div class="field-label" style="margin-top:12px;">บันทึกแล้วสำหรับ: ${result.business_type_code} / อัตรา ${result.rate_code} (เฉลี่ยจาก ${result.sample_size} ไฟล์)</div>
+    <div class="field-label" style="margin-top:12px;">
+      บันทึกแล้วสำหรับ: ${result.business_type_code} / อัตรา ${result.rate_code}
+      ${result.has_solar ? " · ☀️ ติด Solar" : ""} (เฉลี่ยจาก ${result.sample_size} ไฟล์)
+    </div>
   `;
 }
 
@@ -582,6 +638,7 @@ async function startImport() {
   const rate_code = document.getElementById("f-rate-code").value.trim();
   const contract_kva = document.getElementById("f-kva").value;
   const source_label = document.getElementById("f-source-label").value.trim();
+  const has_solar = document.getElementById("f-has-solar").checked;
   const start_date = document.getElementById("f-start").value;
   const end_date = document.getElementById("f-end").value;
 
@@ -617,6 +674,7 @@ async function startImport() {
         rate_code,
         contract_kva: contract_kva ? Number(contract_kva) : null,
         source_label,
+        has_solar,
         start_date,
         end_date,
       }),

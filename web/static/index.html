@@ -105,6 +105,16 @@
             <input id="f-kva" type="number" min="0" step="any" placeholder="เช่น 2000">
             <div class="hint">ใช้ปรับสเกลผลพยากรณ์ตามขนาดสัญญาจริง ถ้าไม่กรอกจะใช้ค่าดิบของโปรไฟล์อ้างอิง</div>
           </div>
+
+          <div class="form-field">
+            <label for="f-has-solar">ติดตั้ง Solar / Net Metering แล้วหรือยัง</label>
+            <select id="f-has-solar">
+              <option value="">ไม่ทราบ</option>
+              <option value="true">ติดตั้งแล้ว</option>
+              <option value="false">ยังไม่ติดตั้ง</option>
+            </select>
+            <div class="hint">รูปแบบการใช้ไฟช่วงกลางวันต่างกันมากถ้าติด Solar — เลือก "ไม่ทราบ" จะใช้โปรไฟล์ที่ไม่ติด Solar เป็นค่าเริ่มต้น (ถ้ามีให้เลือก)</div>
+          </div>
         </div>
 
         <div class="submit-row">

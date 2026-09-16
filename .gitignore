@@ -22,3 +22,9 @@ data/reference/customers_local.csv
 # ประวัติการนำเข้า AMR จริง (มีชื่อบริษัท/เลขบัญชีจริง) สำหรับดูในเครื่องตัวเองเท่านั้น
 # — ห้าม commit เด็ดขาด (เขียนอัตโนมัติโดย amr_import.import_amr_auto ทุกครั้งที่นำเข้าสำเร็จ)
 data/reference/import_log_local.csv
+
+# เส้นโค้งรายชั่วโมงของแต่ละไซต์/บัญชีจริงแยกต่างหาก (มีชื่อบริษัท/เลขบัญชีจริง) สำหรับดูใน
+# เครื่องตัวเองเท่านั้น — ห้าม commit เด็ดขาด (หลักการเดียวกับ import_log_local.csv) เขียน
+# อัตโนมัติโดย amr_import.import_amr_auto ทุกครั้งที่นำเข้าสำเร็จ ต่างจาก load_curves.csv ซึ่ง
+# เป็นค่าเฉลี่ยรวมของทุกไซต์แบบ anonymized ที่ commit เข้า repo ได้
+data/reference/site_curves_local.csv

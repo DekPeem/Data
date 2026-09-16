@@ -69,9 +69,13 @@ class LoadProfile:
     contract_kva_ref: Optional[float] = None
     sample_size: int = 0
     notes: str = ""
+    has_solar: bool = False  # ติดตั้ง Solar/Net Metering แล้วหรือยัง — แยกโปรไฟล์ต่างหาก
+    # จากคู่ธุรกิจ+อัตราเดียวกันที่ไม่มี เพราะรูปแบบการใช้ไฟช่วงกลางวันต่างกันมาก (ดึงจากกริด
+    # น้อยลง/ผลิตเองบางส่วน) — เป็น flag ที่ต้องกรอกเอง (ดู amr_import) เพราะหน้า AMR ของ PEA
+    # ไม่มีฟิลด์บอกสถานะ Solar ให้ตรวจจับอัตโนมัติได้
 
     def key(self) -> tuple:
-        return (self.business_type_code, self.rate_code)
+        return (self.business_type_code, self.rate_code, self.has_solar)
 
 
 @dataclass(frozen=True)
@@ -88,15 +92,19 @@ class LoadCurve:
     contract_kva_ref: Optional[float] = None
     sample_size: int = 0
     notes: str = ""
+    has_solar: bool = False  # ดู LoadProfile.has_solar — เหตุผลเดียวกัน
 
     def key(self) -> tuple:
-        return (self.business_type_code, self.rate_code)
+        return (self.business_type_code, self.rate_code, self.has_solar)
 
 
 class MatchLevel(str, Enum):
     """ระดับความแม่นยำของการจับคู่โปรไฟล์ (จากแม่นยำสุด -> ประมาณการสุด)."""
 
     EXACT = "exact_business_and_rate"
+    SOLAR_MISMATCH = "exact_business_and_rate_solar_mismatch"  # ตรงธุรกิจ+อัตรา แต่สถานะ
+    # Solar ที่ระบุมาไม่ตรงกับโปรไฟล์ที่มี (เช่น ลูกค้าติด Solar แต่มีข้อมูลอ้างอิงเฉพาะราย
+    # ที่ไม่ติด Solar) — ยังดีกว่า fallback ไปประเภทธุรกิจอื่น
     BUSINESS_ONLY = "business_type_only"
     DIVISION_ONLY = "same_tsic_division"  # ธุรกิจไม่ตรงเป๊ะ แต่อยู่ TSIC division เดียวกัน
     RATE_ONLY = "rate_only"
@@ -113,6 +121,7 @@ class Customer:
     rate_code: Optional[str] = None
     contract_kva: Optional[float] = None
     has_amr: bool = False
+    has_solar: Optional[bool] = None  # None = ไม่ทราบ (ไม่บังคับกรอก — ดู LoadProfile.has_solar)
 
 
 @dataclass(frozen=True)

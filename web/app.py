@@ -17,6 +17,7 @@ import sys
 import threading
 import uuid
 from pathlib import Path
+from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -28,6 +29,7 @@ from amr_mapping.dbd_lookup import find_exact_match, lookup_business_type_for_co
 from amr_mapping.loader import (
     DEFAULT_DATA_DIR,
     load_import_log_local,
+    load_site_curves_local,
     save_business_types,
     upsert_business_type,
 )
@@ -51,6 +53,7 @@ _JOBS_LOCK = threading.Lock()
 
 MATCH_LEVEL_LABEL_TH = {
     MatchLevel.EXACT: "ตรงตามธุรกิจและอัตรา (Exact Match)",
+    MatchLevel.SOLAR_MISMATCH: "ตรงตามธุรกิจและอัตรา แต่ไม่มีข้อมูลของสถานะ Solar ที่ตรงกัน",
     MatchLevel.BUSINESS_ONLY: "ตรงตามประเภทธุรกิจ (ไม่ทราบ/ไม่ตรงอัตรา)",
     MatchLevel.DIVISION_ONLY: "ไม่มีข้อมูลธุรกิจนี้ตรงๆ แต่อยู่ในกลุ่มอุตสาหกรรม (TSIC) เดียวกับที่มีข้อมูล",
     MatchLevel.RATE_ONLY: "ตรงตามประเภทอัตรา (ยังไม่จัดประเภทธุรกิจ)",
@@ -66,19 +69,33 @@ def _customer_to_dict(customer) -> dict:
         "rate_code": customer.rate_code,
         "contract_kva": customer.contract_kva,
         "has_amr": customer.has_amr,
+        "has_solar": customer.has_solar,
     }
 
 
 _NO_CURVE = {"available": False, "day_types": {}, "sample_size": 0}
 
 
-def _curve_response(reference, business_type_code: str, rate_code: str, scale_factor: float) -> dict:
-    """หาเส้นโค้งรายชั่วโมง (exact match กับคู่ business_type_code/rate_code ที่จับคู่ได้
-    แล้วจาก find_load_profile) แล้วปรับสเกลด้วย scale_factor เดียวกับที่ใช้กับ P/OP/H
+def _parse_tri_state_bool(value) -> Optional[bool]:
+    """แปลงค่า has_solar ที่รับมาจาก client (JSON body หรือ query string) เป็น tri-state:
+    None (ไม่ทราบ/ไม่ระบุ), True, False — รองรับทั้ง JSON boolean จริงและสตริง "true"/"false" """
+
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ("1", "true", "yes")
+
+
+def _curve_response(
+    reference, business_type_code: str, rate_code: str, scale_factor: float, has_solar: Optional[bool] = None
+) -> dict:
+    """หาเส้นโค้งรายชั่วโมง (คู่ business_type_code/rate_code/has_solar ที่จับคู่ได้แล้วจาก
+    find_load_profile) แล้วปรับสเกลด้วย scale_factor เดียวกับที่ใช้กับ P/OP/H
     คืน {"available": False, ...} เฉยๆ ถ้ายังไม่มีข้อมูลเส้นโค้งของคู่นี้เลย (เช่น ยังไม่เคย
     นำเข้า AMR จริงที่มีข้อมูลราย 15 นาทีมาก่อน — ไม่ใช่ error)"""
 
-    curve = find_load_curve(reference.load_curves, business_type_code, rate_code)
+    curve = find_load_curve(reference.load_curves, business_type_code, rate_code, has_solar=has_solar)
     if curve is None:
         return _NO_CURVE
 
@@ -122,16 +139,27 @@ def api_list_business_types_full():
     จริงรองรับอยู่แล้วกี่อัตรา) — ใช้โดยตาราง "หมวดหมู่ธุรกิจทั้งหมดในระบบ" ในหน้า Admin เพื่อดูภาพ
     รวมของข้อมูลอ้างอิงทั้งหมดในเครื่องนี้ในที่เดียว ไม่ต้องเปิดไฟล์ CSV ดูเอง
 
-    profiles[].has_curve บอกว่าคู่ธุรกิจ+อัตรานั้นมีข้อมูลกราฟรายชั่วโมงจริง (load_curves.csv —
-    มาจาก AMR ที่นำเข้าจริงเท่านั้น) หรือเป็นแค่แถว placeholder ใน load_profiles.csv ที่มีแค่ตัวเลข
-    เฉลี่ย P/OP/H แต่ไม่มีกราฟให้ดู — ใช้กรองในหน้า Admin"""
+    profiles[].has_curve บอกว่าคู่ธุรกิจ+อัตรา+has_solar นั้นมีข้อมูลกราฟรายชั่วโมงจริง
+    (load_curves.csv — มาจาก AMR ที่นำเข้าจริงเท่านั้น) หรือเป็นแค่แถว placeholder ใน
+    load_profiles.csv ที่มีแค่ตัวเลขเฉลี่ย P/OP/H แต่ไม่มีกราฟให้ดู — ใช้กรองในหน้า Admin
+
+    ธุรกิจ+อัตราคู่เดียวกันอาจมีโปรไฟล์แยกกัน 2 แถว (ติด Solar / ไม่ติด Solar) เพราะ has_solar
+    เป็นส่วนหนึ่งของ key อ้างอิง — profiles[].has_solar บอกว่าแถวนั้นเป็นแบบไหน"""
 
     reference = get_reference()
     profiles_by_business: dict = {}
     for p in reference.load_profiles:
-        has_curve = find_load_curve(reference.load_curves, p.business_type_code, p.rate_code) is not None
+        has_curve = (
+            find_load_curve(reference.load_curves, p.business_type_code, p.rate_code, has_solar=p.has_solar)
+            is not None
+        )
         profiles_by_business.setdefault(p.business_type_code, []).append(
-            {"rate_code": p.rate_code, "sample_size": p.sample_size, "has_curve": has_curve}
+            {
+                "rate_code": p.rate_code,
+                "sample_size": p.sample_size,
+                "has_curve": has_curve,
+                "has_solar": p.has_solar,
+            }
         )
 
     return jsonify(
@@ -160,6 +188,23 @@ def api_list_import_log_local():
 
     entries = load_import_log_local(DEFAULT_DATA_DIR / "import_log_local.csv")
     return jsonify(list(reversed(entries)))  # ใหม่ล่าสุดขึ้นก่อน
+
+
+@app.route("/api/admin/site-curve/<account_no>")
+def api_get_site_curve(account_no: str):
+    """เส้นโค้งรายชั่วโมงดิบของไซต์ (บัญชี) หนึ่งรายโดยเฉพาะ — อ่านจาก site_curves_local.csv
+    (ไฟล์ local-only มีชื่อบริษัท/เลขบัญชีจริง อยู่ใน .gitignore แล้ว) ต่างจาก
+    /api/admin/curve/<code>/<rate_code> ซึ่งเป็นค่าเฉลี่ยรวมของทุกไซต์แบบ anonymized —
+    endpoint นี้ให้กราฟของไซต์นี้ไซต์เดียวเท่านั้น ใช้กดดูแยกแต่ละบริษัท/ไซต์ในหน้า Admin
+
+    คืน {"available": False, ...} เฉยๆ ถ้ายังไม่มีกราฟแยกของไซต์นี้เลย (เช่น นำเข้าไว้ก่อนฟีเจอร์
+    นี้จะมี หรือนำเข้าด้วยโหมดกรอกเองซึ่งไม่ทราบชื่อบริษัทจริง) ไม่ใช่ error"""
+
+    entries = load_site_curves_local(DEFAULT_DATA_DIR / "site_curves_local.csv")
+    entry = next((e for e in entries if e["account_no"] == account_no), None)
+    if entry is None:
+        return jsonify(_NO_CURVE)
+    return jsonify({"available": True, "day_types": entry["hours"], "sample_size": entry["sample_size"]})
 
 
 @app.route("/api/business-types/<code>/hierarchy", methods=["POST"])
@@ -194,11 +239,15 @@ def api_update_business_type_hierarchy(code: str):
 @app.route("/api/admin/curve/<code>/<rate_code>")
 def api_admin_curve(code: str, rate_code: str):
     """เส้นโค้งรายชั่วโมงดิบ (ไม่สเกลตาม KVA ของลูกค้ารายใดรายหนึ่ง — scale_factor=1.0) ของคู่
-    ประเภทธุรกิจ+รหัสอัตราหนึ่งคู่ ใช้ในหน้า Admin เพื่อดูว่ากลุ่มนี้มีรูปแบบการใช้ไฟเป็นแบบไหน
-    ก่อนจะเอาไปใช้พยากรณ์จริง (ไม่ใช่ส่วนพยากรณ์ - แค่ดูข้อมูลที่นำเข้าไว้)"""
+    ประเภทธุรกิจ+รหัสอัตรา(+has_solar) หนึ่งคู่ ใช้ในหน้า Admin เพื่อดูว่ากลุ่มนี้มีรูปแบบการใช้ไฟ
+    เป็นแบบไหนก่อนจะเอาไปใช้พยากรณ์จริง (ไม่ใช่ส่วนพยากรณ์ - แค่ดูข้อมูลที่นำเข้าไว้)
+
+    ?has_solar=true|false (ไม่บังคับ) เลือกเส้นโค้งที่ติด/ไม่ติด Solar ของคู่นี้โดยเฉพาะ — ไม่ใส่
+    เลยจะได้เส้นที่ไม่ติด Solar ก่อนถ้ามี (พฤติกรรมเดิมก่อนมีมิตินี้)"""
 
     reference = get_reference()
-    return jsonify(_curve_response(reference, code, rate_code, scale_factor=1.0))
+    has_solar = _parse_tri_state_bool(request.args.get("has_solar"))
+    return jsonify(_curve_response(reference, code, rate_code, scale_factor=1.0, has_solar=has_solar))
 
 
 @app.route("/api/rate-schedules")
@@ -226,7 +275,12 @@ def api_list_load_profile_keys():
 
     return jsonify(
         [
-            {"business_type_code": p.business_type_code, "rate_code": p.rate_code, "sample_size": p.sample_size}
+            {
+                "business_type_code": p.business_type_code,
+                "rate_code": p.rate_code,
+                "sample_size": p.sample_size,
+                "has_solar": p.has_solar,
+            }
             for p in get_reference().load_profiles
             if not (p.business_type_code == "DEFAULT" and p.rate_code == "DEFAULT")
         ]
@@ -272,13 +326,18 @@ def api_forecast(account_no: str):
                 "rate_description": rate_schedule.description if rate_schedule else None,
                 "sample_size": result.matched_profile.sample_size,
                 "notes": result.matched_profile.notes,
+                "has_solar": result.matched_profile.has_solar,
             },
             "forecast": {
                 "demand_kw": result.demand_kw,
                 "energy_kwh": result.energy_kwh,
             },
             "curve": _curve_response(
-                reference, result.matched_profile.business_type_code, result.matched_profile.rate_code, result.scale_factor
+                reference,
+                result.matched_profile.business_type_code,
+                result.matched_profile.rate_code,
+                result.scale_factor,
+                has_solar=result.matched_profile.has_solar,
             ),
         }
     )
@@ -308,6 +367,7 @@ def api_forecast_adhoc():
 
     business_type_code = (body.get("business_type_code") or "").strip() or None
     rate_code = (body.get("rate_code") or "").strip() or None
+    has_solar = _parse_tri_state_bool(body.get("has_solar"))
     contract_kva = body.get("contract_kva")
     try:
         contract_kva = float(contract_kva) if contract_kva not in (None, "") else None
@@ -328,6 +388,7 @@ def api_forecast_adhoc():
         rate_code=rate_code,
         contract_kva=contract_kva,
         has_amr=False,
+        has_solar=has_solar,
     )
 
     result = estimate_customer_load(transient_customer, reference)
@@ -350,13 +411,18 @@ def api_forecast_adhoc():
                 "rate_description": rate_schedule.description if rate_schedule else None,
                 "sample_size": result.matched_profile.sample_size,
                 "notes": result.matched_profile.notes,
+                "has_solar": result.matched_profile.has_solar,
             },
             "forecast": {
                 "demand_kw": result.demand_kw,
                 "energy_kwh": result.energy_kwh,
             },
             "curve": _curve_response(
-                reference, result.matched_profile.business_type_code, result.matched_profile.rate_code, result.scale_factor
+                reference,
+                result.matched_profile.business_type_code,
+                result.matched_profile.rate_code,
+                result.scale_factor,
+                has_solar=result.matched_profile.has_solar,
             ),
         }
     )
@@ -481,6 +547,7 @@ def _run_import_job(job_id: str, username: str, password: str, params: dict) -> 
                 start_date=params["start_date"],
                 end_date=params["end_date"],
                 source_label=params.get("source_label", ""),
+                has_solar=params.get("has_solar", False),
                 on_profile=on_profile,
                 log=log,
             )
@@ -496,6 +563,7 @@ def _run_import_job(job_id: str, username: str, password: str, params: dict) -> 
                 contract_kva=params.get("contract_kva"),
                 source_label=params.get("source_label", ""),
                 billing_method=params.get("billing_method", "TOU"),
+                has_solar=params.get("has_solar", False),
                 log=log,
             )
         with _JOBS_LOCK:
@@ -508,6 +576,7 @@ def _run_import_job(job_id: str, username: str, password: str, params: dict) -> 
                 "sample_size": profile.sample_size,
                 "contract_kva_ref": profile.contract_kva_ref,
                 "notes": profile.notes,
+                "has_solar": profile.has_solar,
             }
     except Exception as e:  # noqa: BLE001 — ต้อง catch ทุก error เพื่อรายงานสถานะ job ให้ถูกต้อง
         with _JOBS_LOCK:
@@ -583,6 +652,9 @@ def api_start_import():
         "contract_kva": body.get("contract_kva"),
         "source_label": body.get("source_label", ""),
         "billing_method": body.get("billing_method", "TOU"),
+        # has_solar ต้องกรอกเอง (checkbox ในฟอร์ม) — หน้าข้อมูลผู้ใช้ไฟของ PEA ไม่มีฟิลด์บอก
+        # สถานะ Solar/Net Metering ให้ตรวจจับอัตโนมัติได้ (ดู amr_import.py)
+        "has_solar": bool(body.get("has_solar")),
     }
 
     thread = threading.Thread(target=_run_import_job, args=(job_id, username, password, params), daemon=True)

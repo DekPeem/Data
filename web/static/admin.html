@@ -65,6 +65,10 @@
       font-size: 12px; background: #eef3fa; color: #184f95; border-radius: 999px;
       padding: 3px 10px; font-weight: 600;
     }
+    .company-chip-btn {
+      border: none; cursor: pointer; font-family: inherit;
+    }
+    .company-chip-btn:hover { background: #dbe9fb; }
     .biz-profiles { display: flex; flex-wrap: wrap; gap: 8px; }
   </style>
 </head>
@@ -130,6 +134,18 @@
           <div class="form-field" style="grid-column: 1 / -1;">
             <label for="f-source-label">คำอธิบายที่มา (ไม่บังคับ)</label>
             <input id="f-source-label" type="text" placeholder="ห้ามใส่ชื่อ/เลขบัญชีลูกค้า">
+          </div>
+
+          <div class="form-field" style="grid-column: 1 / -1;">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+              <input type="checkbox" id="f-has-solar">
+              บัญชีนี้ติดตั้ง Solar / Net Metering แล้ว
+            </label>
+            <div class="hint">
+              ต้องติ๊กเอง — หน้าข้อมูลผู้ใช้ไฟของ PEA ไม่มีฟิลด์บอกสถานะนี้ให้ตรวจจับอัตโนมัติได้
+              ถ้าติดแล้วจะถูกบันทึกแยกโปรไฟล์ต่างหากจากบัญชีที่ไม่ติด Solar ของธุรกิจ+อัตราเดียวกัน
+              เพราะรูปแบบการใช้ไฟช่วงกลางวันต่างกันมาก
+            </div>
           </div>
         </div>
 

@@ -161,3 +161,76 @@ def test_find_load_curve_exact_match_only_no_fallback():
     # ต่างจาก find_load_profile — ไม่มี fallback tier ใดๆ ทั้งสิ้น ไม่ตกไปที่ DEFAULT เอง
     assert find_load_curve(curves, "63201", "9999") is None
     assert find_load_curve(curves, "NOPE", "50") is None
+
+
+# ── has_solar เป็นมิติที่เพิ่มเข้ามาทีหลัง — มีผลแค่ชั้น EXACT เท่านั้น (ดู docstring โมดูล) ──
+
+_SOLAR_PROFILES = [
+    LoadProfile(
+        business_type_code="63201", rate_code="50", billing_method="TOU",
+        demand_kw={"P": 100, "OP": 100, "H": 100}, energy_kwh={"P": 100, "OP": 100, "H": 100},
+        has_solar=False,
+    ),
+    LoadProfile(
+        business_type_code="63201", rate_code="50", billing_method="TOU",
+        demand_kw={"P": 40, "OP": 100, "H": 100}, energy_kwh={"P": 40, "OP": 100, "H": 100},
+        has_solar=True,
+    ),
+]
+
+
+def test_find_load_profile_picks_matching_solar_status_when_known():
+    match = find_load_profile(_SOLAR_PROFILES, business_type_code="63201", rate_code="50", has_solar=True)
+    assert match.level == MatchLevel.EXACT
+    assert match.profile.has_solar is True
+    assert match.profile.demand_kw["P"] == 40
+
+
+def test_find_load_profile_picks_non_solar_by_default_when_unknown():
+    """ไม่ทราบสถานะ Solar ของลูกค้า (has_solar=None) — ต้องเลือกโปรไฟล์ที่ไม่ติด Solar ก่อนเสมอ
+    ถ้ามีให้เลือก (ค่าเริ่มต้นที่พบบ่อยกว่า) ไม่ใช่สุ่มเลือกตามลำดับใน list"""
+
+    match = find_load_profile(_SOLAR_PROFILES, business_type_code="63201", rate_code="50")
+    assert match.level == MatchLevel.EXACT
+    assert match.profile.has_solar is False
+
+
+def test_find_load_profile_solar_mismatch_when_requested_status_unavailable():
+    """ลูกค้าติด Solar แต่มีข้อมูลอ้างอิงเฉพาะรายที่ไม่ติด Solar เท่านั้น — ต้องได้
+    SOLAR_MISMATCH (ยังดีกว่า fallback ไปประเภทธุรกิจอื่น) ไม่ใช่ EXACT เฉยๆ"""
+
+    non_solar_only = [_SOLAR_PROFILES[0]]
+    match = find_load_profile(non_solar_only, business_type_code="63201", rate_code="50", has_solar=True)
+    assert match.level == MatchLevel.SOLAR_MISMATCH
+    assert match.profile.has_solar is False
+
+
+def test_find_load_curve_picks_matching_solar_status():
+    curves = [
+        LoadCurve(business_type_code="63201", rate_code="50", hours={"all": [10.0] * 24}, has_solar=False),
+        LoadCurve(business_type_code="63201", rate_code="50", hours={"all": [4.0] * 24}, has_solar=True),
+    ]
+
+    assert find_load_curve(curves, "63201", "50", has_solar=True).hours["all"][0] == 4.0
+    assert find_load_curve(curves, "63201", "50", has_solar=False).hours["all"][0] == 10.0
+    # ไม่ทราบสถานะ -> เลือกที่ไม่ติด Solar ก่อน
+    assert find_load_curve(curves, "63201", "50").hours["all"][0] == 10.0
+
+
+def test_estimate_customer_load_passes_customer_solar_status():
+    """estimate_customer_load ต้องส่ง customer.has_solar เข้า find_load_profile ด้วย ไม่ใช่
+    เพิกเฉยแล้วได้โปรไฟล์ไม่ติด Solar เสมอทั้งที่ลูกค้าติด Solar จริง"""
+
+    from amr_mapping.loader import ReferenceData
+
+    reference = ReferenceData(
+        business_types={}, rate_schedules={}, load_profiles=_SOLAR_PROFILES, load_curves=[], customers=[],
+    )
+    customer = Customer(
+        account_no="ACC-SOLAR", name="ลูกค้าติด Solar", business_type_code="63201", rate_code="50",
+        contract_kva=None, has_amr=False, has_solar=True,
+    )
+
+    result = estimate_customer_load(customer, reference)
+    assert result.match_level == MatchLevel.EXACT
+    assert result.matched_profile.has_solar is True
