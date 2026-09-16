@@ -4,6 +4,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from amr_mapping.loader import (
+    _IMPORT_LOG_FIELDNAMES,
     append_import_log_local,
     append_site_curve_local,
     load_import_log_local,
@@ -246,6 +247,71 @@ def test_append_import_log_local_creates_file_with_header_then_appends(tmp_path)
     assert len(entries) == 2
     assert entries[0]["company_name"] == "บริษัท ทดสอบ จำกัด"
     assert entries[1]["business_type_code"] == "34120"
+
+
+def test_append_import_log_local_migrates_old_header_before_appending(tmp_path):
+    # ไฟล์เก่าที่เขียนไว้ก่อนเพิ่มคอลัมน์ has_solar (header มีแค่ 5 คอลัมน์)
+    path = tmp_path / "import_log_local.csv"
+    path.write_text(
+        "imported_at,business_type_code,rate_code,company_name,account_no\r\n"
+        "2026-09-15T09:14:05+00:00,31212,30,บริษัท เก่า จำกัด,019900000001\r\n",
+        encoding="utf-8",
+    )
+
+    append_import_log_local(
+        {"imported_at": "2026-09-16T02:41:34+00:00", "business_type_code": "34111", "rate_code": "40",
+         "company_name": "บริษัท ใหม่ จำกัด", "account_no": "019900000002", "has_solar": "false"},
+        path,
+    )
+
+    entries = load_import_log_local(path)
+    assert len(entries) == 2
+    # แถวเก่าถูกย้าย header แล้วเติม has_solar ว่างให้ (ไม่ใช่ ragged row อีกต่อไป)
+    assert entries[0]["has_solar"] == ""
+    assert entries[0]["company_name"] == "บริษัท เก่า จำกัด"
+    assert entries[1]["has_solar"] == "false"
+    assert set(entries[0].keys()) == set(_IMPORT_LOG_FIELDNAMES)
+    assert set(entries[1].keys()) == set(_IMPORT_LOG_FIELDNAMES)
+
+
+def test_append_import_log_local_leaves_current_header_untouched(tmp_path):
+    path = tmp_path / "import_log_local.csv"
+    append_import_log_local(
+        {"imported_at": "2026-09-15T10:00:00+00:00", "business_type_code": "34111", "rate_code": "40",
+         "company_name": "บริษัท ทดสอบ จำกัด", "account_no": "019900000001", "has_solar": "true"},
+        path,
+    )
+    before = path.read_text(encoding="utf-8")
+
+    append_import_log_local(
+        {"imported_at": "2026-09-15T11:00:00+00:00", "business_type_code": "34120", "rate_code": "30",
+         "company_name": "บริษัท ทดสอบสอง จำกัด", "account_no": "019900000002", "has_solar": "false"},
+        path,
+    )
+
+    # แถวแรกที่เขียนไว้ก่อนหน้าไม่ถูกแก้ไข/เขียนซ้ำโดยไม่จำเป็น
+    assert path.read_text(encoding="utf-8").startswith(before)
+    entries = load_import_log_local(path)
+    assert len(entries) == 2
+    assert entries[0]["has_solar"] == "true"
+    assert entries[1]["has_solar"] == "false"
+
+
+def test_load_import_log_local_drops_ragged_extra_columns(tmp_path):
+    # แถวที่มีค่ามากกว่าคอลัมน์ที่ header ประกาศไว้ (เช่นไฟล์เก่าที่ยังไม่ได้ migrate) ต้องไม่
+    # ทำให้อ่านพัง และไม่ควรมีคีย์ None (restkey) หลุดออกมา เพราะ jsonify() จะ sort คีย์แบบผสม
+    # ชนิดไม่ได้ (None เทียบกับ str ไม่ได้) แล้วพังตอน serialize
+    path = tmp_path / "import_log_local.csv"
+    path.write_text(
+        "imported_at,business_type_code,rate_code,company_name,account_no\r\n"
+        "2026-09-16T02:41:34+00:00,34111,40,บริษัท ทดสอบสาม จำกัด,019900000001,false\r\n",
+        encoding="utf-8",
+    )
+
+    entries = load_import_log_local(path)
+    assert len(entries) == 1
+    assert None not in entries[0]
+    assert entries[0]["account_no"] == "019900000001"
 
 
 def test_load_site_curves_local_returns_empty_when_file_missing(tmp_path):

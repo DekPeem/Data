@@ -355,14 +355,39 @@ def load_reference_data(data_dir: Optional[Path] = None) -> ReferenceData:
 _IMPORT_LOG_FIELDNAMES = ["imported_at", "business_type_code", "rate_code", "company_name", "account_no", "has_solar"]
 
 
+def _migrate_import_log_header_if_needed(path: Path) -> None:
+    """ถ้าไฟล์เดิมมี header แบบเก่า (คอลัมน์ไม่ตรงกับ _IMPORT_LOG_FIELDNAMES ปัจจุบัน — เช่น
+    ไฟล์ที่สร้างไว้ก่อนเพิ่มคอลัมน์ has_solar) ให้ย้ายข้อมูลเดิมทั้งหมดมาเขียนใหม่ด้วย header
+    ปัจจุบัน (เติมคอลัมน์ใหม่ที่ขาดเป็นค่าว่าง) ก่อนจะ append แถวใหม่ — กันไม่ให้ได้ไฟล์ CSV ที่
+    แต่ละแถวมีจำนวนคอลัมน์ไม่เท่ากัน (ragged rows: แถวใหม่มีคอลัมน์เกินกว่า header เก่าประกาศไว้)
+    ซึ่งทำให้อ่านกลับมาพัง (append_import_log_local เดิมเช็กแค่ "ไฟล์มีอยู่แล้วหรือยัง" ก่อนเขียน
+    header ไม่เคยเช็กว่า header ที่มีอยู่ตรงกับ schema ปัจจุบันไหม)"""
+
+    with path.open(encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames == _IMPORT_LOG_FIELDNAMES:
+            return  # header ตรงกับปัจจุบันอยู่แล้ว ไม่ต้องทำอะไร
+        rows = list(reader)
+
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=_IMPORT_LOG_FIELDNAMES)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({k: row.get(k) or "" for k in _IMPORT_LOG_FIELDNAMES})
+
+
 def append_import_log_local(entry: dict, path: Path) -> None:
     """บันทึก 1 แถวประวัติการนำเข้า AMR จริง (มีชื่อบริษัท/เลขบัญชีจริง) ต่อท้ายไฟล์
     import_log_local.csv — ไฟล์นี้อยู่ใน .gitignore แล้ว (ห้าม commit เด็ดขาด) ใช้ดูในเครื่อง
     ตัวเองเท่านั้นว่า "ทำอะไรไปแล้วบ้าง มีข้อมูลของใครบ้าง" (หลักการเดียวกับ
-    customers_local.csv) — สร้างไฟล์ใหม่พร้อม header ถ้ายังไม่มี ไม่งั้น append ต่อท้าย
+    customers_local.csv) — สร้างไฟล์ใหม่พร้อม header ถ้ายังไม่มี ไม่งั้น append ต่อท้าย (ย้าย
+    header เก่าให้ตรงกับ schema ปัจจุบันก่อนเสมอ ถ้าจำเป็น — ดู _migrate_import_log_header_if_needed)
     """
 
     file_exists = path.exists()
+    if file_exists:
+        _migrate_import_log_header_if_needed(path)
+
     with path.open("a", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=_IMPORT_LOG_FIELDNAMES)
         if not file_exists:
@@ -371,12 +396,17 @@ def append_import_log_local(entry: dict, path: Path) -> None:
 
 
 def load_import_log_local(path: Path) -> List[dict]:
-    """อ่านประวัติการนำเข้า AMR จริงทั้งหมด (ไฟล์นี้ไม่บังคับต้องมี — คืน list ว่างถ้ายังไม่มี)"""
+    """อ่านประวัติการนำเข้า AMR จริงทั้งหมด (ไฟล์นี้ไม่บังคับต้องมี — คืน list ว่างถ้ายังไม่มี)
+
+    ถ้าไฟล์มีแถวที่ "ยาวเกินกว่า header" (ragged row — เช่นไฟล์เก่าที่เขียนก่อนมีการ migrate
+    header ให้ตรงกับ schema ปัจจุบัน) csv.DictReader จะยัดค่าส่วนเกินไว้ใต้คีย์ None (restkey)
+    ซึ่งถ้าปล่อยผ่านไปตรงๆ จะทำให้ jsonify() ที่ web/app.py พังตอน sort คีย์แบบผสม
+    (เทียบ None กับ str ไม่ได้) จึงตัดคีย์ None ทิ้งตรงนี้ก่อนคืนค่า"""
 
     if not path.exists():
         return []
     with path.open(encoding="utf-8-sig", newline="") as f:
-        return list(csv.DictReader(f))
+        return [{k: v for k, v in row.items() if k is not None} for row in csv.DictReader(f)]
 
 
 # ── เส้นโค้งรายชั่วโมงของ "แต่ละไซต์/บัญชี" แยกต่างหากจากค่าเฉลี่ยรวมใน load_curves.csv ──
