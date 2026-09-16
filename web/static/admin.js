@@ -139,6 +139,30 @@ function groupBySection(types) {
   return groups;
 }
 
+// กรองรายการในกล่อง dropdown ค้นหาบริษัท/ไซต์ ตามคำที่พิมพ์ — จับคู่แบบ "มีคำนี้อยู่ตรงไหนก็ได้"
+// ในชื่อ/เลขบัญชี (ไม่ต้องพิมพ์ตรงตั้งแต่ตัวแรก) ไม่สนตัวพิมพ์เล็ก-ใหญ่
+function filterCompanyDropdown(input) {
+  const wrap = input.closest(".company-combobox");
+  const query = input.value.trim().toLowerCase();
+  const items = wrap.querySelectorAll(".company-dropdown-item");
+  let anyVisible = false;
+  items.forEach((item) => {
+    const match = !query || item.textContent.toLowerCase().includes(query);
+    item.style.display = match ? "" : "none";
+    if (match) anyVisible = true;
+  });
+  const emptyMsg = wrap.querySelector(".company-dropdown-empty");
+  if (emptyMsg) emptyMsg.style.display = anyVisible ? "none" : "block";
+}
+
+// ปิด dropdown ที่เปิดค้างไว้เมื่อคลิกข้างนอกกล่องค้นหา (ผูกครั้งเดียวตอนโหลดสคริปต์ ไม่ใช่ทุกครั้ง
+// ที่ render การ์ดใหม่ เพราะ element การ์ดถูกสร้างใหม่ทุกครั้งอยู่แล้วแต่ document ตัวเดียวกันเสมอ)
+document.addEventListener("click", (e) => {
+  document.querySelectorAll(".company-combobox.open").forEach((box) => {
+    if (!box.contains(e.target)) box.classList.remove("open");
+  });
+});
+
 // รายชื่อบริษัท (ไม่ซ้ำ) ที่เคยนำเข้าไว้สำหรับประเภทธุรกิจรหัสนี้ — มาจาก import log ในเครื่องนี้
 function companiesForBusinessType(code) {
   const seen = new Set();
@@ -162,12 +186,19 @@ function renderBizCard(t) {
 
   const companies = companiesForBusinessType(t.code);
   const companiesHtml = companies.length
-    ? companies
-        .map(
-          (c) =>
-            `<button type="button" class="company-chip company-chip-btn" data-account="${c.account_no}">${c.company_name}${c.account_no ? ` · ${c.account_no}` : ""} 📈</button>`
-        )
-        .join("")
+    ? `
+      <div class="company-combobox">
+        <input type="text" class="company-search-input" placeholder="🔍 ค้นหาบริษัท/ไซต์ (${companies.length} รายการ)..." autocomplete="off">
+        <div class="company-dropdown">
+          ${companies
+            .map(
+              (c) =>
+                `<button type="button" class="company-dropdown-item company-chip-btn" data-account="${c.account_no}">${c.company_name}${c.account_no ? ` · ${c.account_no}` : ""} 📈</button>`
+            )
+            .join("")}
+          <div class="company-dropdown-empty" style="display:none;">ไม่พบบริษัท/ไซต์ที่ตรงกับคำค้นหา</div>
+        </div>
+      </div>`
     : `<span class="hint">ยังไม่มีประวัติการนำเข้าในเครื่องนี้สำหรับประเภทนี้</span>`;
   const siteCurvePanels = companies
     .filter((c) => c.account_no)
@@ -282,6 +313,13 @@ function renderBusinessTypesSections(allTypes) {
     businessTypesBySectionEl.querySelectorAll(".company-chip-btn").forEach((btn) => {
       btn.addEventListener("click", () => toggleSiteCurvePanel(btn.dataset.account));
     });
+    businessTypesBySectionEl.querySelectorAll(".company-search-input").forEach((input) => {
+      input.addEventListener("focus", () => {
+        input.closest(".company-combobox").classList.add("open");
+        filterCompanyDropdown(input);
+      });
+      input.addEventListener("input", () => filterCompanyDropdown(input));
+    });
   } catch (err) {
     businessTypesBySectionEl.innerHTML = `<div style="padding:12px 10px;color:#d03b3b;">แสดงผลไม่สำเร็จ</div>`;
     console.error("แสดงผลหมวดหมู่ธุรกิจไม่สำเร็จ", err);
@@ -331,13 +369,17 @@ async function toggleSiteCurvePanel(accountNo) {
   const panel = document.getElementById(`site-curve-panel-${accountNo}`);
   if (!panel) return;
 
+  const dropdownItem = businessTypesBySectionEl.querySelector(`.company-dropdown-item[data-account="${accountNo}"]`);
+
   if (openSiteCurvePanels.has(accountNo)) {
     openSiteCurvePanels.delete(accountNo);
     panel.style.display = "none";
+    if (dropdownItem) dropdownItem.classList.remove("active");
     return;
   }
   openSiteCurvePanels.add(accountNo);
   panel.style.display = "block";
+  if (dropdownItem) dropdownItem.classList.add("active");
   if (!panel.dataset.built) {
     panel.dataset.built = "1";
     panel.innerHTML = `<div class="hint" style="padding:12px 0;">⏳ กำลังโหลดกราฟ...</div>`;

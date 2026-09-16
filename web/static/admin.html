@@ -60,20 +60,30 @@
       display: inline-block; margin-left: 8px; font-size: 11.5px; font-weight: 600; color: #55647a;
       background: #f0f2f6; border-radius: 999px; padding: 2px 9px;
     }
-    .biz-companies {
-      display: flex; flex-wrap: wrap; gap: 6px; max-height: 92px; overflow-y: auto;
-      padding-right: 4px; scrollbar-width: thin;
+    .company-combobox { position: relative; }
+    .company-search-input {
+      width: 100%; box-sizing: border-box; padding: 7px 12px; border: 1px solid #dbe1ea;
+      border-radius: 8px; font-size: 13px; font-family: inherit; background: #f8fafc;
     }
-    .biz-companies::-webkit-scrollbar { width: 6px; }
-    .biz-companies::-webkit-scrollbar-thumb { background: #c7d0dd; border-radius: 999px; }
-    .company-chip {
-      font-size: 12px; background: #eef3fa; color: #184f95; border-radius: 999px;
-      padding: 3px 10px; font-weight: 600;
+    .company-search-input:focus {
+      outline: none; border-color: #3b82f6; background: #fff;
+      box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
     }
-    .company-chip-btn {
-      border: none; cursor: pointer; font-family: inherit;
+    .company-dropdown {
+      display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+      background: #fff; border: 1px solid #dbe1ea; border-radius: 10px;
+      box-shadow: 0 10px 24px rgba(15,23,42,0.1); max-height: 216px; overflow-y: auto;
+      z-index: 30; padding: 4px;
     }
-    .company-chip-btn:hover { background: #dbe9fb; }
+    .company-combobox.open .company-dropdown { display: block; }
+    .company-dropdown-item {
+      display: block; width: 100%; text-align: left; border: none; background: none;
+      cursor: pointer; font-family: inherit; font-size: 12.5px; font-weight: 600;
+      color: #184f95; padding: 7px 10px; border-radius: 6px;
+    }
+    .company-dropdown-item:hover { background: #eef3fa; }
+    .company-dropdown-item.active { background: #dbeafe; color: #0b3d91; }
+    .company-dropdown-empty { padding: 8px 10px; font-size: 12.5px; color: #8996ab; }
     .biz-profiles { display: flex; flex-wrap: wrap; gap: 8px; }
   </style>
 </head>
