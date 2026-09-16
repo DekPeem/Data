@@ -60,14 +60,17 @@ def test_forecast_rate_only_fallback(client):
     assert len(data["match"]["warnings"]) > 0
 
 
-def test_forecast_curve_not_available_by_default(client):
-    """data/reference/load_curves.csv ที่ commit ไว้ยังไม่มีข้อมูลจริง (ต้องนำเข้า AMR ใหม่
-    ก่อนถึงจะมี) — curve.available ต้องเป็น False ไม่ใช่ error"""
+def test_forecast_curve_available_from_committed_reference_data(client):
+    """data/reference/load_curves.csv ที่ commit ไว้ตอนนี้มีข้อมูลจริงของ 63201/50 แล้ว (นำเข้า
+    AMR จริงแบบ anonymized) — curve.available ต้องเป็น True พร้อมเส้นโค้งรายวัน ไม่เช็คค่า
+    ตัวเลขตายตัวเพราะข้อมูลจริงนี้จะถูกอัปเดตเพิ่มเรื่อยๆ ตามจำนวนไซต์ที่นำเข้า"""
 
     res = client.get("/api/forecast/DEMO-HOTEL-001")
     assert res.status_code == 200
     data = res.get_json()
-    assert data["curve"] == {"available": False, "day_types": {}, "sample_size": 0}
+    assert data["curve"]["available"] is True
+    assert data["curve"]["sample_size"] > 0
+    assert "all" in data["curve"]["day_types"]
 
 
 def test_forecast_curve_available_and_scaled_when_present(client, monkeypatch):
@@ -132,7 +135,10 @@ def test_list_load_profile_keys_excludes_default_fallback_row(client):
     res = client.get("/api/load-profile-keys")
     assert res.status_code == 200
     data = res.get_json()
-    assert {"business_type_code": "63201", "rate_code": "50", "sample_size": 12, "has_solar": False} in data
+    # ไม่เช็ค sample_size ตายตัวเพราะข้อมูลจริงนี้จะถูกอัปเดตเพิ่มเรื่อยๆ ตามจำนวนไซต์ที่นำเข้า
+    assert any(
+        k["business_type_code"] == "63201" and k["rate_code"] == "50" and k["has_solar"] is False for k in data
+    )
     # แถว DEFAULT/DEFAULT เป็นแค่ fallback ไม่ใช่ธุรกิจจริง ต้องไม่อยู่ในรายการนี้
     assert not any(k["business_type_code"] == "DEFAULT" and k["rate_code"] == "DEFAULT" for k in data)
 
@@ -143,7 +149,10 @@ def test_forecast_adhoc_exact_match(client):
     data = res.get_json()
     assert data["match"]["level"] == "exact_business_and_rate"
     assert "customer" not in data  # ไม่มี account_no/name จริงให้คืน — ไม่ควรมี key นี้เลย
-    assert data["curve"] == {"available": False, "day_types": {}, "sample_size": 0}
+    # 63201/50 มีเส้นโค้งจริงใน load_curves.csv ที่ commit ไว้แล้ว (ไม่เช็คค่าตายตัวเพราะจะถูก
+    # อัปเดตเพิ่มเรื่อยๆ ตามจำนวนไซต์ที่นำเข้า)
+    assert data["curve"]["available"] is True
+    assert data["curve"]["sample_size"] > 0
 
 
 def test_forecast_adhoc_with_has_solar_picks_solar_profile(client, monkeypatch):
