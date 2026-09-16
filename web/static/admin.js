@@ -39,41 +39,117 @@ async function loadBusinessTypes() {
 // ── ตาราง "ประวัติการนำเข้า AMR ในเครื่องนี้" (import_log_local.csv — ชื่อจริง ไม่ commit) ──
 
 const importLogRefreshBtn = document.getElementById("import-log-refresh-btn");
-const importLogTbody = document.getElementById("import-log-tbody");
+const importLogGroupsEl = document.getElementById("import-log-groups");
 
 // เก็บ log ล่าสุดไว้ใช้เดา "ชื่อบริษัทที่น่าจะตรงกับหมวดธุรกิจนี้" ตอนเปิดแผงตรวจสอบ TSIC ด้านล่าง
 let importLogEntries = [];
 
-function formatImportedAt(iso) {
+function formatImportedDate(iso) {
   try {
-    return new Date(iso).toLocaleString("th-TH", { dateStyle: "medium", timeStyle: "short" });
+    return new Date(iso).toLocaleDateString("th-TH", { dateStyle: "medium" });
   } catch (err) {
     return iso || "";
   }
 }
 
+function formatImportedTime(iso) {
+  try {
+    return new Date(iso).toLocaleTimeString("th-TH", { timeStyle: "short" });
+  } catch (err) {
+    return "";
+  }
+}
+
+// จัดกลุ่มประวัติการนำเข้าตามวัน (ใช้วันที่แสดงผลเป็น key) — entries เข้ามาเรียงใหม่สุดก่อนอยู่แล้ว
+// (จาก backend) จึงได้กลุ่มเรียงวันใหม่สุดก่อนไปโดยไม่ต้อง sort เพิ่ม
+function groupImportLogByDate(entries) {
+  const groups = [];
+  const indexByLabel = {};
+  entries.forEach((e) => {
+    const label = formatImportedDate(e.imported_at);
+    if (!(label in indexByLabel)) {
+      indexByLabel[label] = groups.length;
+      groups.push({ label, entries: [] });
+    }
+    groups[indexByLabel[label]].entries.push(e);
+  });
+  return groups;
+}
+
+// วันไหนเคยกดเปิดดูไว้ - เก็บไว้ให้ยังเปิดค้างอยู่ต่อ แม้จะกดรีเฟรชใหม่ก็ตาม
+const openImportLogDates = new Set();
+
+function toggleImportLogDate(label, index) {
+  const panel = document.getElementById(`import-log-panel-${index}`);
+  if (!panel) return;
+  if (openImportLogDates.has(label)) {
+    openImportLogDates.delete(label);
+    panel.classList.remove("open");
+  } else {
+    openImportLogDates.add(label);
+    panel.classList.add("open");
+  }
+}
+
+function renderImportLogGroups(entries) {
+  const groups = groupImportLogByDate(entries);
+
+  importLogGroupsEl.innerHTML = groups.length
+    ? groups
+        .map((g, i) => {
+          const isOpen = openImportLogDates.has(g.label);
+          const rows = g.entries
+            .map(
+              (e) => `
+            <tr style="border-bottom:1px solid rgba(15,23,42,0.06);">
+              <td style="padding:8px 10px;">${formatImportedTime(e.imported_at)}</td>
+              <td style="padding:8px 10px;font-weight:600;">${e.company_name || "-"}</td>
+              <td style="padding:8px 10px;">${e.account_no || "-"}</td>
+              <td style="padding:8px 10px;">${e.business_type_code}</td>
+              <td style="padding:8px 10px;">${e.rate_code}</td>
+            </tr>`
+            )
+            .join("");
+          return `
+            <div class="section-block">
+              <button type="button" class="section-pill-btn import-log-date-btn" data-label="${g.label}" data-index="${i}">
+                <span>${g.label}</span>
+                <span class="section-count">${g.entries.length} รายการ</span>
+              </button>
+              <div class="section-panel${isOpen ? " open" : ""}" id="import-log-panel-${i}" style="padding:0 18px 16px;">
+                <div style="overflow-x:auto;">
+                  <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                    <thead>
+                      <tr style="text-align:left;border-bottom:2px solid rgba(15,23,42,0.1);">
+                        <th style="padding:8px 10px;">เวลา</th>
+                        <th style="padding:8px 10px;">ชื่อบริษัท/นิติบุคคล</th>
+                        <th style="padding:8px 10px;">เลขบัญชี</th>
+                        <th style="padding:8px 10px;">ประเภทธุรกิจ</th>
+                        <th style="padding:8px 10px;">รหัสอัตรา</th>
+                      </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                  </table>
+                </div>
+              </div>
+            </div>`;
+        })
+        .join("")
+    : `<div class="hint" style="padding:12px 10px;">ยังไม่เคยนำเข้าแบบอัตโนมัติจากเครื่องนี้เลย</div>`;
+
+  importLogGroupsEl.querySelectorAll(".import-log-date-btn").forEach((btn) => {
+    btn.addEventListener("click", () => toggleImportLogDate(btn.dataset.label, btn.dataset.index));
+  });
+}
+
 async function loadImportLogLocal() {
-  importLogTbody.innerHTML = `<tr><td colspan="5" style="padding:12px 10px;color:#8996ab;">กำลังโหลด...</td></tr>`;
+  importLogGroupsEl.innerHTML = `<div class="hint" style="padding:12px 10px;">กำลังโหลด...</div>`;
   try {
     const res = await fetch("/api/import-log-local");
     importLogEntries = await res.json();
-
-    importLogTbody.innerHTML = importLogEntries.length
-      ? importLogEntries
-          .map(
-            (e) => `
-          <tr style="border-bottom:1px solid rgba(15,23,42,0.06);">
-            <td style="padding:8px 10px;">${formatImportedAt(e.imported_at)}</td>
-            <td style="padding:8px 10px;font-weight:600;">${e.company_name || "-"}</td>
-            <td style="padding:8px 10px;">${e.account_no || "-"}</td>
-            <td style="padding:8px 10px;">${e.business_type_code}</td>
-            <td style="padding:8px 10px;">${e.rate_code}</td>
-          </tr>`
-          )
-          .join("")
-      : `<tr><td colspan="5" style="padding:12px 10px;color:#8996ab;">ยังไม่เคยนำเข้าแบบอัตโนมัติจากเครื่องนี้เลย</td></tr>`;
+    renderImportLogGroups(importLogEntries);
   } catch (err) {
-    importLogTbody.innerHTML = `<tr><td colspan="5" style="padding:12px 10px;color:#d03b3b;">โหลดไม่สำเร็จ</td></tr>`;
+    importLogGroupsEl.innerHTML = `<div class="hint" style="padding:12px 10px;color:#d03b3b;">โหลดไม่สำเร็จ</div>`;
     console.error("โหลดประวัติการนำเข้าไม่สำเร็จ", err);
   }
 }

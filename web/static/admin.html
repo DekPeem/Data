@@ -48,7 +48,7 @@
     }
     .section-pill-btn:hover { background: #eef3fa; }
     .section-pill-btn .section-count { font-size: 12.5px; font-weight: 500; color: #8996ab; }
-    .section-panel { display: none; padding: 16px 18px; display: flex; flex-direction: column; gap: 14px; }
+    .section-panel { display: none; padding: 16px 18px; flex-direction: column; gap: 14px; }
     .section-panel.open { display: flex; }
     .biz-card {
       border: 1px solid rgba(15,23,42,0.08); border-radius: 10px; padding: 14px 16px;
@@ -215,20 +215,7 @@
           </div>
           <button type="button" id="import-log-refresh-btn" class="day-type-btn">🔄 รีเฟรช</button>
         </div>
-        <div style="overflow-x:auto;">
-          <table id="import-log-table" style="width:100%;border-collapse:collapse;font-size:13px;">
-            <thead>
-              <tr style="text-align:left;border-bottom:2px solid rgba(15,23,42,0.1);">
-                <th style="padding:8px 10px;">นำเข้าเมื่อ</th>
-                <th style="padding:8px 10px;">ชื่อบริษัท/นิติบุคคล</th>
-                <th style="padding:8px 10px;">เลขบัญชี</th>
-                <th style="padding:8px 10px;">ประเภทธุรกิจ</th>
-                <th style="padding:8px 10px;">รหัสอัตรา</th>
-              </tr>
-            </thead>
-            <tbody id="import-log-tbody"></tbody>
-          </table>
-        </div>
+        <div id="import-log-groups" style="display:flex;flex-direction:column;gap:10px;"></div>
       </div>
 
       <div class="card" style="padding: 28px; display: flex; flex-direction: column; gap: 16px;">
