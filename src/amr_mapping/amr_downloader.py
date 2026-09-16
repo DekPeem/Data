@@ -508,10 +508,39 @@ def _try_download_from_show_page(
                 return result
 
         log("⚠️ ไม่พบปุ่ม/ลิงก์ดาวน์โหลดในหน้า showPeriodProfile.aspx")
+        _log_show_page_diagnostics(driver, log)
     except Exception as e:  # noqa: BLE001
         log(f"⚠️ สแกนหาปุ่มดาวน์โหลดผิดพลาด: {e}")
 
     return None
+
+
+def _log_show_page_diagnostics(driver, log: ProgressCallback) -> None:
+    """เก็บรายละเอียดหน้าปัจจุบันไว้ใน log ตอนหาปุ่มดาวน์โหลดไม่เจอ (url/title/จำนวน element
+    ต่างๆ/มี iframe ไหม/ข้อความบางส่วนในหน้า) — ยืนยันจากผู้ใช้จริงว่ามีบางครั้งที่หน้ามีข้อมูล+
+    ปุ่ม Download อยู่จริง (เช็คด้วยตาเองในเบราว์เซอร์) แต่ _find_download_element ยังหาไม่เจอ
+    ซึ่งยังไม่รู้สาเหตุแน่ชัด (อาจเป็น element อยู่ใน iframe ที่ยังไม่ได้ switch เข้าไป, หน้า
+    แสดง session หมดอายุ/ข้อความ error แทนตารางข้อมูล, หรืออื่นๆ) — เก็บรายละเอียดตรงนี้ไว้
+    เพื่อวินิจฉัยจากของจริงในครั้งต่อไปที่เจอ แทนที่จะรู้แค่ว่า "ไม่เจอ" เฉยๆ ไม่มีบริบทอะไรเลย"""
+
+    from selenium.webdriver.common.by import By
+
+    try:
+        n_input = len(driver.find_elements(By.TAG_NAME, "input"))
+        n_a = len(driver.find_elements(By.TAG_NAME, "a"))
+        n_button = len(driver.find_elements(By.TAG_NAME, "button"))
+        n_iframe = len(driver.find_elements(By.TAG_NAME, "iframe"))
+        n_table = len(driver.find_elements(By.TAG_NAME, "table"))
+        log(
+            f"🔎 รายละเอียดหน้า ณ ตอนหาปุ่มไม่เจอ: url={driver.current_url} title={driver.title!r} "
+            f"input={n_input} a={n_a} button={n_button} iframe={n_iframe} table={n_table}"
+        )
+        body_text = driver.find_element(By.TAG_NAME, "body").text
+        snippet = " ".join(body_text.split())[:300]
+        if snippet:
+            log(f"🔎 ข้อความในหน้า (300 ตัวอักษรแรก): {snippet}")
+    except Exception as e:  # noqa: BLE001 — เก็บ diagnostics ไม่สำเร็จ ต้องไม่ทำให้ job หลักพังไปด้วย
+        log(f"⚠️ เก็บรายละเอียดหน้าไม่สำเร็จ: {e}")
 
 
 def download_month(

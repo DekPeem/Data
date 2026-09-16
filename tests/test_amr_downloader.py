@@ -167,15 +167,25 @@ class _FakeClickable:
         self.clicked = True
 
 
+class _FakeElement:
+    def __init__(self, text=""):
+        self.text = text
+
+
 class _FakeShowPageDriver:
     """ตัวแทน driver สำหรับทดสอบ _try_download_from_show_page (ไม่มี popup เปิดขึ้นเลย
     ในทุกเทสต์นี้ — window_handles คงที่ตลอด)"""
 
-    def __init__(self, inputs=None, anchors=None, buttons=None):
+    def __init__(self, inputs=None, anchors=None, buttons=None, iframes=None, tables=None, body_text=""):
         self._inputs = inputs or []
         self._anchors = anchors or []
         self._buttons = buttons or []
+        self._iframes = iframes or []
+        self._tables = tables or []
         self.window_handles = ["main"]
+        self.current_url = "https://www.amr.pea.co.th/AMRWEB/showPeriodProfile.aspx"
+        self.title = "AMR::Automatic Meter Reading"
+        self._body = _FakeElement(text=body_text)
 
     def find_elements(self, by, tag):
         if tag == "input":
@@ -184,7 +194,16 @@ class _FakeShowPageDriver:
             return self._anchors
         if tag == "button":
             return self._buttons
+        if tag == "iframe":
+            return self._iframes
+        if tag == "table":
+            return self._tables
         return []
+
+    def find_element(self, by, tag):
+        if tag == "body":
+            return self._body
+        raise ValueError(f"unexpected tag: {tag}")
 
 
 def test_try_download_from_show_page_clicks_matching_input_button(monkeypatch):
@@ -349,6 +368,28 @@ def test_try_download_from_show_page_no_matching_element_returns_none(monkeypatc
 
     assert unrelated.clicked is False
     assert result is None
+
+
+def test_try_download_from_show_page_logs_diagnostics_when_not_found(monkeypatch):
+    """ยืนยันจากผู้ใช้จริง: บางครั้งหน้าเว็บมีข้อมูล+ปุ่ม Download อยู่จริง (เช็คด้วยตาเองแล้ว)
+    แต่ _find_download_element ยังหาไม่เจอ ยังไม่ทราบสาเหตุแน่ชัด — เก็บรายละเอียดหน้า (url/
+    title/จำนวน element ต่างๆ/ข้อความในหน้า) ไว้ใน log ตอนหาไม่เจอ เพื่อวินิจฉัยจากของจริงได้
+    ในครั้งต่อไป แทนที่จะรู้แค่ว่า "ไม่เจอ" เฉยๆ"""
+
+    driver = _FakeShowPageDriver(
+        iframes=[object()], tables=[object(), object()], body_text="เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่"
+    )
+    monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
+
+    logs = []
+    result = amr_downloader._try_download_from_show_page(driver, "main", "/tmp/dl", log=logs.append, timeout=0)
+
+    assert result is None
+    joined = "\n".join(logs)
+    assert "iframe=1" in joined
+    assert "table=2" in joined
+    assert driver.current_url in joined
+    assert "เซสชันหมดอายุ" in joined
 
 
 def test_try_download_from_show_page_retries_until_element_appears(monkeypatch):
