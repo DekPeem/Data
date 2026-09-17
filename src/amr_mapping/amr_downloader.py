@@ -20,7 +20,7 @@ import random
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable, List, Optional
 
 BASE_URL = "https://www.amr.pea.co.th"
@@ -744,9 +744,115 @@ def download_month(
     return None
 
 
-# จำนวนครั้งสูงสุดที่ลองดาวน์โหลด 1 เดือนใหม่ทั้งหมด (โหลดหน้าใหม่ ไม่ใช่แค่สแกนซ้ำ) ก่อนจะยอม
-# แพ้จริงๆ — ดูเหตุผลใน _download_reports_for_account
+# จำนวนครั้งสูงสุดที่ลองดาวน์โหลด 1 ช่วงวันที่ใหม่ทั้งหมด (โหลดหน้าใหม่ ไม่ใช่แค่สแกนซ้ำ) ก่อนจะ
+# ยอมแพ้ (หรือลองแบ่งครึ่งช่วงแทน) — ดูเหตุผลใน _download_month_range
 _MAX_MONTH_ATTEMPTS = 3
+
+# ช่วงวันที่สั้นสุดที่ยังยอมแบ่งครึ่งต่อ — ต่ำกว่านี้ไม่แบ่งอีก (กันแบ่งจนเหลือช่วงสั้นเกินไปจะ
+# ไร้ประโยชน์ ยิ่งดาวน์โหลดยิ่งช้าลงเรื่อยๆ)
+_MIN_SPLIT_RANGE_DAYS = 6
+
+
+def _split_date_range_in_half(date_from: str, date_to: str) -> Optional[tuple]:
+    """แบ่งช่วงวันที่ (dd/mm/yyyy) เป็น 2 ช่วงย่อยเท่าๆ กัน คืน None ถ้าสั้นเกินกว่าจะแบ่งต่อ
+    (< _MIN_SPLIT_RANGE_DAYS วัน)
+
+    ยืนยันจากผู้ใช้จริงว่าบัญชี/เดือนที่มีข้อมูลเต็มเดือน (~30 วัน) ดาวน์โหลดไฟล์ export ค้างที่
+    .crdownload ขนาด "เท่าเดิมเป๊ะ" (562,145 ไบต์) ซ้ำกันทุกรอบ แม้ลองใหม่ทั้งหน้าครบ
+    _MAX_MONTH_ATTEMPTS ครั้งแล้วก็ตาม — ค่าคงที่ซ้ำเป๊ะแบบนี้ต่างจากความช้าแบบสุ่มที่เจอมาก่อน
+    หน้านี้ (ซึ่งแก้ด้วยการขยาย timeout ไปแล้ว) ชี้ว่าเซิร์ฟเวอร์ PEA เองน่าจะสร้างไฟล์ export ให้
+    ไม่ครบ/ขาดกลางคันแบบ deterministic สำหรับ request ขนาดใหญ่แบบนี้ (ใกล้ขีดจำกัด 45 วันที่
+    หน้าเว็บระบุไว้เอง) — รอ/ลองซ้ำด้วย request ขนาดเดิมจะพังซ้ำเดิมไปเรื่อยๆ ทางแก้คือแบ่ง
+    request ให้เล็กลงแทน"""
+
+    d_from = datetime.strptime(date_from, "%d/%m/%Y")
+    d_to = datetime.strptime(date_to, "%d/%m/%Y")
+    total_days = (d_to - d_from).days + 1
+    if total_days < _MIN_SPLIT_RANGE_DAYS:
+        return None
+    mid = d_from + timedelta(days=total_days // 2 - 1)
+    mid_next = mid + timedelta(days=1)
+    if mid_next > d_to:
+        return None
+    return (date_from, mid.strftime("%d/%m/%Y")), (mid_next.strftime("%d/%m/%Y"), date_to)
+
+
+def _download_month_range(
+    driver, account: str, meter: dict, date_from: str, date_to: str, download_dir: str,
+    log: ProgressCallback,
+) -> List[tuple]:
+    """ดาวน์โหลดช่วงวันที่หนึ่งช่วงของมิเตอร์หนึ่งตัว คืน list ของ
+    (date_from, date_to, path หรือ None, error หรือ None) — ปกติมี 1 รายการ แต่จะมีมากกว่า 1
+    ถ้าช่วงเดิมดาวน์โหลดไม่สำเร็จแล้วถูกแบ่งครึ่ง (ดู _split_date_range_in_half)
+
+    ไฟล์ที่เคยดาวน์โหลดไว้แล้ว (บัญชี+มิเตอร์+ช่วงวันที่เดียวกัน แม้เป็นช่วงที่แบ่งครึ่งมาแล้วก็
+    เช็คแคชแยกตามช่วงย่อยนั้นได้) จะถูกใช้ซ้ำแทนการดาวน์โหลดใหม่ (ดู _cache_key/_find_cached_file)
+
+    ลองใหม่ทั้งช่วง (โหลดหน้าใหม่ทั้งหมด ไม่ใช่แค่สแกนซ้ำในหน้าเดิม) สูงสุด _MAX_MONTH_ATTEMPTS
+    ครั้งก่อน — ยืนยันจากผู้ใช้จริงว่าบัญชี/เดือนเดียวกัน บางรอบหาปุ่มดาวน์โหลดเจอ บางรอบไม่เจอ
+    ทั้งที่หน้าเว็บมีข้อมูลอยู่จริงเหมือนกันทุกครั้ง น่าจะเป็นปัญหาโหลดหน้า/เซิร์ฟเวอร์แบบไม่คงที่
+    (ดู _try_download_from_show_page) — ถ้าลองซ้ำครบแล้วยังไม่สำเร็จ และช่วงยาวพอจะแบ่งได้ ค่อย
+    ลองแบ่งครึ่งแล้วดาวน์โหลดแต่ละครึ่งแยกกันแทน"""
+
+    cache_key = _cache_key(account, meter["value"], date_from, date_to)
+    cached_path = _find_cached_file(download_dir, cache_key)
+    if cached_path:
+        log(f"♻️ ใช้ไฟล์ที่เคยดาวน์โหลดไว้แล้ว (ข้ามการโหลดซ้ำ): {os.path.basename(cached_path)}")
+        return [(date_from, date_to, cached_path, None)]
+
+    path = None
+    last_error: Optional[str] = None
+    for attempt in range(1, _MAX_MONTH_ATTEMPTS + 1):
+        try:
+            path = download_month(
+                driver, account, meter["value"], meter["text"], date_from, date_to,
+                download_dir, log=log,
+            )
+            last_error = None
+        except Exception as e:  # noqa: BLE001
+            path = None
+            last_error = str(e)
+
+        if path:
+            break
+        if attempt < _MAX_MONTH_ATTEMPTS:
+            log(
+                f"🔁 ลองใหม่ (ครั้งที่ {attempt + 1}/{_MAX_MONTH_ATTEMPTS}): "
+                f"{account} {meter['text']} {date_from}-{date_to}"
+            )
+            random_delay(2, 4)
+
+    if path:
+        # เว็บ PEA ตั้งชื่อไฟล์ที่ดาวน์โหลดมาเอง (ไม่ deterministic) — เปลี่ยนชื่อเป็น
+        # cache_key ก่อนเก็บไว้ เพื่อให้รอบถัดไปหาไฟล์แคชนี้เจอ
+        ext = os.path.splitext(path)[1]
+        cached_target = os.path.join(download_dir, cache_key + ext)
+        try:
+            os.replace(path, cached_target)
+            path = cached_target
+        except OSError as e:  # noqa: BLE001
+            log(f"⚠️ เปลี่ยนชื่อไฟล์เป็นชื่อแคชไม่ได้ (ใช้ไฟล์เดิมต่อได้ปกติ แค่รอบหน้าจะหาไม่เจอ): {e}")
+        log(f"✅ สำเร็จ: {os.path.basename(path)}")
+        return [(date_from, date_to, path, None)]
+
+    split = _split_date_range_in_half(date_from, date_to)
+    if split:
+        (f1, t1), (f2, t2) = split
+        log(
+            f"✂️ ช่วง {date_from}-{date_to} ดาวน์โหลดไม่สำเร็จหลังลอง {_MAX_MONTH_ATTEMPTS} ครั้ง "
+            f"— ลองแบ่งครึ่งเป็น {f1}-{t1} และ {f2}-{t2} แทน (เผื่อเซิร์ฟเวอร์สร้างไฟล์ export "
+            f"ขนาดใหญ่ไม่ครบ)"
+        )
+        return (
+            _download_month_range(driver, account, meter, f1, t1, download_dir, log)
+            + _download_month_range(driver, account, meter, f2, t2, download_dir, log)
+        )
+
+    if last_error:
+        log(f"❌ error หลังลอง {_MAX_MONTH_ATTEMPTS} ครั้ง: {account} {meter['text']} {date_from}-{date_to}: {last_error}")
+    else:
+        log(f"❌ ไม่สำเร็จหลังลอง {_MAX_MONTH_ATTEMPTS} ครั้ง: {account} {meter['text']} {date_from}-{date_to}")
+    return [(date_from, date_to, None, last_error)]
 
 
 def _download_reports_for_account(
@@ -756,11 +862,10 @@ def _download_reports_for_account(
     month_ranges — ใช้ driver ที่ login อยู่แล้ว (เรียกจาก download_amr_kw_reports และ
     download_amr_with_profile ทั้งคู่ เพื่อไม่ให้ต้องเขียน loop ซ้ำ)
 
-    ไฟล์ที่เคยดาวน์โหลดไว้แล้วใน download_dir (บัญชี+มิเตอร์+ช่วงวันที่เดียวกัน) จะถูกใช้ซ้ำ
-    แทนการดาวน์โหลดใหม่ (ดู _cache_key/_find_cached_file) — เหมาะกับกรณีรันซ้ำ (เช่น import
-    เดือนเพิ่มจากช่วงเดิม หรือ retry หลังพังกลางคัน) โดยไม่ต้องรอดาวน์โหลดของเดิมใหม่ทุกครั้ง
-    ต้องเรียกจาก amr_import.py ที่ส่ง download_dir แบบถาวร (ไม่ใช่โฟลเดอร์ temp ที่ลบทิ้งหลัง
-    เสร็จ) การ cache นี้ถึงจะมีประโยชน์จริง"""
+    แต่ละช่วงวันที่ดาวน์โหลดผ่าน _download_month_range ซึ่งจะแบ่งช่วงให้เล็กลงเองถ้าดาวน์โหลด
+    ทั้งช่วงไม่สำเร็จ (ดูเหตุผลที่นั่น) — ผลลัพธ์ต่อ (มิเตอร์, ช่วงวันที่ที่ขอมา) จึงอาจมีมากกว่า
+    1 DownloadResult ถ้าถูกแบ่งช่วง แต่ไม่กระทบขั้นตอน import ต่อ เพราะที่นั่นรวมไฟล์จากทุก
+    DownloadResult ที่สำเร็จเป็น list เดียวอยู่แล้ว ไม่ได้ผูกกับช่วงวันที่เดิมที่ขอมา"""
 
     results: List[DownloadResult] = []
     meters = get_meter_options(driver, account, log=log)
@@ -770,70 +875,15 @@ def _download_reports_for_account(
 
     for meter in meters:
         for date_from, date_to in month_ranges:
-            cache_key = _cache_key(account, meter["value"], date_from, date_to)
-            cached_path = _find_cached_file(download_dir, cache_key)
-            if cached_path:
-                log(f"♻️ ใช้ไฟล์ที่เคยดาวน์โหลดไว้แล้ว (ข้ามการโหลดซ้ำ): {os.path.basename(cached_path)}")
+            for f, t, path, err in _download_month_range(driver, account, meter, date_from, date_to, download_dir, log):
                 results.append(
                     DownloadResult(
                         account_no=account, meter_text=meter["text"],
-                        date_from=date_from, date_to=date_to,
-                        file_path=cached_path, success=True,
+                        date_from=f, date_to=t,
+                        file_path=path, success=bool(path), error=err if not path else None,
                     )
                 )
-                continue
-
-            path = None
-            last_error: Optional[str] = None
-            # ลองใหม่ทั้งเดือน (โหลดหน้าใหม่ทั้งหมด ไม่ใช่แค่สแกนซ้ำในหน้าเดิม) สูงสุด
-            # _MAX_MONTH_ATTEMPTS ครั้ง — ยืนยันจากผู้ใช้จริงว่าบัญชี/เดือนเดียวกัน บางรอบหาปุ่ม
-            # ดาวน์โหลดเจอ บางรอบไม่เจอ ทั้งที่หน้าเว็บมีข้อมูลอยู่จริงเหมือนกันทุกครั้ง (เดือนที่
-            # เพิ่งพังก็กลับมาสำเร็จได้เองถ้าลองใหม่) น่าจะเป็นปัญหาโหลดหน้า/เซิร์ฟเวอร์แบบไม่คงที่
-            # ที่รอนานขึ้นในหน้าเดิมอย่างเดียว (ดู _try_download_from_show_page) ไม่พอจะแก้ได้เสมอ
-            for attempt in range(1, _MAX_MONTH_ATTEMPTS + 1):
-                try:
-                    path = download_month(
-                        driver, account, meter["value"], meter["text"], date_from, date_to,
-                        download_dir, log=log,
-                    )
-                    last_error = None
-                except Exception as e:  # noqa: BLE001
-                    path = None
-                    last_error = str(e)
-
-                if path:
-                    break
-                if attempt < _MAX_MONTH_ATTEMPTS:
-                    log(
-                        f"🔁 ลองใหม่ (ครั้งที่ {attempt + 1}/{_MAX_MONTH_ATTEMPTS}): "
-                        f"{account} {meter['text']} {date_from}-{date_to}"
-                    )
-                    random_delay(2, 4)
-
-            if path:
-                # เว็บ PEA ตั้งชื่อไฟล์ที่ดาวน์โหลดมาเอง (ไม่ deterministic) — เปลี่ยนชื่อเป็น
-                # cache_key ก่อนเก็บไว้ เพื่อให้รอบถัดไปหาไฟล์แคชนี้เจอ
-                ext = os.path.splitext(path)[1]
-                cached_target = os.path.join(download_dir, cache_key + ext)
-                try:
-                    os.replace(path, cached_target)
-                    path = cached_target
-                except OSError as e:  # noqa: BLE001
-                    log(f"⚠️ เปลี่ยนชื่อไฟล์เป็นชื่อแคชไม่ได้ (ใช้ไฟล์เดิมต่อได้ปกติ แค่รอบหน้าจะหาไม่เจอ): {e}")
-                log(f"✅ สำเร็จ: {os.path.basename(path)}")
-            elif last_error:
-                log(f"❌ error หลังลอง {_MAX_MONTH_ATTEMPTS} ครั้ง: {account} {meter['text']} {date_from}-{date_to}: {last_error}")
-            else:
-                log(f"❌ ไม่สำเร็จหลังลอง {_MAX_MONTH_ATTEMPTS} ครั้ง: {account} {meter['text']} {date_from}-{date_to}")
-
-            results.append(
-                DownloadResult(
-                    account_no=account, meter_text=meter["text"],
-                    date_from=date_from, date_to=date_to,
-                    file_path=path, success=bool(path), error=last_error if not path else None,
-                )
-            )
-            random_delay(0.5, 1)
+                random_delay(0.5, 1)
 
     return results
 

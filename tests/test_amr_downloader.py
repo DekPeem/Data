@@ -1,5 +1,6 @@
 import os
 import sys
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -406,6 +407,9 @@ def test_download_reports_for_account_retries_whole_month_after_transient_failur
 
 
 def test_download_reports_for_account_gives_up_after_max_attempts(monkeypatch, tmp_path):
+    """ช่วงวันที่สั้น (ต่ำกว่า _MIN_SPLIT_RANGE_DAYS) แบ่งครึ่งต่อไม่ได้แล้ว — ต้องยอมแพ้จริงๆ
+    หลังลองครบ _MAX_MONTH_ATTEMPTS ไม่ใช่พยายามแบ่งต่อไปเรื่อยๆ"""
+
     download_dir = str(tmp_path)
     monkeypatch.setattr(
         amr_downloader, "get_meter_options",
@@ -421,12 +425,54 @@ def test_download_reports_for_account_gives_up_after_max_attempts(monkeypatch, t
 
     monkeypatch.setattr(amr_downloader, "download_month", always_fails)
 
-    month_ranges = [("01/07/2026", "31/07/2026")]
+    month_ranges = [("01/07/2026", "05/07/2026")]  # 5 วัน < _MIN_SPLIT_RANGE_DAYS (6) — แบ่งต่อไม่ได้
     results = amr_downloader._download_reports_for_account(None, "ACC1", month_ranges, download_dir, log=lambda m: None)
 
     assert call_count["n"] == amr_downloader._MAX_MONTH_ATTEMPTS
+    assert len(results) == 1
     assert results[0].success is False
     assert results[0].file_path is None
+
+
+def test_download_reports_for_account_splits_large_range_after_max_attempts(monkeypatch, tmp_path):
+    """ยืนยันจากผู้ใช้จริง: บัญชี/เดือนที่มีข้อมูลเต็มเดือน (~30 วัน) ดาวน์โหลดไฟล์ export ค้างที่
+    .crdownload ขนาดเท่าเดิมเป๊ะซ้ำทุกรอบแม้ลองใหม่ทั้งหน้าครบ _MAX_MONTH_ATTEMPTS ครั้งแล้ว —
+    ต่างจากปัญหาโหลดช้าแบบสุ่มที่เคยเจอ (แก้ด้วยขยาย timeout ไปแล้ว) ค่าคงที่ซ้ำเป๊ะแบบนี้ชี้ว่า
+    เซิร์ฟเวอร์สร้างไฟล์ไม่ครบสำหรับ request ขนาดใหญ่ขนาดนี้โดยเฉพาะ — ต้องลองแบ่งครึ่งช่วงวันที่
+    แทนที่จะยอมแพ้ไปเลย หรือลองซ้ำด้วยขนาดเดิมไปเรื่อยๆ"""
+
+    download_dir = str(tmp_path)
+    monkeypatch.setattr(
+        amr_downloader, "get_meter_options",
+        lambda driver, account, log=lambda m: None: [{"value": "M1", "text": "มิเตอร์ 1"}],
+    )
+    monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
+
+    calls = []
+
+    def always_fails(driver, cust_code, meter_point, meter_text, date_from, date_to, dl_dir, log):
+        calls.append((date_from, date_to))
+        return None
+
+    monkeypatch.setattr(amr_downloader, "download_month", always_fails)
+
+    month_ranges = [("01/07/2026", "31/07/2026")]  # 31 วัน — แบ่งครึ่งได้เรื่อยๆ จนถึง _MIN_SPLIT_RANGE_DAYS
+    logs = []
+    results = amr_downloader._download_reports_for_account(
+        None, "ACC1", month_ranges, download_dir, log=logs.append
+    )
+
+    # ทุกผลลัพธ์ต้องไม่สำเร็จ (เพราะ always_fails) แต่ต้องมีมากกว่า 1 รายการ (ถูกแบ่งช่วงแล้ว)
+    # และรวมกันครอบคลุมทั้งเดือนไม่มีวันตกหล่น/ซ้อนทับ
+    assert len(results) > 1
+    assert all(r.success is False for r in results)
+    covered_days = sorted(
+        d for f, t in ((r.date_from, r.date_to) for r in results)
+        for d in [datetime.strptime(f, "%d/%m/%Y"), datetime.strptime(t, "%d/%m/%Y")]
+    )
+    assert covered_days[0] == datetime.strptime("01/07/2026", "%d/%m/%Y")
+    assert covered_days[-1] == datetime.strptime("31/07/2026", "%d/%m/%Y")
+    assert any("ลองแบ่งครึ่ง" in m for m in logs)
 
 
 def test_try_download_from_show_page_no_matching_element_returns_none(monkeypatch):
