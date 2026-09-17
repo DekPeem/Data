@@ -609,6 +609,10 @@ def test_wait_for_download_extends_grace_period_when_crdownload_present_at_deadl
         t = fake_clock["t"]
         if t >= 2 and not crdownload_path.exists() and not final_path.exists():
             crdownload_path.write_text("partial", encoding="utf-8")
+        # ไฟล์ต้องโตขึ้นจริงอย่างน้อยครั้งเดียวก่อนครบเวลา (t=5) ไม่งั้นตอนนี้ถือว่าค้างนิ่งตาย
+        # จะไม่ต่อเวลาให้ (ดู _wait_for_download: size_has_grown)
+        if t >= 3 and crdownload_path.exists() and crdownload_path.read_text(encoding="utf-8") == "partial":
+            crdownload_path.write_text("partial-more-data", encoding="utf-8")
         if t >= 8 and crdownload_path.exists():
             crdownload_path.unlink()
             final_path.write_text("done", encoding="utf-8")
@@ -624,10 +628,12 @@ def test_wait_for_download_extends_grace_period_when_crdownload_present_at_deadl
 
 
 def test_wait_for_download_warns_when_crdownload_size_never_grows(monkeypatch, tmp_path):
-    """ยืนยันจากผู้ใช้จริง: มี .crdownload ค้างอยู่ยาวนานเกินแม้จะต่อเวลาให้แล้ว — ต้อง log
-    ขนาดไฟล์ทุก heartbeat เพื่อแยกให้ออกว่า "กำลังโหลดจริง (ขนาดโตขึ้นเรื่อยๆ)" หรือ "ค้างนิ่ง
-    ตาย" (ขนาดไม่ขยับเลย เช่นเซิร์ฟเวอร์ตัด connection ไปแล้วแต่ Chrome ยัง finalize ไม่ได้)
-    แทนที่จะรู้แค่ว่ามี .crdownload เฉยๆ โดยไม่รู้ว่ามันตายหรือยังไปต่อ"""
+    """ยืนยันจากผู้ใช้จริง (ลองหลายรอบ คนละ session กัน บัญชี/เดือนเดิม): มี .crdownload ขนาด
+    "เท่าเดิมเป๊ะ" ตั้งแต่ heartbeat แรกจนครบเวลา แม้จะเคยต่อเวลาให้ไปแล้วก่อนหน้านี้ก็ยังค้างที่
+    ขนาดเดิม — ต้อง log ขนาดไฟล์ทุก heartbeat เพื่อแยกให้ออกว่า "กำลังโหลดจริง (ขนาดโตขึ้นเรื่อยๆ)"
+    หรือ "ค้างนิ่งตาย" (ขนาดไม่ขยับเลย) และต้อง "ไม่ต่อเวลาให้" กรณีค้างนิ่งตายแบบนี้ (ต่อเวลาให้ก็
+    ไม่มีประโยชน์ รอนานแค่ไหนก็ยังจะค้างที่ขนาดเดิม) เพื่อให้ผู้เรียก (เช่น _handle_popup) ไปลอง
+    submit ใหม่ได้เร็วขึ้นแทนที่จะเสียเวลารอเปล่าๆ อีก 60 วินาที"""
 
     download_dir = str(tmp_path)
     crdownload_path = tmp_path / "stuck.xls.crdownload"
@@ -641,5 +647,28 @@ def test_wait_for_download_warns_when_crdownload_size_never_grows(monkeypatch, t
     result = amr_downloader._wait_for_download(download_dir, timeout=10, log=logs.append)
 
     assert result is None
-    assert any("ไม่ขยับเลย" in m for m in logs), f"ต้อง log เตือนว่าขนาดไฟล์ค้างนิ่ง: {logs}"
+    assert fake_clock["t"] < 15, f"ไฟล์ค้างนิ่งตายต้องไม่ได้รับการต่อเวลา (60s) ต้องคืนค่าทันทีที่ครบเวลาเดิม: t={fake_clock['t']}"
+    assert not any("ต่อเวลาให้อีก" in m for m in logs), f"ไฟล์ที่ไม่เคยโตขึ้นเลยต้องไม่ได้รับการต่อเวลา: {logs}"
     assert any("ยอมแพ้" in m for m in logs), f"ต้อง log สรุปตอนยอมแพ้พร้อมขนาดไฟล์ล่าสุด: {logs}"
+    assert any("ไม่เคยขยับเลย" in m for m in logs), f"ต้องระบุในข้อความยอมแพ้ด้วยว่าไม่เคยขยับเลย: {logs}"
+
+
+def test_wait_for_download_heartbeat_warns_when_size_unchanged_since_last_check(monkeypatch, tmp_path):
+    """ระหว่างรอ (ยังไม่ครบเวลา) ถ้ามี heartbeat เกิดขึ้นและขนาดไฟล์ไม่ขยับจากรอบก่อนหน้า ต้อง
+    เตือนไว้ใน log ทันที ไม่ต้องรอให้ครบเวลาก่อนถึงจะรู้ว่าค้างนิ่ง"""
+
+    download_dir = str(tmp_path)
+    crdownload_path = tmp_path / "stuck.xls.crdownload"
+    crdownload_path.write_text("x" * 100, encoding="utf-8")
+    fake_clock = {"t": 0.0}
+
+    monkeypatch.setattr(amr_downloader.time, "sleep", lambda s: fake_clock.__setitem__("t", fake_clock["t"] + s))
+    monkeypatch.setattr(amr_downloader.time, "time", lambda: fake_clock["t"])
+
+    logs = []
+    # timeout ยาวพอให้ heartbeat (ทุก 15 วิ) เกิดขึ้น 2 ครั้งก่อนครบเวลา (ครั้งแรกแค่บันทึกขนาดไว้
+    # เทียบ ยังไม่มีอะไรให้เทียบ — ครั้งที่สองถึงจะรู้ว่าขนาดไม่ขยับจากรอบก่อน)
+    result = amr_downloader._wait_for_download(download_dir, timeout=35, log=logs.append)
+
+    assert result is None
+    assert any("ขนาดไฟล์ไม่ขยับเลยตั้งแต่รอบก่อน" in m for m in logs), f"ต้องเตือนตั้งแต่ heartbeat ระหว่างรอ: {logs}"

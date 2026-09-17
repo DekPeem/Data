@@ -354,11 +354,16 @@ def _wait_for_download(
     end_time = time.time() + timeout
     grace_end_time = None
     next_heartbeat = time.time() + 15
-    last_size = None  # ขนาดไฟล์ .crdownload ตอน heartbeat ก่อนหน้า — ใช้เช็คว่ายังโตอยู่จริง
-    # (กำลังดาวน์โหลดจริง) หรือค้างนิ่ง (0 ไบต์/ขนาดเดิมไม่ขยับเลย เช่นเซิร์ฟเวอร์ปิด connection
-    # ไปแล้วแต่ Chrome ยังไม่ finalize ไฟล์ หรือโปรแกรมป้องกันไวรัสถือไฟล์ค้างไว้สแกน) — ยืนยันจาก
-    # ผู้ใช้จริงว่ามี .crdownload ค้างอยู่นานเกิน grace period เดิม (60 วินาที) ยังไม่รู้ว่าโตอยู่จริง
-    # หรือค้างนิ่งตาย ต้องเก็บ evidence นี้ไว้วินิจฉัยครั้งต่อไปแทนที่จะเดา
+    last_size = None  # ขนาดไฟล์ .crdownload ตอน heartbeat ก่อนหน้า — ใช้ log การเปลี่ยนแปลงทุกรอบ
+    baseline_size = None  # ขนาดไฟล์ตอนแรกที่เห็น .crdownload — ใช้เทียบว่า "เคยโตขึ้นจริงบ้างไหม"
+    size_has_grown = False
+    # ยืนยันจากผู้ใช้จริง (ลองหลายรอบทั้งบัญชี/เดือนเดิม คนละ session กัน) ว่ามี .crdownload
+    # ที่ขนาด "เท่าเดิมเป๊ะ" ตั้งแต่ heartbeat แรกจนครบเวลาทุกรอบ ไม่เคยโตขึ้นแม้แต่ไบต์เดียว — ต่าง
+    # จากดาวน์โหลดที่กำลังโหลดจริงซึ่งขนาดควรขยับ ต่อเวลาให้ไฟล์แบบนี้ (ที่ไม่เคยโตเลย) ไม่มีประโยชน์
+    # เพราะรอนานแค่ไหนก็จะยังค้างที่ขนาดเดิม (เจอจริงแม้ต่อเวลาให้ 60 วินาทีไปแล้ว) — ให้ต่อเวลา
+    # เฉพาะไฟล์ที่เคยเห็นโตขึ้นจริงอย่างน้อยครั้งเดียวเท่านั้น ไฟล์ที่ค้างนิ่งสนิทให้คืน None ทันทีที่
+    # ครบเวลาเดิม เพื่อให้ผู้เรียก (เช่น _handle_popup) ไปลอง submit ใหม่ได้เร็วขึ้นแทนที่จะเสียเวลา
+    # รอเปล่าๆ อีก 60 วินาที
     while True:
         now = time.time()
         files = [f for f in os.listdir(download_dir) if f.endswith((".xls", ".xlsx", ".zip"))]
@@ -373,14 +378,20 @@ def _wait_for_download(
                 cur_size = os.path.getsize(os.path.join(download_dir, downloading[0]))
             except OSError:
                 cur_size = None
+            if cur_size is not None:
+                if baseline_size is None:
+                    baseline_size = cur_size
+                elif cur_size != baseline_size:
+                    size_has_grown = True
 
         if now >= end_time:
-            if downloading and grace_end_time is None:
+            if downloading and size_has_grown and grace_end_time is None:
                 grace_end_time = now + 60
                 log(f"⏳ ไฟล์กำลังดาวน์โหลดอยู่ ({downloading[0]}, {cur_size} ไบต์) แต่ครบเวลาแล้ว — ต่อเวลาให้อีก 60 วินาที")
             if grace_end_time is None or now >= grace_end_time:
                 if downloading:
-                    log(f"❌ ไฟล์ {downloading[0]} ยังไม่เสร็จหลังต่อเวลาให้แล้ว (ขนาดล่าสุด {cur_size} ไบต์) — ยอมแพ้")
+                    reason = "" if size_has_grown else " (ขนาดไม่เคยขยับเลยตั้งแต่เริ่มเห็นไฟล์ — น่าจะค้างนิ่งตาย ไม่ต่อเวลาให้)"
+                    log(f"❌ ไฟล์ {downloading[0]} ยังไม่เสร็จ (ขนาดล่าสุด {cur_size} ไบต์){reason} — ยอมแพ้")
                 return None
 
         if now >= next_heartbeat:
