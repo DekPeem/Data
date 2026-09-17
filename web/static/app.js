@@ -183,6 +183,10 @@ function applyBusinessTypeSuggestion(candidate) {
   }
   businessTypeSelect.value = candidate.suggested_business_type_code;
   updateRateCodeOptions();
+  if (candidate.suggested_is_approximate) {
+    lookupStatus.innerHTML = `<div class="lookup-status-text">⚠️ ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} — ไม่มีธุรกิจนี้ตรงๆ ในระบบ จึงตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" แทนแบบประมาณการ (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)<br><span style="color:#8996ab;">${candidate.suggested_explanation}</span></div>`;
+    return;
+  }
   lookupStatus.innerHTML = `<div class="lookup-status-text">✅ ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} → ตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" ให้อัตโนมัติแล้ว (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)</div>`;
 }
 

@@ -854,6 +854,46 @@ def test_business_type_lookup_success_suggests_matching_business_type(client, mo
     assert status["result"]["exact_match_index"] == 0
 
 
+def test_business_type_lookup_suggests_approximate_match_when_no_exact_division(client, monkeypatch):
+    """DBD คืนรหัส TSIC ที่ division ไม่ตรงกับธุรกิจไหนในระบบเราตรงๆ เลย (division "71" —
+    ไม่มีธุรกิจไหนยืนยัน division นี้ไว้ในข้อมูลอ้างอิงจริงตอนนี้) — ต้องยัง fallback ไปแนะนำ
+    ธุรกิจที่ใกล้เคียงที่สุด (same section หรือ cluster ที่พบบ่อยสุด) แทนที่จะปล่อยว่างเฉยๆ
+    และต้องรายงานว่าเป็นการประมาณการ (suggested_is_approximate=True) พร้อมคำอธิบาย"""
+
+    from amr_mapping.dbd_lookup import CompanyBusinessInfo
+
+    def fake_lookup(company_name, log=lambda m: None, headless=True):
+        return [
+            CompanyBusinessInfo(
+                registration_no="0105544000999",
+                juristic_name="บริษัท ทดสอบวิศวกรรม จำกัด",
+                juristic_type="บริษัทจำกัด",
+                status="ยังดำเนินกิจการอยู่",
+                tsic_code="71100",
+                tsic_name_th="กิจกรรมงานสถาปัตยกรรม",
+            )
+        ]
+
+    monkeypatch.setattr(app_module, "lookup_business_type_for_company", fake_lookup)
+
+    res = client.post("/api/business-type-lookup", json={"company_name": "บริษัท ทดสอบวิศวกรรม จำกัด"})
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/business-type-lookup/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    candidate = status["result"]["candidates"][0]
+    assert candidate["tsic_division_code"] == "71"
+    assert candidate["suggested_business_type_code"], "ต้องแนะนำธุรกิจที่ใกล้เคียงที่สุดแทนที่จะปล่อยว่าง"
+    assert candidate["suggested_is_approximate"] is True
+    assert candidate["suggested_explanation"]
+
+
 def test_business_type_lookup_handles_selenium_error_gracefully(client, monkeypatch):
     def fake_lookup(company_name, log=lambda m: None, headless=True):
         raise RuntimeError("เปิด Chrome ไม่สำเร็จ (จำลอง error)")

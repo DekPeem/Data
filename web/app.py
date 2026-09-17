@@ -32,6 +32,7 @@ from amr_mapping.amr_import import (
     import_amr_for_business,
     import_amr_from_files,
 )
+from amr_mapping.clustering import cluster_business_types, nearest_business_type_by_tsic
 from amr_mapping.dbd_lookup import find_exact_match, lookup_business_type_for_company
 from amr_mapping.loader import (
     DEFAULT_DATA_DIR,
@@ -461,9 +462,21 @@ def _run_business_type_lookup_job(job_id: str, company_name: str) -> None:
             if bt and bt.division_code and bt.division_code not in division_to_business:
                 division_to_business[bt.division_code] = p.business_type_code
 
+        # ถ้าไม่มี division ตรงเป๊ะเลย ลองใช้การจับคู่แบบผ่อนลง (section เดียวกัน หรือถ้าไม่มีเลย
+        # ใช้ตัวแทนของกลุ่มรูปแบบการใช้ไฟที่พบบ่อยที่สุด) แทนที่จะปล่อยให้ผู้ใช้เลือกเองทันที —
+        # ดู clustering.nearest_business_type_by_tsic เหตุผลละเอียด
+        clusters = cluster_business_types(reference)
+
         candidates = []
         for r in results:
             suggested_code = division_to_business.get(r.tsic_division_code)
+            approximate_match = None
+            if not suggested_code:
+                approximate_match = nearest_business_type_by_tsic(
+                    None, r.tsic_division_code, reference, clusters=clusters
+                )
+                if approximate_match:
+                    suggested_code = approximate_match.business_type_code
             suggested_bt = reference.business_types.get(suggested_code) if suggested_code else None
             candidates.append(
                 {
@@ -476,6 +489,8 @@ def _run_business_type_lookup_job(job_id: str, company_name: str) -> None:
                     "tsic_division_code": r.tsic_division_code,
                     "suggested_business_type_code": suggested_code,
                     "suggested_business_type_name": suggested_bt.name_th if suggested_bt else None,
+                    "suggested_is_approximate": approximate_match is not None,
+                    "suggested_explanation": approximate_match.explanation_th if approximate_match else None,
                 }
             )
 
