@@ -226,6 +226,8 @@ class _FakeDataforthaiDriver:
             if self._suggestion_selector:
                 self.current_url = self._url_changes_to or self.current_url
             return self._suggestion_selector
+        if "querySelectorAll('input')" in script:
+            return []  # dump diagnostics — ไม่มี input เลยในเทสต์นี้
 
     def find_element(self, by, selector):
         from selenium.common.exceptions import NoSuchElementException
@@ -238,14 +240,29 @@ class _FakeDataforthaiDriver:
         raise NoSuchElementException(selector)
 
 
-def test_lookup_business_category_returns_none_when_search_input_not_found():
+def _install_fake_clock(monkeypatch):
+    """แทน time.sleep/time.time ด้วยนาฬิกาจำลอง — กันไม่ให้เทสต์ที่ทำให้โค้ดต้องวนลูปรอ
+    (เช่นรอช่องค้นหาที่ไม่มีวันปรากฏ ~10 วินาที) ต้องรอเวลาจริง"""
+
+    fake_clock = {"t": 0.0}
+
+    def fake_sleep(seconds):
+        fake_clock["t"] += seconds
+
+    monkeypatch.setattr(dataforthai_lookup.time, "sleep", fake_sleep)
+    monkeypatch.setattr(dataforthai_lookup.time, "time", lambda: fake_clock["t"])
+
+
+def test_lookup_business_category_returns_none_when_search_input_not_found(monkeypatch):
     driver = _FakeDataforthaiDriver(input_selector=None)
     logs = []
+    _install_fake_clock(monkeypatch)
 
     result = lookup_business_category(driver, "บริษัท ทดสอบ จำกัด", log=logs.append, timeout=0.3)
 
     assert result is None
     assert any("ไม่พบช่องค้นหา" in m for m in logs)
+    assert any("ไม่มี <input> เลยสักตัว" in m for m in logs)
 
 
 def test_lookup_business_category_returns_none_when_no_suggestion_matches():

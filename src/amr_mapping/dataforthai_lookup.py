@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass
 from typing import Callable, List, Optional
 from urllib.parse import quote
@@ -158,11 +159,13 @@ def setup_driver(headless: bool = True):
 
 
 # สคริปต์ JS หาช่องพิมพ์ค้นหาที่ "น่าจะใช่" ในหน้า dataforthai.com/business — สแกน <input> ที่
-# มองเห็นได้ (ไม่ถูกซ่อน) และเป็นช่องพิมพ์ข้อความ (ไม่ใช่ checkbox/hidden ฯลฯ) คืน selector ที่ใช้
-# หา element นั้นกลับมาได้อีกที — ใช้วิธีสแกนกว้างๆ แทนการเดา id/class ที่เจาะจงตายตัว เพราะยัง
-# ไม่เคยยืนยัน selector จริงของช่องนี้ (ดู docstring หัวไฟล์)
+# มองเห็นได้ (ไม่ถูกซ่อน) และเป็นช่องพิมพ์ข้อความ (รวม type="search" ด้วย — ช่องค้นหาทั่วไปมักใช้
+# type นี้ ไม่ใช่แค่ "text" เฉยๆ) คืน selector ที่ใช้หา element นั้นกลับมาได้อีกที — ใช้วิธีสแกน
+# กว้างๆ แทนการเดา id/class ที่เจาะจงตายตัว เพราะยังไม่เคยยืนยัน selector จริงของช่องนี้ (ดู
+# docstring หัวไฟล์) — ยืนยันจากผู้ใช้จริงว่ารอบแรกที่ลอง (เช็คแค่ type="text"/ไม่มี type) หาไม่เจอ
+# เลยทั้งที่หน้ามีช่องค้นหาอยู่จริงแน่ๆ (เห็นในภาพหน้าจอ) จึงต้องกว้างขึ้น + เก็บ diagnostics ไว้ด้วย
 _FIND_SEARCH_INPUT_JS = """
-var inputs = document.querySelectorAll('input[type="text"], input:not([type])');
+var inputs = document.querySelectorAll('input[type="text"], input[type="search"], input:not([type])');
 for (var i = 0; i < inputs.length; i++) {
     var el = inputs[i];
     var rect = el.getBoundingClientRect();
@@ -172,6 +175,23 @@ for (var i = 0; i < inputs.length; i++) {
     }
 }
 return null;
+"""
+
+# เก็บรายละเอียด <input> ทุกตัวในหน้า (type/id/name/placeholder/มองเห็นได้ไหม) — ใช้ตอนหาช่อง
+# ค้นหาไม่เจอเลย เพื่อดูว่าจริงๆ แล้วหน้ามี input อะไรอยู่บ้าง (คนละทางกับ _FIND_SEARCH_INPUT_JS
+# ที่กรองแล้ว ตัวนี้เอาข้อมูลดิบมาดูทั้งหมดเพื่อวินิจฉัย)
+_DUMP_ALL_INPUTS_JS = """
+var inputs = document.querySelectorAll('input');
+var out = [];
+for (var i = 0; i < inputs.length && i < 30; i++) {
+    var el = inputs[i];
+    var rect = el.getBoundingClientRect();
+    out.push('type=' + (el.getAttribute('type') || '(none)') + ' id=' + (el.id || '(none)') +
+        ' name=' + (el.getAttribute('name') || '(none)') +
+        ' placeholder=' + (el.getAttribute('placeholder') || '(none)') +
+        ' visible=' + (rect.width > 0 && rect.height > 0));
+}
+return out;
 """
 
 # สแกนหา element ที่คลิกได้ (a/li/div ที่มี onclick หรือ cursor:pointer) ซึ่งมีข้อความตรงกับคำค้นหา
@@ -233,9 +253,26 @@ def lookup_business_category(
     log(f"🔍 เปิด {BUSINESS_SEARCH_URL} เพื่อค้นหา '{company_name}' (dataforthai.com — ตัวสำรองของ DBD)")
     driver.get(BUSINESS_SEARCH_URL)
 
+    # รอ+ลองใหม่หาช่องค้นหาสูงสุด 10 วินาที (ไม่ใช่สแกนครั้งเดียวจบ) เผื่อ widget ค้นหาโหลด/mount
+    # ช้ากว่าตัว body ของหน้า (พบรูปแบบนี้มาแล้วกับหน้า PEA — ดู amr_downloader._try_download_from_show_page)
+    deadline = time.time() + 10
     input_selector = driver.execute_script(_FIND_SEARCH_INPUT_JS)
+    while not input_selector and time.time() < deadline:
+        time.sleep(0.5)
+        input_selector = driver.execute_script(_FIND_SEARCH_INPUT_JS)
+
     if not input_selector:
         log("❌ ไม่พบช่องค้นหาในหน้า dataforthai.com/business เลย (โครงสร้างหน้าอาจเปลี่ยนไป)")
+        try:
+            all_inputs = driver.execute_script(_DUMP_ALL_INPUTS_JS)
+            if all_inputs:
+                log(f"🔎 input ทั้งหมดที่เจอในหน้า ({len(all_inputs)} ตัว):")
+                for line in all_inputs:
+                    log(f"🔎   {line}")
+            else:
+                log("🔎 ไม่มี <input> เลยสักตัวในหน้านี้ (อาจจะยังโหลดไม่เสร็จ/ถูกบล็อก)")
+        except Exception as e:  # noqa: BLE001 — เก็บ diagnostics ไม่สำเร็จ ต้องไม่ทำให้ฟังก์ชันพังไปด้วย
+            log(f"⚠️ เก็บรายละเอียด input ไม่สำเร็จ: {e}")
         return None
     log(f"✅ พบช่องค้นหา ({input_selector})")
 
