@@ -241,7 +241,25 @@ async function pollBusinessTypeLookupJob(jobId) {
     return;
   }
 
-  const { candidates, exact_match_index } = data.result;
+  const { candidates, exact_match_index, blocked, blocked_message, fallback } = data.result;
+
+  if (blocked) {
+    let html = `<div class="lookup-status-text" style="color:#a5670b;">🚫 เว็บ DBD DataWarehouse บล็อกการเข้าถึงอัตโนมัติ (ไม่ใช่ว่าไม่พบบริษัทนี้จริงๆ) — ${blocked_message || ""}</div>`;
+    if (fallback && (fallback.business_category || fallback.candidates.length)) {
+      html += `<div class="lookup-status-text" style="margin-top:8px;">🔁 ลองหาข้อมูลจาก <b>dataforthai.com</b> แทน (เว็บบุคคลที่สาม ไม่ใช่แหล่งข้อมูลทางการ — ใช้ประกอบการตัดสินใจเท่านั้น):</div>`;
+      if (fallback.business_category) {
+        html += `<div class="lookup-status-text" style="margin-top:4px;">📋 หมวดธุรกิจที่พบ: <b>${fallback.business_category}</b> — กรุณาเลือกประเภทธุรกิจที่ใกล้เคียงเองด้านบน</div>`;
+      }
+      if (fallback.candidates.length) {
+        html += `<div class="lookup-status-text" style="margin-top:4px;color:#8996ab;">ชื่อที่ใกล้เคียงที่เจอ: ${fallback.candidates.map((c) => c.label).join(", ")}</div>`;
+      }
+    } else {
+      html += `<div class="lookup-status-text" style="margin-top:8px;">ลองหาข้อมูลจาก dataforthai.com แทนก็ไม่สำเร็จ — กรุณาเลือกประเภทธุรกิจเองด้านบน</div>`;
+    }
+    lookupStatus.innerHTML = html + renderSearchLogDetails(data.logs, true);
+    return;
+  }
+
   if (!candidates.length) {
     lookupStatus.innerHTML = `<div class="lookup-status-text">ไม่พบบริษัทนี้ใน DBD DataWarehouse — กรุณาเลือกประเภทธุรกิจเองด้านบน</div>${renderSearchLogDetails(data.logs, true)}`;
   } else if (exact_match_index !== null && exact_match_index !== undefined) {

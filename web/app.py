@@ -33,7 +33,9 @@ from amr_mapping.amr_import import (
     import_amr_from_files,
 )
 from amr_mapping.clustering import cluster_business_types, nearest_business_type_by_tsic
-from amr_mapping.dbd_lookup import find_exact_match, lookup_business_type_for_company
+from amr_mapping.dataforthai_lookup import lookup_business_category, suggest_companies
+from amr_mapping.dataforthai_lookup import setup_driver as setup_dataforthai_driver
+from amr_mapping.dbd_lookup import BlockedByAntiBot, find_exact_match, lookup_business_type_for_company
 from amr_mapping.loader import (
     DEFAULT_DATA_DIR,
     load_import_log_local,
@@ -436,6 +438,44 @@ def api_forecast_adhoc():
     )
 
 
+def _run_dataforthai_fallback(company_name: str, log) -> Optional[dict]:
+    """เว็บ DBD โดนบล็อกการเข้าถึงอัตโนมัติ (ดู dbd_lookup.BlockedByAntiBot — ยืนยันจากผู้ใช้จริง
+    ว่าเจอหน้า "Request unsuccessful. Incapsula incident ID: ...") — ลอง fallback ไปที่
+    dataforthai.com แทน (เว็บบุคคลที่สามที่นำข้อมูลจดทะเบียนธุรกิจสาธารณะมาแสดงต่ออีกที ไม่ใช่
+    แหล่งข้อมูลทางการของ DBD เอง) ดู dataforthai_lookup.py
+
+    ⚠️ ผลลัพธ์จากเว็บนี้เป็น "หมวดธุรกิจ" แบบข้อความอิสระ (เช่น "ร้านสะดวกซื้อ/มินิมาร์ท") ไม่ใช่
+    รหัส TSIC มาตรฐานแบบที่ DBD ให้มา จึงจับคู่กับ business_type_code ของเราในระบบโดยอัตโนมัติ
+    ไม่ได้ (ไม่มีรหัสให้เทียบ) — ให้แค่ข้อความประกอบการตัดสินใจเลือกประเภทธุรกิจเองเท่านั้น
+
+    ⚠️ ขั้นตอนคลิกเลือก suggestion + อ่านหน้าโปรไฟล์ยังไม่เคยทดสอบกับเว็บจริง (ดู docstring ของ
+    dataforthai_lookup.lookup_business_category) คืน None ได้ถ้าล้มเหลว ไม่ raise ทำให้ job หลัก
+    ล้มไปด้วย เพราะเป็นแค่ทางเลือกเสริมตอน DBD ใช้ไม่ได้อยู่แล้ว"""
+
+    log("🔁 ลอง fallback ไปที่ dataforthai.com (เว็บบุคคลที่สาม ไม่ใช่แหล่งข้อมูลทางการของ DBD)")
+    suggestions = suggest_companies(company_name)
+    if not suggestions:
+        log("⚠️ ไม่พบชื่อที่ใกล้เคียงใน dataforthai.com เลย")
+        return None
+    log(f"✅ พบ {len(suggestions)} ชื่อที่ใกล้เคียงใน dataforthai.com")
+
+    category = None
+    try:
+        driver = setup_dataforthai_driver()
+        try:
+            category = lookup_business_category(driver, company_name, log=log)
+        finally:
+            driver.quit()
+    except Exception as e:  # noqa: BLE001 — fallback เสริม ล้มแล้วต้องไม่ทำให้ job หลักพังไปด้วย
+        log(f"⚠️ ดึงหมวดธุรกิจจาก dataforthai.com ไม่สำเร็จ: {e}")
+
+    return {
+        "source": "dataforthai",
+        "candidates": [{"label": s.label, "value": s.value} for s in suggestions],
+        "business_category": category,
+    }
+
+
 def _run_business_type_lookup_job(job_id: str, company_name: str) -> None:
     """ค้นหาประเภทธุรกิจ (TSIC) ของบริษัทจากชื่อ ผ่าน DBD DataWarehouse (ดู dbd_lookup.py) —
     รันเป็น background job แบบเดียวกับ AMR import เพราะเปิดเบราว์เซอร์จริงใช้เวลาหลายวินาที
@@ -503,6 +543,26 @@ def _run_business_type_lookup_job(job_id: str, company_name: str) -> None:
                 "query": company_name,
                 "candidates": candidates,
                 "exact_match_index": exact_index,
+                "blocked": False,
+                "fallback": None,
+            }
+    except BlockedByAntiBot as e:
+        log(f"🚫 {e}")
+        fallback = None
+        try:
+            fallback = _run_dataforthai_fallback(company_name, log)
+        except Exception as fallback_error:  # noqa: BLE001 — fallback ล้มก็ไม่ควรทำให้ job ทั้งหมดกลายเป็น error
+            log(f"⚠️ fallback ไป dataforthai.com ก็ไม่สำเร็จเช่นกัน: {fallback_error}")
+
+        with _JOBS_LOCK:
+            _JOBS[job_id]["status"] = "success"
+            _JOBS[job_id]["result"] = {
+                "query": company_name,
+                "candidates": [],
+                "exact_match_index": None,
+                "blocked": True,
+                "blocked_message": str(e),
+                "fallback": fallback,
             }
     except Exception as e:  # noqa: BLE001 — ต้อง catch ทุก error เพื่อรายงานสถานะ job ให้ถูกต้อง
         with _JOBS_LOCK:

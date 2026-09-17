@@ -914,6 +914,84 @@ def test_business_type_lookup_handles_selenium_error_gracefully(client, monkeypa
     assert "เปิด Chrome ไม่สำเร็จ" in status["error"]
 
 
+def test_business_type_lookup_falls_back_to_dataforthai_when_dbd_blocked(client, monkeypatch):
+    """ยืนยันจากผู้ใช้จริง: DBD บล็อกการเข้าถึงอัตโนมัติ (Incapsula) — ต้อง fallback ไปลองหา
+    ข้อมูลที่ dataforthai.com แทน (เว็บบุคคลที่สาม) และคืนผลเป็น status "success" (ไม่ใช่ "error")
+    พร้อม blocked=True และข้อมูล fallback ที่ดึงมาได้ แทนที่จะทำให้ทั้ง job ดูเหมือนพังไปเลย"""
+
+    from amr_mapping.dataforthai_lookup import CompanySuggestion
+    from amr_mapping.dbd_lookup import BlockedByAntiBot
+
+    def fake_lookup(company_name, log=lambda m: None, headless=True):
+        raise BlockedByAntiBot("Incapsula incident ID: 123-456")
+
+    def fake_suggest(company_name, timeout=10.0):
+        return [CompanySuggestion(label="บริษัท ทดสอบ จำกัด (มหาชน)", value="ทดสอบ")]
+
+    def fake_category(driver, company_name, log=lambda m: None, timeout=20.0):
+        log("✅ พบหมวดธุรกิจ: ร้านสะดวกซื้อ/มินิมาร์ท")
+        return "ร้านสะดวกซื้อ/มินิมาร์ท"
+
+    class _FakeDriver:
+        def quit(self):
+            pass
+
+    monkeypatch.setattr(app_module, "lookup_business_type_for_company", fake_lookup)
+    monkeypatch.setattr(app_module, "suggest_companies", fake_suggest)
+    monkeypatch.setattr(app_module, "lookup_business_category", fake_category)
+    monkeypatch.setattr(app_module, "setup_dataforthai_driver", lambda headless=True: _FakeDriver())
+
+    res = client.post("/api/business-type-lookup", json={"company_name": "บริษัท ทดสอบ จำกัด (มหาชน)"})
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/business-type-lookup/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    result = status["result"]
+    assert result["blocked"] is True
+    assert "Incapsula" in result["blocked_message"]
+    assert result["candidates"] == []
+    assert result["fallback"]["source"] == "dataforthai"
+    assert result["fallback"]["business_category"] == "ร้านสะดวกซื้อ/มินิมาร์ท"
+    assert result["fallback"]["candidates"][0]["label"] == "บริษัท ทดสอบ จำกัด (มหาชน)"
+
+
+def test_business_type_lookup_reports_blocked_even_when_dataforthai_fallback_fails(client, monkeypatch):
+    """fallback เองก็ล้มเหลวได้ (เช่น dataforthai.com ก็ใช้งานไม่ได้ตอนนั้น) — ต้องไม่ทำให้ job
+    กลายเป็น status "error" ไปด้วย แค่ fallback เป็น None แทน (blocked=True ยังอยู่ ผู้ใช้จะได้รู้
+    ว่า DBD บล็อก ไม่ใช่แค่ error กำกวม)"""
+
+    from amr_mapping.dbd_lookup import BlockedByAntiBot
+
+    def fake_lookup(company_name, log=lambda m: None, headless=True):
+        raise BlockedByAntiBot("Incapsula incident ID: 999")
+
+    def fake_suggest(company_name, timeout=10.0):
+        raise RuntimeError("dataforthai.com ก็ล่มด้วย (จำลอง)")
+
+    monkeypatch.setattr(app_module, "lookup_business_type_for_company", fake_lookup)
+    monkeypatch.setattr(app_module, "suggest_companies", fake_suggest)
+
+    res = client.post("/api/business-type-lookup", json={"company_name": "บริษัท ทดสอบ จำกัด"})
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/business-type-lookup/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    assert status["result"]["blocked"] is True
+    assert status["result"]["fallback"] is None
+
+
 def test_start_import_manual_mode_when_only_business_type_given(client, monkeypatch):
     """ระบุ business_type_code มาแม้จะไม่มี rate_code -> ต้องถือเป็นโหมดกรอกเอง (manual)
     ไม่ใช่ auto จึงต้อง validate ครบทุกฟิลด์ตามเดิม (จะ error เพราะ rate_code หาย)"""

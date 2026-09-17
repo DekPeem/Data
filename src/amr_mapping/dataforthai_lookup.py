@@ -1,0 +1,246 @@
+"""ค้นหาประเภทธุรกิจของนิติบุคคลจากชื่อบริษัท ผ่านเว็บ dataforthai.com — ใช้เป็น "ตัวสำรอง"
+(fallback) เมื่อ dbd_lookup.py (เว็บทางการของกรมพัฒนาธุรกิจการค้าเอง) โดนบล็อกโดยระบบป้องกันบอท
+(Incapsula — ยืนยันจากผู้ใช้จริงแล้ว ดู dbd_lookup.BlockedByAntiBot)
+
+dataforthai.com เป็นเว็บบุคคลที่สาม (ไม่ใช่เว็บทางการของ DBD) ที่นำข้อมูลจดทะเบียนธุรกิจ (ข้อมูล
+สาธารณะจาก DBD) มาแสดงผลต่ออีกที — ใช้เป็นทางเลือกสำรองเท่านั้น ไม่ใช่แหล่งข้อมูลหลัก
+
+โครงสร้างที่ยืนยันจากผู้ใช้จริงผ่าน DevTools Network tab:
+    1. GET https://www.dataforthai.com/api/suggest?q=<คำค้นหา>
+       คืน JSON list ของ [{"label": "บริษัท xxx จำกัด", "value": "xxx"}, ...] — รายชื่อบริษัทที่
+       ใกล้เคียง (autocomplete) เท่านั้น ไม่มีข้อมูลประเภทธุรกิจ/เลขทะเบียนมาด้วย — เป็น REST API
+       ธรรมดาที่เรียกตรงได้เลยไม่ต้องใช้ Selenium (ยืนยันจาก response จริงที่ผู้ใช้ capture มา)
+    2. คลิกเลือกชื่อจากรายการนั้นในหน้าเว็บ จะพาไปหน้า https://www.dataforthai.com/company/<เลข
+       ทะเบียน>/ ซึ่งมีข้อความ "ประกอบธุรกิจ" / "หมวดธุรกิจ" อยู่ในหน้า (เห็นจาก screenshot จริง)
+       — ยังไม่ยืนยัน CSS selector ที่แน่นอนของช่องค้นหา/รายการ suggestion ในหน้าเว็บ (ลอง
+       Inspect Element แล้วแต่ไปโดน element ที่ไม่เกี่ยวข้อง เหมือนปัญหาเดียวกับตอนแกะปุ่ม
+       Download ของ PEA ในช่วงแรก) จึงใช้วิธีสแกนหา element ที่เข้าเงื่อนไขกว้างๆ แทนการพึ่ง
+       selector ที่เจาะจงตายตัว (ทนทานกว่า เหมือนที่ทำสำเร็จกับ amr_downloader._find_download_element)
+       — ⚠️ ขั้นตอนนี้ (คลิก suggestion + อ่านหน้าโปรไฟล์) ยังไม่เคยทดสอบกับเว็บจริง ต้องรอผลทดสอบ
+       จริงรอบแรกก่อนถึงจะยืนยันได้ว่าใช้งานได้จริงหรือไม่ — diagnostics ในนี้เตรียมไว้ล่วงหน้าเพื่อ
+       ให้รอบแรกที่ล้มเหลว (ถ้าล้มเหลว) ให้หลักฐานที่ใช้วินิจฉัยต่อได้ทันที แทนที่จะต้องเดาใหม่
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass
+from typing import Callable, List, Optional
+from urllib.parse import quote
+from urllib.request import Request, urlopen
+
+BASE_URL = "https://www.dataforthai.com"
+SUGGEST_URL = f"{BASE_URL}/api/suggest"
+BUSINESS_SEARCH_URL = f"{BASE_URL}/business"
+
+ProgressCallback = Callable[[str], None]
+
+
+def _noop(_: str) -> None:
+    pass
+
+
+@dataclass(frozen=True)
+class CompanySuggestion:
+    """1 รายการจาก /api/suggest — แค่ชื่อบริษัทที่ใกล้เคียง ยังไม่มีประเภทธุรกิจ"""
+
+    label: str  # ชื่อเต็ม เช่น "บริษัท ซีพี ออลล์ จำกัด (มหาชน)"
+    value: str  # ชื่อแบบตัดคำนำหน้า/ต่อท้ายออก เช่น "ซีพี ออลล์"
+
+
+def suggest_companies(query: str, timeout: float = 10.0) -> List[CompanySuggestion]:
+    """เรียก /api/suggest?q=... ตรงๆ ด้วย HTTP GET ธรรมดา (ไม่ต้องใช้ Selenium — ยืนยันจาก
+    response จริงแล้วว่าเป็น REST API เปิดเผย ไม่มีการเข้ารหัส/ป้องกันบอทแบบ DBD) คืน list ว่าง
+    ถ้าไม่มีผลลัพธ์หรือเรียกไม่สำเร็จ (ไม่ raise — endpoint นี้เป็นแค่ตัวช่วยเดาชื่อ ไม่ใช่ผลลัพธ์
+    สุดท้าย พังแล้วควรจะข้ามไปเฉยๆ ไม่ทำให้ทั้ง flow ล้ม)"""
+
+    url = f"{SUGGEST_URL}?q={quote(query)}"
+    request = Request(url, headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"})
+    try:
+        with urlopen(request, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8")
+    except Exception:  # noqa: BLE001 — เครือข่ายมีปัญหา/เว็บเปลี่ยน format ก็ถือว่าไม่มีผลลัพธ์
+        return []
+
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+
+    if not isinstance(data, list):
+        return []
+
+    results = []
+    for item in data:
+        if isinstance(item, dict) and item.get("label") and item.get("value"):
+            results.append(CompanySuggestion(label=str(item["label"]), value=str(item["value"])))
+    return results
+
+
+def _require_selenium():
+    try:
+        from selenium import webdriver  # noqa: F401
+    except ImportError as exc:  # pragma: no cover
+        raise ImportError(
+            "ต้องติดตั้ง selenium และ webdriver-manager ก่อนใช้งาน dataforthai_lookup: "
+            "pip install selenium webdriver-manager"
+        ) from exc
+
+
+def setup_driver(headless: bool = True):
+    _require_selenium()
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.chrome.service import Service
+    from webdriver_manager.chrome import ChromeDriverManager
+
+    chrome_opts = Options()
+    if headless:
+        chrome_opts.add_argument("--headless=new")
+    chrome_opts.add_argument("--disable-gpu")
+    chrome_opts.add_argument("--no-sandbox")
+    chrome_opts.add_argument("--disable-dev-shm-usage")
+    chrome_opts.add_argument("--window-size=1280,900")
+
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=chrome_opts)
+    driver.implicitly_wait(5)
+    return driver
+
+
+# สคริปต์ JS หาช่องพิมพ์ค้นหาที่ "น่าจะใช่" ในหน้า dataforthai.com/business — สแกน <input> ที่
+# มองเห็นได้ (ไม่ถูกซ่อน) และเป็นช่องพิมพ์ข้อความ (ไม่ใช่ checkbox/hidden ฯลฯ) คืน selector ที่ใช้
+# หา element นั้นกลับมาได้อีกที — ใช้วิธีสแกนกว้างๆ แทนการเดา id/class ที่เจาะจงตายตัว เพราะยัง
+# ไม่เคยยืนยัน selector จริงของช่องนี้ (ดู docstring หัวไฟล์)
+_FIND_SEARCH_INPUT_JS = """
+var inputs = document.querySelectorAll('input[type="text"], input:not([type])');
+for (var i = 0; i < inputs.length; i++) {
+    var el = inputs[i];
+    var rect = el.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0 && !el.disabled) {
+        if (!el.id) { el.setAttribute('data-dft-search-input', '1'); return '[data-dft-search-input="1"]'; }
+        return '#' + el.id;
+    }
+}
+return null;
+"""
+
+# สแกนหา element ที่คลิกได้ (a/li/div ที่มี onclick หรือ cursor:pointer) ซึ่งมีข้อความตรงกับคำค้นหา
+# (หรือใกล้เคียง) — ใช้ตอนต้องคลิกเลือกชื่อบริษัทจากรายการ suggestion ที่เด้งขึ้นมา
+_FIND_SUGGESTION_ITEM_JS = """
+var query = arguments[0].toLowerCase();
+var candidates = document.querySelectorAll('a, li, div[onclick], [role="option"], [role="button"]');
+for (var i = 0; i < candidates.length && i < 500; i++) {
+    var el = candidates[i];
+    var text = (el.childElementCount === 0 ? el.textContent : '').trim().toLowerCase();
+    if (text && text.length > 2 && text.indexOf(query) !== -1) {
+        var rect = el.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+            if (!el.id) { el.setAttribute('data-dft-suggestion-match', '1'); return '[data-dft-suggestion-match="1"]'; }
+            return '#' + el.id;
+        }
+    }
+}
+return null;
+"""
+
+# label ที่พบจริงในหน้ารายละเอียดบริษัท (ยืนยันจาก screenshot ผู้ใช้จริง) — สแกนหาในข้อความทั้งหน้า
+# แทนการพึ่ง CSS selector เจาะจง (ทนทานกว่าถ้าโครงสร้างหน้าเปลี่ยนไปบ้าง)
+_BUSINESS_CATEGORY_LABELS = ("หมวดธุรกิจ", "ประกอบธุรกิจ")
+
+
+def _extract_business_category(body_text: str) -> Optional[str]:
+    """ดึงข้อความหลัง label 'หมวดธุรกิจ' หรือ 'ประกอบธุรกิจ' จากข้อความเต็มของหน้า (ตัดที่ขึ้น
+    บรรทัดใหม่หรือ label อื่นถัดไป) — คืน None ถ้าไม่เจอ label ไหนเลย"""
+
+    for label in _BUSINESS_CATEGORY_LABELS:
+        match = re.search(rf"{re.escape(label)}\s*[:：]\s*(.+)", body_text)
+        if match:
+            value = match.group(1).strip()
+            # ตัดที่ label ถัดไปถ้าติดมาในบรรทัดเดียวกัน (เผื่อ body_text รวมหลายบรรทัดเป็นก้อนเดียว)
+            for other_label in _BUSINESS_CATEGORY_LABELS + ("ธุรกิจที่ส่งงบการเงินล่าสุด", "สถานะ"):
+                idx = value.find(other_label)
+                if idx > 0:
+                    value = value[:idx].strip()
+            if value:
+                return value
+    return None
+
+
+def lookup_business_category(
+    driver, company_name: str, log: ProgressCallback = _noop, timeout: float = 20.0
+) -> Optional[str]:
+    """เปิดหน้า dataforthai.com/business พิมพ์ชื่อบริษัท คลิกเลือกจาก suggestion แล้วอ่านข้อความ
+    "หมวดธุรกิจ"/"ประกอบธุรกิจ" จากหน้ารายละเอียดที่โหลดมา — คืน None ถ้าหาไม่เจอ/ทำตามขั้นตอนไม่
+    สำเร็จ (log รายละเอียดไว้ให้วินิจฉัยได้เสมอ ไม่ raise ยกเว้น error ที่ไม่คาดคิดจริงๆ)
+
+    ⚠️ ยังไม่เคยทดสอบกับเว็บจริง (ดูคำเตือนหัวไฟล์) — ใช้ diagnostics ละเอียดตั้งแต่รอบแรกเพื่อให้
+    วินิจฉัยได้ทันทีถ้าไม่สำเร็จ แทนที่จะต้องเดาใหม่เหมือนตอนแรกที่แก้ amr_downloader"""
+
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.support.ui import WebDriverWait
+
+    log(f"🔍 เปิด {BUSINESS_SEARCH_URL} เพื่อค้นหา '{company_name}' (dataforthai.com — ตัวสำรองของ DBD)")
+    driver.get(BUSINESS_SEARCH_URL)
+
+    input_selector = driver.execute_script(_FIND_SEARCH_INPUT_JS)
+    if not input_selector:
+        log("❌ ไม่พบช่องค้นหาในหน้า dataforthai.com/business เลย (โครงสร้างหน้าอาจเปลี่ยนไป)")
+        return None
+    log(f"✅ พบช่องค้นหา ({input_selector})")
+
+    try:
+        search_input = driver.find_element(By.CSS_SELECTOR, input_selector)
+    except Exception as e:  # noqa: BLE001
+        log(f"❌ หา element ช่องค้นหาไม่สำเร็จ: {e}")
+        return None
+
+    search_input.click()
+    search_input.send_keys(company_name)
+
+    suggestion_selector = None
+    deadline_wait = WebDriverWait(driver, timeout)
+    try:
+        suggestion_selector = deadline_wait.until(
+            lambda d: d.execute_script(_FIND_SUGGESTION_ITEM_JS, company_name.split()[0] if company_name.split() else company_name)
+        )
+    except Exception:  # noqa: BLE001 — TimeoutException ถือว่าไม่พบ suggestion
+        pass
+
+    if not suggestion_selector:
+        log(f"❌ ไม่เจอรายการแนะนำ (suggestion) ที่ตรงกับ '{company_name}' ภายใน {timeout} วินาที")
+        try:
+            body_text = driver.find_element(By.TAG_NAME, "body").text
+            log(f"🔎 ข้อความในหน้า (300 ตัวอักษรแรก): {' '.join(body_text.split())[:300]}")
+        except Exception:  # noqa: BLE001
+            pass
+        return None
+
+    log(f"👉 คลิกรายการแนะนำ ({suggestion_selector})")
+    try:
+        suggestion_el = driver.find_element(By.CSS_SELECTOR, suggestion_selector)
+        driver.execute_script("arguments[0].click();", suggestion_el)
+    except Exception as e:  # noqa: BLE001
+        log(f"❌ คลิกรายการแนะนำไม่สำเร็จ: {e}")
+        return None
+
+    try:
+        WebDriverWait(driver, timeout).until(EC.url_contains("/company/"))
+    except Exception:  # noqa: BLE001 — TimeoutException — อาจจะยังโหลดอยู่/URL ไม่เปลี่ยนตามคาด
+        log(f"⚠️ URL ไม่เปลี่ยนไปเป็นหน้า /company/ ภายใน {timeout} วินาที (url ปัจจุบัน={driver.current_url})")
+
+    try:
+        body_text = driver.find_element(By.TAG_NAME, "body").text
+    except Exception as e:  # noqa: BLE001
+        log(f"❌ อ่านข้อความหน้าไม่สำเร็จ: {e}")
+        return None
+
+    category = _extract_business_category(body_text)
+    if category:
+        log(f"✅ พบหมวดธุรกิจ: {category}")
+    else:
+        log(f"❌ ไม่พบ label 'หมวดธุรกิจ'/'ประกอบธุรกิจ' ในหน้า url={driver.current_url}")
+        log(f"🔎 ข้อความในหน้า (300 ตัวอักษรแรก): {' '.join(body_text.split())[:300]}")
+    return category
