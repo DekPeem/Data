@@ -213,6 +213,18 @@ function renderLookupCandidates(candidates) {
   });
 }
 
+// สร้าง <details> แสดง log การค้นหาจริง (คำค้นหาที่ลองทั้งหมด/จำนวนผลลัพธ์แต่ละรอบ) — เปิด
+// (open ตั้งแต่แรก) เฉพาะตอน "ไม่พบ/error" เพราะเป็นตอนที่มีประโยชน์ที่สุด (ช่วยดูว่าระบบลอง
+// ค้นหาด้วยคำว่าอะไรบ้างก่อนจะสรุปว่าไม่เจอ แทนที่จะรู้แค่ผลลัพธ์สุดท้ายเฉยๆ)
+function renderSearchLogDetails(logs, openByDefault) {
+  if (!logs || !logs.length) return "";
+  return `
+    <details style="margin-top:8px;" ${openByDefault ? "open" : ""}>
+      <summary style="cursor:pointer;font-size:12px;color:#8996ab;">ดู log การค้นหาจริง (${logs.length} บรรทัด)</summary>
+      <div style="margin-top:6px;background:#0f1b2d;color:#cde2fb;font-family:'Consolas','Courier New',monospace;font-size:11.5px;line-height:1.6;border-radius:8px;padding:10px 12px;max-height:160px;overflow-y:auto;white-space:pre-wrap;">${logs.map((l) => l.replace(/</g, "&lt;")).join("\n")}</div>
+    </details>`;
+}
+
 async function pollBusinessTypeLookupJob(jobId) {
   const res = await fetch(`/api/business-type-lookup/${jobId}`);
   const data = await res.json();
@@ -225,13 +237,13 @@ async function pollBusinessTypeLookupJob(jobId) {
   lookupBtn.disabled = false;
 
   if (data.status === "error") {
-    lookupStatus.innerHTML = `<div class="lookup-status-text" style="color:#d03b3b;">ค้นหาไม่สำเร็จ: ${data.error || "เกิดข้อผิดพลาด"} (ต้องรันเว็บนี้ในเครื่องที่มี Google Chrome ติดตั้งอยู่)</div>`;
+    lookupStatus.innerHTML = `<div class="lookup-status-text" style="color:#d03b3b;">ค้นหาไม่สำเร็จ: ${data.error || "เกิดข้อผิดพลาด"} (ต้องรันเว็บนี้ในเครื่องที่มี Google Chrome ติดตั้งอยู่)</div>${renderSearchLogDetails(data.logs, true)}`;
     return;
   }
 
   const { candidates, exact_match_index } = data.result;
   if (!candidates.length) {
-    lookupStatus.innerHTML = `<div class="lookup-status-text">ไม่พบบริษัทนี้ใน DBD DataWarehouse — กรุณาเลือกประเภทธุรกิจเองด้านบน</div>`;
+    lookupStatus.innerHTML = `<div class="lookup-status-text">ไม่พบบริษัทนี้ใน DBD DataWarehouse — กรุณาเลือกประเภทธุรกิจเองด้านบน</div>${renderSearchLogDetails(data.logs, true)}`;
   } else if (exact_match_index !== null && exact_match_index !== undefined) {
     applyBusinessTypeSuggestion(candidates[exact_match_index]);
   } else if (candidates.length === 1) {
