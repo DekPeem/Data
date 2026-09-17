@@ -340,17 +340,27 @@ def _find_cached_file(download_dir: str, cache_key: str) -> Optional[str]:
 
 
 def _wait_for_download(
-    download_dir: str, timeout: int = 180, log: ProgressCallback = _noop
+    download_dir: str, timeout: int = 180, log: ProgressCallback = _noop,
+    ignore_existing: Optional[frozenset] = None,
 ) -> Optional[str]:
     """รอไฟล์ .xls/.xlsx/.zip โผล่ใน download_dir สูงสุด timeout วินาที
 
-    ถ้าใกล้หมดเวลาแล้วแต่ยังเห็นไฟล์ .crdownload (กำลังดาวน์โหลดอยู่จริง แค่ยังไม่เสร็จ) จะ
-    ต่อเวลาให้อีก (สูงสุด 60 วินาที) แทนที่จะตัดทิ้งกลางคัน — ยืนยันจากผู้ใช้จริงว่าบัญชี/เดือน
-    ที่มีข้อมูลเต็มเดือน (~30 วัน) ฝั่งเซิร์ฟเวอร์ใช้เวลาสร้างไฟล์ export นานไม่คงที่เหมือนกับที่
-    เคยเจอตอน render หน้า showPeriodProfile.aspx ช้า (จุดนั้นแก้ไปแล้วด้วยการขยาย timeout
-    15->30->60 วินาที) จุดนี้จึงน่าจะเป็นปัญหาเดียวกันแค่คนละขั้นตอน — ถ้าดาวน์โหลดเริ่มขึ้นแล้ว
-    (มี .crdownload) ไม่ควรตัดทิ้งแค่เพราะนาฬิกาหมดพอดี ควรรอให้ดาวน์โหลดเสร็จจริงๆ"""
+    download_dir เป็นโฟลเดอร์เดียวที่ใช้ร่วมกันทุก job/ทุกบัญชี (DEFAULT_DOWNLOAD_DIR =
+    amr_downloads/ โฟลเดอร์เดียว ไม่ได้แยกเป็นโฟลเดอร์ย่อยต่อ job) — ยืนยันจากผู้ใช้จริงว่ามีไฟล์
+    .crdownload ชื่อ/ขนาดเดิมเป๊ะค้างอยู่ข้ามหลาย job ที่ไม่เกี่ยวข้องกันเลย (คนละบัญชีในบาง log
+    ด้วยซ้ำ) นี่คือสาเหตุตัวจริง: .crdownload ที่ค้างจาก job เก่าที่ถูกทิ้งไปแล้ว (เช่น ปิด server
+    กลาง job) จะบล็อกไม่ให้ _wait_for_download มองว่า "ดาวน์โหลดเสร็จ" ได้อีกเลยตลอดไป เพราะเช็คว่า
+    "ไม่มี .crdownload เหลืออยู่ในโฟลเดอร์เลย" แบบรวมทั้งโฟลเดอร์ ไม่ได้เจาะจงว่าเป็นของการ
+    ดาวน์โหลดครั้งนี้จริงๆ — ผู้เรียกจึงต้อง snapshot รายชื่อไฟล์ในโฟลเดอร์ไว้ก่อนกดปุ่มดาวน์โหลด
+    แล้วส่งมาเป็น ignore_existing เพื่อให้ฟังก์ชันนี้สนใจเฉพาะไฟล์ที่ "เพิ่งปรากฏใหม่" เท่านั้น
+    ไม่ถูกไฟล์ค้างเก่าที่ไม่เกี่ยวข้องบล็อก
 
+    ถ้าใกล้หมดเวลาแล้วแต่ยังเห็นไฟล์ .crdownload ใหม่ (กำลังดาวน์โหลดอยู่จริง แค่ยังไม่เสร็จ) จะ
+    ต่อเวลาให้อีก (สูงสุด 60 วินาที) แทนที่จะตัดทิ้งกลางคัน — แต่ต่อให้เฉพาะไฟล์ที่เคยเห็นขนาดโตขึ้น
+    จริงเท่านั้น (ดู size_has_grown) ไฟล์ที่ค้างนิ่งตั้งแต่แรกไม่ต่อเวลาให้ เพราะรอนานแค่ไหนก็ไม่มี
+    วันเสร็จ"""
+
+    ignore_existing = ignore_existing or frozenset()
     end_time = time.time() + timeout
     grace_end_time = None
     next_heartbeat = time.time() + 15
@@ -366,8 +376,9 @@ def _wait_for_download(
     # รอเปล่าๆ อีก 60 วินาที
     while True:
         now = time.time()
-        files = [f for f in os.listdir(download_dir) if f.endswith((".xls", ".xlsx", ".zip"))]
-        downloading = [f for f in os.listdir(download_dir) if f.endswith(".crdownload")]
+        entries = [f for f in os.listdir(download_dir) if f not in ignore_existing]
+        files = [f for f in entries if f.endswith((".xls", ".xlsx", ".zip"))]
+        downloading = [f for f in entries if f.endswith(".crdownload")]
         if files and not downloading:
             latest = max(files, key=lambda f: os.path.getmtime(os.path.join(download_dir, f)))
             return os.path.join(download_dir, latest)
@@ -496,6 +507,15 @@ def _handle_popup(driver, main_handle, download_dir: str, log: ProgressCallback)
     # แค่รอไฟล์เดิมที่ไม่มีวันมาถึงนานขึ้นเรื่อยๆ
     _MAX_SUBMIT_ATTEMPTS = 2
 
+    # snapshot รายชื่อไฟล์ที่มีอยู่ก่อนกดปุ่มดาวน์โหลดเลย — ยืนยันจากผู้ใช้จริงว่ามี .crdownload
+    # ค้างจาก job เก่าที่ไม่เกี่ยวข้องกันเลยอยู่ใน download_dir (โฟลเดอร์เดียวกันทุก job) ทำให้
+    # _wait_for_download เข้าใจผิดว่า "ยังดาวน์โหลดไม่เสร็จ" ตลอดไปแม้การดาวน์โหลดจริงของ job นี้
+    # จะเสร็จ/ไม่เคยเริ่มเลยก็ตาม — ต้องสนใจเฉพาะไฟล์ที่ "เพิ่งปรากฏใหม่" หลังจากจุดนี้เท่านั้น
+    try:
+        existing_before = frozenset(os.listdir(download_dir))
+    except OSError:
+        existing_before = frozenset()
+
     downloaded = None
     try:
         try:
@@ -522,7 +542,7 @@ def _handle_popup(driver, main_handle, download_dir: str, log: ProgressCallback)
             driver.execute_script("arguments[0].click();", btn)
             log(f"⏳ กด ตกลง แล้ว (ครั้งที่ {submit_attempt}/{_MAX_SUBMIT_ATTEMPTS}) — รอดาวน์โหลด ...")
             random_delay(2, 3)
-            downloaded = _wait_for_download(download_dir, timeout=60, log=log)
+            downloaded = _wait_for_download(download_dir, timeout=60, log=log, ignore_existing=existing_before)
             if downloaded:
                 break
             if submit_attempt < _MAX_SUBMIT_ATTEMPTS:
@@ -618,6 +638,12 @@ def _try_download_from_show_page(
         # แต่ log กลับขึ้น "ไม่มี popup" เพราะ popup เปิดช้ากว่า 5 วินาทีที่เคยรอ ทำให้ตกไปรอไฟล์
         # ดาวน์โหลดตรงๆ ที่ไม่มีวันมาถึง 60 วินาทีโดยเปล่าประโยชน์)
         handles_before = set(driver.window_handles)
+        # snapshot ก่อนกด — กัน .crdownload ค้างจาก job เก่าที่ไม่เกี่ยวข้องกัน (โฟลเดอร์เดียวกัน
+        # ทุก job) บล็อกไม่ให้ _wait_for_download มองว่าดาวน์โหลดครั้งนี้เสร็จได้ (ดู _wait_for_download)
+        try:
+            existing_before = frozenset(os.listdir(download_dir))
+        except OSError:
+            existing_before = frozenset()
         element.click()
 
         deadline = time.time() + 20
@@ -629,7 +655,7 @@ def _try_download_from_show_page(
 
         log("⏳ ไม่มี popup หลังกดปุ่ม — รอดาวน์โหลดไฟล์ตรงๆ ...")
         random_delay(1, 2)
-        return _wait_for_download(download_dir, timeout=120, log=log)
+        return _wait_for_download(download_dir, timeout=120, log=log, ignore_existing=existing_before)
 
     try:
         start = time.time()

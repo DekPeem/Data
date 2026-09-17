@@ -233,7 +233,7 @@ def test_try_download_from_show_page_clicks_matching_input_button(monkeypatch):
     btn = _FakeClickable(value="Download Excel")
     driver = _FakeShowPageDriver(inputs=[btn])
 
-    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60, log=None: "/tmp/fake_downloaded.xls")
+    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60, log=None, ignore_existing=None: "/tmp/fake_downloaded.xls")
     monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)  # ข้าม sleep จริงตอนเทสต์
     # ไม่มี popup เปิดในเทสต์นี้เลย (fallback ไปรอดาวน์โหลดตรงๆ) — ต้องใช้นาฬิกาจำลอง ไม่งั้นจะ
     # รอจริง 20 วินาทีเต็มตามลูป popup-wait ใหม่ก่อนจะ fallback (busy-spin จนถึง deadline จริง)
@@ -280,7 +280,7 @@ def test_try_download_from_show_page_clicks_image_input_button(monkeypatch):
     img_btn = _FakeClickable(value="", alt="Download", src="images/btnDownload.gif")
     driver = _FakeShowPageDriver(inputs=[img_btn])
 
-    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60, log=None: "/tmp/fake_image_btn.xls")
+    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60, log=None, ignore_existing=None: "/tmp/fake_image_btn.xls")
     monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
     _install_fake_clock(monkeypatch)
 
@@ -294,7 +294,7 @@ def test_try_download_from_show_page_clicks_matching_anchor_link(monkeypatch):
     link = _FakeClickable(text="ดาวน์โหลดข้อมูล")
     driver = _FakeShowPageDriver(anchors=[link])
 
-    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60, log=None: "/tmp/fake2.xls")
+    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60, log=None, ignore_existing=None: "/tmp/fake2.xls")
     monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
     _install_fake_clock(monkeypatch)
 
@@ -311,7 +311,7 @@ def test_try_download_from_show_page_clicks_matching_button_element(monkeypatch)
     btn = _FakeClickable(text="Download")
     driver = _FakeShowPageDriver(buttons=[btn])
 
-    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60, log=None: "/tmp/fake3.xls")
+    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60, log=None, ignore_existing=None: "/tmp/fake3.xls")
     monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
     _install_fake_clock(monkeypatch)
 
@@ -548,7 +548,7 @@ def test_try_download_from_show_page_retries_until_element_appears(monkeypatch):
 
     driver.find_elements = delayed_find_elements
 
-    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60, log=None: "/tmp/fake4.xls")
+    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60, log=None, ignore_existing=None: "/tmp/fake4.xls")
     monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
     _install_fake_clock(monkeypatch)  # กันไม่ให้ popup-wait loop รอจริง 20 วินาที (ไม่มี popup เปิดในเทสต์นี้)
 
@@ -591,6 +591,32 @@ def test_wait_for_download_returns_none_when_nothing_appears(monkeypatch, tmp_pa
     _install_fake_clock(monkeypatch)
     result = amr_downloader._wait_for_download(str(tmp_path), timeout=5, log=lambda m: None)
     assert result is None
+
+
+def test_wait_for_download_ignores_stale_crdownload_from_unrelated_job(monkeypatch, tmp_path):
+    """ยืนยันจากผู้ใช้จริง: download_dir เป็นโฟลเดอร์เดียวที่ใช้ร่วมกันทุก job/ทุกบัญชี (ไม่ได้
+    แยกโฟลเดอร์ย่อยต่อ job) — เจอ .crdownload ค้างจาก job เก่าที่ไม่เกี่ยวข้องกันเลย (คนละบัญชี)
+    บล็อกไม่ให้ job ใหม่มองว่าดาวน์โหลดเสร็จได้เลย ทั้งที่ไฟล์ของ job ใหม่ดาวน์โหลดเสร็จจริงแล้ว
+    — ต้องสนใจเฉพาะไฟล์ที่ "เพิ่งปรากฏใหม่" หลัง snapshot เท่านั้น ไม่ถูกไฟล์ค้างเก่าบล็อก"""
+
+    download_dir = str(tmp_path)
+    # ไฟล์ .crdownload ค้างจาก job เก่า (บัญชีอื่น) ที่มีอยู่ก่อนแล้วตั้งแต่ก่อนเริ่ม snapshot
+    stale_crdownload = tmp_path / "kW_OLD_UNRELATED_ACCOUNT.xls.crdownload"
+    stale_crdownload.write_text("ค้างจาก job เก่า", encoding="utf-8")
+
+    existing_before = frozenset(os.listdir(download_dir))
+    assert "kW_OLD_UNRELATED_ACCOUNT.xls.crdownload" in existing_before
+
+    # ไฟล์ใหม่ของ job นี้ดาวน์โหลดเสร็จสมบูรณ์แล้ว (ไม่มี .crdownload ใหม่ค้างเลย)
+    new_file = tmp_path / "kW_NEW_ACCOUNT.xls"
+    new_file.write_text("ไฟล์ใหม่ที่เสร็จแล้ว", encoding="utf-8")
+
+    _install_fake_clock(monkeypatch)
+    result = amr_downloader._wait_for_download(
+        download_dir, timeout=5, log=lambda m: None, ignore_existing=existing_before
+    )
+
+    assert result == str(new_file)
 
 
 def test_wait_for_download_extends_grace_period_when_crdownload_present_at_deadline(monkeypatch, tmp_path):
