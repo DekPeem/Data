@@ -478,7 +478,7 @@ def _find_download_element(driver):
 
 
 def _try_download_from_show_page(
-    driver, main_handle, download_dir: str, log: ProgressCallback, timeout: float = 15.0
+    driver, main_handle, download_dir: str, log: ProgressCallback, timeout: float = 30.0
 ) -> Optional[str]:
     """กรณีกด "ตกลง" แล้วเว็บไม่เปิด popup แต่ redirect ไปหน้า showPeriodProfile.aspx ตรงๆ
     แทน (พบจริงจากผู้ใช้ — เว็บ PEA มีพฤติกรรมนี้ได้บางครั้ง ไม่ใช่แค่ทาง popup เท่านั้น)
@@ -487,7 +487,11 @@ def _try_download_from_show_page(
     (ไม่ใช่สแกนครั้งเดียวจบแบบเดิม) เพราะยืนยันจากผู้ใช้จริงแล้วว่าบัญชี/เดือนเดียวกัน บางรอบ
     หาปุ่มเจอ บางรอบหาไม่เจอ ทั้งที่หน้าเว็บมีข้อมูล+ปุ่ม Download อยู่จริงเหมือนกันทุกครั้ง —
     สาเหตุน่าจะเป็นความช้าไม่คงที่ของการโหลดหน้า (เดือนที่มีข้อมูลราย 15 นาทีเยอะกว่า render
-    ช้ากว่า) ทำให้ scan ครั้งเดียวหลัง delay คงที่ (1-2 วินาที) มาไม่ทันบางครั้ง
+    ช้ากว่า) ทำให้ scan ครั้งเดียวหลัง delay คงที่ (1-2 วินาที) มาไม่ทันบางครั้ง — ยืนยันเพิ่มเติม
+    จาก diagnostics จริง (ดู _log_show_page_diagnostics) ว่าปุ่ม (input#btnDownload,
+    value="Download") มี value ที่ตรงกับ keyword อยู่แล้วจริงๆ แค่ยังไม่ทันปรากฏใน DOM ภายใน
+    เวลาที่ scan (เจอจาก JS diagnostics หลัง scan หมดเวลาไปไม่กี่ร้อย ms) จึงเพิ่มเวลารอจาก 15
+    เป็น 30 วินาที เพื่อลดโอกาสที่ต้องเสีย whole-month retry (โหลดหน้าใหม่ทั้งหมด) ไปโดยไม่จำเป็น
 
     กดแล้วดูว่ามี popup เปิดขึ้นตามมา (เรียก _handle_popup ต่อ) หรือดาวน์โหลดไฟล์ลงมาตรงๆ เลย
     """
