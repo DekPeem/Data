@@ -179,7 +179,9 @@ class _FakeShowPageDriver:
     """ตัวแทน driver สำหรับทดสอบ _try_download_from_show_page (ไม่มี popup เปิดขึ้นเลย
     ในทุกเทสต์นี้ — window_handles คงที่ตลอด)"""
 
-    def __init__(self, inputs=None, anchors=None, buttons=None, iframes=None, tables=None, body_text=""):
+    def __init__(
+        self, inputs=None, anchors=None, buttons=None, iframes=None, tables=None, body_text="", script_snippets=None
+    ):
         self._inputs = inputs or []
         self._anchors = anchors or []
         self._buttons = buttons or []
@@ -189,6 +191,10 @@ class _FakeShowPageDriver:
         self.current_url = "https://www.amr.pea.co.th/AMRWEB/showPeriodProfile.aspx"
         self.title = "AMR::Automatic Meter Reading"
         self._body = _FakeElement(text=body_text)
+        self._script_snippets = script_snippets if script_snippets is not None else []
+
+    def execute_script(self, script):
+        return self._script_snippets
 
     def find_elements(self, by, tag):
         if tag == "input":
@@ -410,6 +416,24 @@ def test_try_download_from_show_page_logs_diagnostics_when_not_found(monkeypatch
     assert "table=2" in joined
     assert driver.current_url in joined
     assert "เซสชันหมดอายุ" in joined
+
+
+def test_try_download_from_show_page_logs_js_found_snippets_when_not_found(monkeypatch):
+    """เพิ่มจากเทสต์ก่อนหน้า — ยืนยันว่าตอนหาปุ่มไม่เจอ ต้องสแกนด้วย JS หา element ที่น่าจะ
+    เกี่ยวกับดาวน์โหลด (เช่น <input type="image"> ที่ Selenium ไม่ได้แมตช์เพราะเหตุผลอื่น) แล้ว
+    log HTML ดิบออกมาด้วย ไม่ต้องให้ผู้ใช้เปิด DevTools เองอีกต่อไป"""
+
+    driver = _FakeShowPageDriver(
+        script_snippets=['<input type="image" id="imgBtn" src="Images/dl_icon.gif">']
+    )
+    monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
+
+    logs = []
+    amr_downloader._try_download_from_show_page(driver, "main", "/tmp/dl", log=logs.append, timeout=0)
+
+    joined = "\n".join(logs)
+    assert "imgBtn" in joined
+    assert "dl_icon.gif" in joined
 
 
 def test_try_download_from_show_page_retries_until_element_appears(monkeypatch):

@@ -529,13 +529,43 @@ def _try_download_from_show_page(
     return None
 
 
+# สคริปต์ JS หา element ที่ "น่าจะเกี่ยวกับดาวน์โหลด" ทั่วทั้งหน้า (คนละทางกับ
+# _find_download_element ที่ไล่ทีละ tag ผ่าน Selenium API) — สแกนเฉพาะ tag ที่มักจะเป็นปุ่ม/ลิงก์
+# กดได้จริง (input/a/button/img/[onclick]) กันไม่ให้ไปแมตช์ container element ใหญ่ๆ ที่มีลูกเป็น
+# ร้อยตัว แล้วคืน outerHTML ของตัวที่แมตช์ (ตัดสั้นแค่ 300 ตัวอักษรกันยาวเกิน) — ใช้ตอน
+# _find_download_element หาไม่เจอ เพื่อดูว่า "อะไรที่จริงๆ อยู่บนหน้านี้ที่เกี่ยวกับดาวน์โหลด"
+# โดยไม่ต้องให้ผู้ใช้เปิด DevTools เอง (ยืนยันจากผู้ใช้จริงว่าเปิด DevTools เองแล้วจับ element
+# ที่ถูกต้องได้ยาก เพราะปุ่มอยู่ใน ASP.NET UpdatePanel ที่ทำ postback ตอนคลิก)
+_FIND_DOWNLOAD_SNIPPETS_JS = """
+var keywords = ['download', 'ดาวน์โหลด', 'ส่งออก', 'export', 'excel'];
+var candidates = document.querySelectorAll('input, a, button, img, [onclick]');
+var matches = [];
+for (var i = 0; i < candidates.length && matches.length < 8; i++) {
+    var el = candidates[i];
+    var haystack = [
+        el.tagName, el.id, el.getAttribute('name'), el.getAttribute('value'),
+        el.getAttribute('alt'), el.getAttribute('src'), el.getAttribute('href'),
+        el.getAttribute('title'), el.getAttribute('onclick'),
+        (el.childElementCount === 0 ? el.textContent : ''),
+    ].join(' ').toLowerCase();
+    for (var k = 0; k < keywords.length; k++) {
+        if (haystack.indexOf(keywords[k]) !== -1) {
+            matches.push(el.outerHTML.substring(0, 300));
+            break;
+        }
+    }
+}
+return matches;
+"""
+
+
 def _log_show_page_diagnostics(driver, log: ProgressCallback) -> None:
     """เก็บรายละเอียดหน้าปัจจุบันไว้ใน log ตอนหาปุ่มดาวน์โหลดไม่เจอ (url/title/จำนวน element
-    ต่างๆ/มี iframe ไหม/ข้อความบางส่วนในหน้า) — ยืนยันจากผู้ใช้จริงว่ามีบางครั้งที่หน้ามีข้อมูล+
-    ปุ่ม Download อยู่จริง (เช็คด้วยตาเองในเบราว์เซอร์) แต่ _find_download_element ยังหาไม่เจอ
-    ซึ่งยังไม่รู้สาเหตุแน่ชัด (อาจเป็น element อยู่ใน iframe ที่ยังไม่ได้ switch เข้าไป, หน้า
-    แสดง session หมดอายุ/ข้อความ error แทนตารางข้อมูล, หรืออื่นๆ) — เก็บรายละเอียดตรงนี้ไว้
-    เพื่อวินิจฉัยจากของจริงในครั้งต่อไปที่เจอ แทนที่จะรู้แค่ว่า "ไม่เจอ" เฉยๆ ไม่มีบริบทอะไรเลย"""
+    ต่างๆ/มี iframe ไหม/ข้อความบางส่วนในหน้า/HTML ดิบของ element ที่น่าจะเกี่ยวกับดาวน์โหลด) —
+    ยืนยันจากผู้ใช้จริงว่ามีบางครั้งที่หน้ามีข้อมูล+ปุ่ม Download อยู่จริง (เช็คด้วยตาเองใน
+    เบราว์เซอร์) แต่ _find_download_element ยังหาไม่เจอ ซึ่งยังไม่รู้สาเหตุแน่ชัด — เก็บรายละเอียด
+    ตรงนี้ไว้เพื่อวินิจฉัยจากของจริงในครั้งต่อไปที่เจอ โดยไม่ต้องให้ผู้ใช้เปิด DevTools เอง (ลองแล้ว
+    หลายรอบ จับ element ที่ถูกต้องได้ยากเพราะหน้าใช้ ASP.NET UpdatePanel ทำ postback ตอนคลิก)"""
 
     from selenium.webdriver.common.by import By
 
@@ -555,6 +585,16 @@ def _log_show_page_diagnostics(driver, log: ProgressCallback) -> None:
             log(f"🔎 ข้อความในหน้า (300 ตัวอักษรแรก): {snippet}")
     except Exception as e:  # noqa: BLE001 — เก็บ diagnostics ไม่สำเร็จ ต้องไม่ทำให้ job หลักพังไปด้วย
         log(f"⚠️ เก็บรายละเอียดหน้าไม่สำเร็จ: {e}")
+
+    try:
+        snippets = driver.execute_script(_FIND_DOWNLOAD_SNIPPETS_JS)
+        if snippets:
+            for i, html in enumerate(snippets, start=1):
+                log(f"🔎 HTML element ที่เกี่ยวกับดาวน์โหลด #{i}: {html}")
+        else:
+            log("🔎 ไม่เจอ element ใดๆ ในหน้าที่มีคำว่า download/ดาวน์โหลด/ส่งออก/export/excel เลย (แม้แต่ที่ไม่ใช่ปุ่ม)")
+    except Exception as e:  # noqa: BLE001 — เก็บ diagnostics ไม่สำเร็จ ต้องไม่ทำให้ job หลักพังไปด้วย
+        log(f"⚠️ สแกน HTML ที่เกี่ยวกับดาวน์โหลดด้วย JS ไม่สำเร็จ: {e}")
 
 
 def download_month(
