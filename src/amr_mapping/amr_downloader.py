@@ -503,7 +503,7 @@ def _find_download_element(driver):
 
 
 def _try_download_from_show_page(
-    driver, main_handle, download_dir: str, log: ProgressCallback, timeout: float = 30.0
+    driver, main_handle, download_dir: str, log: ProgressCallback, timeout: float = 60.0
 ) -> Optional[str]:
     """กรณีกด "ตกลง" แล้วเว็บไม่เปิด popup แต่ redirect ไปหน้า showPeriodProfile.aspx ตรงๆ
     แทน (พบจริงจากผู้ใช้ — เว็บ PEA มีพฤติกรรมนี้ได้บางครั้ง ไม่ใช่แค่ทาง popup เท่านั้น)
@@ -511,12 +511,13 @@ def _try_download_from_show_page(
     ไล่หาปุ่มดาวน์โหลดด้วย _find_download_element แบบ "รอ+ลองใหม่" นานสูงสุด timeout วินาที
     (ไม่ใช่สแกนครั้งเดียวจบแบบเดิม) เพราะยืนยันจากผู้ใช้จริงแล้วว่าบัญชี/เดือนเดียวกัน บางรอบ
     หาปุ่มเจอ บางรอบหาไม่เจอ ทั้งที่หน้าเว็บมีข้อมูล+ปุ่ม Download อยู่จริงเหมือนกันทุกครั้ง —
-    สาเหตุน่าจะเป็นความช้าไม่คงที่ของการโหลดหน้า (เดือนที่มีข้อมูลราย 15 นาทีเยอะกว่า render
-    ช้ากว่า) ทำให้ scan ครั้งเดียวหลัง delay คงที่ (1-2 วินาที) มาไม่ทันบางครั้ง — ยืนยันเพิ่มเติม
-    จาก diagnostics จริง (ดู _log_show_page_diagnostics) ว่าปุ่ม (input#btnDownload,
-    value="Download") มี value ที่ตรงกับ keyword อยู่แล้วจริงๆ แค่ยังไม่ทันปรากฏใน DOM ภายใน
-    เวลาที่ scan (เจอจาก JS diagnostics หลัง scan หมดเวลาไปไม่กี่ร้อย ms) จึงเพิ่มเวลารอจาก 15
-    เป็น 30 วินาที เพื่อลดโอกาสที่ต้องเสีย whole-month retry (โหลดหน้าใหม่ทั้งหมด) ไปโดยไม่จำเป็น
+    สาเหตุน่าจะเป็นความช้าไม่คงที่ของการโหลดหน้า (เดือนที่มีข้อมูลราย 15 นาทีเยอะกว่า/ช่วงเวลา
+    เต็มเดือน ~30 วัน ~2,880 แถว render ช้ากว่ามาก) — เดิมเพิ่มจาก 15 เป็น 30 วินาทีไปแล้วครั้งหนึ่ง
+    (ยืนยันจาก diagnostics จริงว่าปุ่ม input#btnDownload/btnDownload2 มี value/id ตรงกับ keyword
+    อยู่แล้ว แค่ยังไม่ทันปรากฏใน DOM ภายในเวลาที่ scan) แต่ยืนยันเพิ่มเติมจากผู้ใช้จริงอีกครั้งว่า
+    30 วินาทียังไม่พอสำหรับช่วงเวลาเต็มเดือน (diagnostics เจอปุ่มทันทีหลัง scan หมดเวลาไปแล้ว
+    เหมือนเดิม แค่ margin กว้างกว่ารอบก่อน) จึงเพิ่มเป็น 60 วินาที พร้อม log heartbeat ระหว่างรอ
+    ทุก 10 วินาที กันดูเหมือน job ค้างเฉยๆ
 
     กดแล้วดูว่ามี popup เปิดขึ้นตามมา (เรียก _handle_popup ต่อ) หรือดาวน์โหลดไฟล์ลงมาตรงๆ เลย
     """
@@ -543,11 +544,17 @@ def _try_download_from_show_page(
         return _wait_for_download(download_dir, timeout=60)
 
     try:
-        deadline = time.time() + timeout
+        start = time.time()
+        deadline = start + timeout
+        next_heartbeat = start + 10
         element, matched_text = _find_download_element(driver)
         while element is None and time.time() < deadline:
             time.sleep(0.5)
             element, matched_text = _find_download_element(driver)
+            now = time.time()
+            if element is None and now >= next_heartbeat:
+                log(f"⏳ ยังหาปุ่มดาวน์โหลดในหน้า showPeriodProfile.aspx ไม่เจอ รอต่อ ({int(now - start)}s/{int(timeout)}s) ...")
+                next_heartbeat = now + 10
 
         if element is not None:
             log(f"👉 กดปุ่ม/ลิงก์ดาวน์โหลดในหน้า showPeriodProfile: {matched_text}")

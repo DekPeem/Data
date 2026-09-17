@@ -510,3 +510,32 @@ def test_try_download_from_show_page_retries_until_element_appears(monkeypatch):
 
     assert btn.clicked is True
     assert result == "/tmp/fake4.xls"
+
+
+def test_try_download_from_show_page_default_timeout_is_60_seconds():
+    """ยืนยันจากผู้ใช้จริงอีกครั้ง: บัญชี/เดือนที่มีข้อมูลเต็มเดือน (~30 วัน) render หน้า
+    showPeriodProfile.aspx ช้ากว่า 30 วินาทีเดิม (diagnostics เจอปุ่มทันทีหลัง scan หมดเวลา
+    เหมือนรอบก่อนที่เพิ่มจาก 15->30 แต่คราวนี้ margin กว้างกว่าเดิมมาก) — เพิ่มเป็น 60 วินาที"""
+
+    import inspect
+
+    default_timeout = inspect.signature(amr_downloader._try_download_from_show_page).parameters["timeout"].default
+    assert default_timeout == 60.0
+
+
+def test_try_download_from_show_page_logs_heartbeat_while_waiting(monkeypatch):
+    """ระหว่างรอปุ่มปรากฏนาน ๆ (สูงสุด 60 วินาที) ต้อง log heartbeat เป็นระยะ (ทุก 10 วินาที)
+    กันดูเหมือน job ค้างเฉยๆ ไม่มีอะไรเกิดขึ้นเลยเป็นนาที"""
+
+    driver = _FakeShowPageDriver()  # ไม่มีปุ่มปรากฏเลยตลอดการทดสอบ
+    monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
+    _install_fake_clock(monkeypatch)
+
+    logs = []
+    result = amr_downloader._try_download_from_show_page(
+        driver, "main", "/tmp/dl", log=logs.append, timeout=25
+    )
+
+    assert result is None
+    heartbeat_lines = [m for m in logs if "รอต่อ" in m]
+    assert len(heartbeat_lines) >= 2, f"ต้องมี heartbeat log อย่างน้อย 2 บรรทัดในเวลา 25 วินาที: {logs}"
