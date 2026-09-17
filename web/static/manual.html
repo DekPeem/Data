@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>คู่มือการใช้งาน — No AMR</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .manual-toc { display: flex; flex-direction: column; gap: 6px; }
+    .manual-toc a { font-size: 13.5px; color: #2a78d6; text-decoration: none; }
+    .manual-toc a:hover { text-decoration: underline; }
+    .manual-section { padding: 28px; display: flex; flex-direction: column; gap: 12px; scroll-margin-top: 16px; }
+    .manual-section h2 { font-size: 15px; font-weight: 700; margin: 0; }
+    .manual-section p { font-size: 13.5px; line-height: 1.7; color: #2a3548; margin: 0; }
+    .manual-section code {
+      background: rgba(15,23,42,0.06); border-radius: 4px; padding: 1px 6px; font-size: 12.5px;
+      font-family: 'Consolas', 'Courier New', monospace;
+    }
+    .back-to-top { font-size: 12.5px; color: #8996ab; text-decoration: none; align-self: flex-start; }
+    .back-to-top:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="root">
+
+    <header class="header">
+      <div class="header-brand">
+        <div class="logo-mark">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>
+        </div>
+        <div class="header-titles">
+          <div class="header-title">คู่มือการใช้งาน</div>
+          <div class="header-subtitle">คำอธิบายละเอียดของแต่ละฟีเจอร์ — แยกไว้ที่นี่ให้หน้าใช้งานจริงดูโล่งขึ้น</div>
+        </div>
+      </div>
+      <a href="/admin" style="font-size:13px;color:#2a78d6;text-decoration:none;">← กลับหน้า Admin</a>
+    </header>
+
+    <main class="body-wrap">
+
+      <div id="top" class="card" style="padding: 28px; display: flex; flex-direction: column; gap: 10px;">
+        <div style="font-size: 15px; font-weight: 700;">สารบัญ</div>
+        <div class="manual-toc">
+          <a href="#chrome-credentials">1. ต้องเตรียมอะไรก่อนรันเว็บนี้ / ข้อมูล Username-Password ปลอดภัยแค่ไหน</a>
+          <a href="#file-attach-mode">2. โหมด "แนบไฟล์ที่มีอยู่แล้ว" ใช้ตอนไหน ทำงานยังไง</a>
+          <a href="#import-history">3. "ประวัติการนำเข้า AMR ในเครื่องนี้" เก็บอะไรไว้ ปลอดภัยแค่ไหน</a>
+          <a href="#business-types-grouping">4. หน้า "หมวดหมู่ธุรกิจทั้งหมดในระบบ" จัดกลุ่มยังไง ใช้ทำอะไร</a>
+          <a href="#tsic-explained">5. ช่อง Section / Division ตอนตรวจสอบ TSIC คืออะไร ใช้ทำไม</a>
+          <a href="#name-privacy">6. พิมพ์ชื่อบริษัทในหน้าแรก (พยากรณ์แบบไม่บันทึกข้อมูล) ปลอดภัยแค่ไหน</a>
+        </div>
+      </div>
+
+      <div id="chrome-credentials" class="card manual-section">
+        <h2>1. ต้องเตรียมอะไรก่อนรันเว็บนี้ / ข้อมูล Username-Password ปลอดภัยแค่ไหน</h2>
+        <p>
+          ⚠️ ต้องรันเว็บนี้ในเครื่องที่มี Google Chrome ติดตั้งอยู่ กรอกแค่ <b>Username/Password</b>
+          เข้าเว็บ AMR ของ PEA + ช่วงวันที่ ก็พอ — ระบบจะ<b>ตรวจจับประเภทธุรกิจ/อัตรา/KVA ให้เอง
+          อัตโนมัติ</b>จากหน้าข้อมูลผู้ใช้ไฟของ PEA (ไม่ต้องเลือก/กรอกเอง เว้นแต่ต้องการกำหนดเอง
+          ให้เปิด "ตัวเลือกขั้นสูง" ด้านล่าง) — ใช้แค่ครั้งเดียวสำหรับงานนี้แล้วทิ้งทันที
+          <b>ไม่ถูกบันทึกลงดิสก์/log ที่ไหนเลย</b> (หรือจะตั้งค่าตัวแปรสภาพแวดล้อม
+          <code>PEA_AMR_USERNAME</code> / <code>PEA_AMR_PASSWORD</code> ไว้เป็นค่า default แทนก็ได้
+          ดู README) ไฟล์ดิบที่ดาวน์โหลดมา (มีเลขบัญชี/เลขมิเตอร์) จะถูก<b>เก็บไว้ในเครื่องนี้ที่
+          โฟลเดอร์ <code>amr_downloads/</code></b> เพื่อให้รันซ้ำ/นำเข้าเดือนเพิ่มไม่ต้องดาวน์โหลด
+          ของเดิมใหม่ — โฟลเดอร์นี้อยู่ใน <code>.gitignore</code> แล้ว <b>ไม่มีทางหลุดเข้า repo
+          public ได้เด็ดขาด</b> เหมือนหลักการเดียวกับ <code>customers_local.csv</code> ส่วนไฟล์
+          <code>load_profiles.csv</code>/<code>business_types.csv</code> ที่ commit เข้า repo
+          ยังคงมีแค่ค่าเฉลี่ย P/OP/H แบบไม่ระบุตัวตนเหมือนเดิม
+        </p>
+        <a class="back-to-top" href="#top">↑ กลับไปสารบัญ</a>
+      </div>
+
+      <div id="file-attach-mode" class="card manual-section">
+        <h2>2. โหมด "แนบไฟล์ที่มีอยู่แล้ว" ใช้ตอนไหน ทำงานยังไง</h2>
+        <p>
+          ใช้ตอนมีไฟล์ "รายงานข้อมูลกิโลวัตต์ชั่วโมงแบบช่วงเวลา" จากเว็บ AMR ของ PEA อยู่แล้ว
+          (เช่น ได้รับไฟล์มาจากที่อื่น ไม่มี username/password ของบัญชีนั้นเอง) — ต้องเป็นไฟล์
+          รูปแบบเดียวกับที่โหมดดึงจากเว็บดาวน์โหลดมาให้เอง (นามสกุล .xls ที่จริงๆ เป็นตาราง
+          HTML มีคอลัมน์ RATE A/B/C) แนบได้หลายไฟล์พร้อมกัน (เช่นหลายเดือน) จะถูกเฉลี่ยรวมกัน
+          เหมือนโหมดดึงจากเว็บ — <b>แนบแค่ไฟล์ก็พอ ไม่ต้องกรอกอะไรเพิ่มเลย</b> ระบบจะอ่านเลข
+          บัญชีจากในไฟล์แล้วเทียบกับทะเบียนลูกค้า (customers.csv/customers_local.csv) ให้เอง
+          ถ้าบัญชีนี้เคยลงทะเบียนประเภทธุรกิจ/อัตราไว้แล้วจะดึงมาใช้อัตโนมัติทันที — ถ้าไม่เจอใน
+          ทะเบียนถึงจะต้องกรอกประเภทธุรกิจ/รหัสอัตราเองด้านล่าง (ระบบจะแจ้งเตือนให้ตอนนั้น)
+        </p>
+        <a class="back-to-top" href="#top">↑ กลับไปสารบัญ</a>
+      </div>
+
+      <div id="import-history" class="card manual-section">
+        <h2>3. "ประวัติการนำเข้า AMR ในเครื่องนี้" เก็บอะไรไว้ ปลอดภัยแค่ไหน</h2>
+        <p>
+          ชื่อบริษัท/นิติบุคคลและเลขบัญชีจริงที่เคยนำเข้าแบบอัตโนมัติจากเครื่องนี้ — ไว้ดูว่า
+          "ทำอะไรไปแล้วบ้าง มีข้อมูลของใครบ้าง" เท่านั้น อ่านจากไฟล์ <code>import_log_local.csv</code>
+          ซึ่งอยู่ใน <code>.gitignore</code> แล้ว <b>ไม่ถูก commit เข้า repo public เด็ดขาด</b>
+          เหมือนหลักการเดียวกับ <code>customers_local.csv</code>
+        </p>
+        <a class="back-to-top" href="#top">↑ กลับไปสารบัญ</a>
+      </div>
+
+      <div id="business-types-grouping" class="card manual-section">
+        <h2>4. หน้า "หมวดหมู่ธุรกิจทั้งหมดในระบบ" จัดกลุ่มยังไง ใช้ทำอะไร</h2>
+        <p>
+          จัดกลุ่มตาม Section (TSIC) ก่อน แล้วค่อยแยกเป็น Division/ประเภทธุรกิจย่อยด้านใน —
+          กดที่ Section เพื่อดูรายชื่อบริษัทที่เคยนำเข้าในกลุ่มนั้น และกด "📈 ดูกราฟ" เพื่อดู
+          รูปแบบการใช้ไฟที่นำเข้าจาก AMR จริง (ส่วนนี้ยังไม่ใช่การพยากรณ์ — เป็นขั้นแรกที่นำข้อมูล
+          AMR เข้าระบบและดูว่าประเภทธุรกิจนี้มีรูปแบบกราฟเป็นอย่างไรก่อน) หมวดที่ยังไม่ได้ตรวจสอบ
+          TSIC จะถูกจัดไว้ในกลุ่ม "ยังไม่ตรวจสอบ" — กดปุ่ม "ตรวจสอบ TSIC" ในการ์ดนั้นเพื่อค้นหา
+          และบันทึกได้เลย
+        </p>
+        <a class="back-to-top" href="#top">↑ กลับไปสารบัญ</a>
+      </div>
+
+      <div id="tsic-explained" class="card manual-section">
+        <h2>5. ช่อง Section / Division ตอนตรวจสอบ TSIC คืออะไร ใช้ทำไม</h2>
+        <p>
+          TSIC คือระบบจัดหมวดหมู่ธุรกิจมาตรฐานของไทย จัดเป็นลำดับชั้น <b>Section</b> (หมวดใหญ่สุด —
+          ตัวอักษร A-U) → <b>Division</b> (หมวดย่อยลงมา — ตัวเลข 2 หลัก) รหัสประเภทธุรกิจของ กฟภ.
+          (รหัสที่ขึ้นต้นด้วยตัวเลข เช่น 71920) <b>ไม่ใช่รหัส TSIC มาตรฐาน</b> — 4 ช่องนี้คือการ
+          "แปลง" ให้รู้ว่าตรงกับหมวด TSIC ไหน เพื่อเก็บไว้ใช้เฉพาะตอน<b>ไม่มีข้อมูล AMR จริงของ
+          ประเภทนี้เลย</b> ระบบจะได้ไปหยิบค่าเฉลี่ยจากประเภทธุรกิจอื่นที่อยู่ Division เดียวกันมาใช้
+          แทนแบบคร่าวๆ ดีกว่าตกไปใช้ค่ากลางทั่วไป — ถ้าประเภทนี้มีข้อมูล AMR จริงอยู่แล้ว การกรอก/
+          ไม่กรอกช่องนี้จะไม่กระทบผลพยากรณ์ของประเภทนี้เอง มีผลแค่กับประเภทธุรกิจอื่นที่ยังไม่มีข้อมูล
+          เท่านั้น
+        </p>
+        <a class="back-to-top" href="#top">↑ กลับไปสารบัญ</a>
+      </div>
+
+      <div id="name-privacy" class="card manual-section">
+        <h2>6. พิมพ์ชื่อบริษัทในหน้าแรก (พยากรณ์แบบไม่บันทึกข้อมูล) ปลอดภัยแค่ไหน</h2>
+        <p>
+          ℹ️ พิมพ์ชื่อบริษัทได้อย่างอิสระ (แม้เป็นชื่อจริง) เพราะ<b>ชื่อที่พิมพ์จะไม่ถูกส่งไปที่
+          เซิร์ฟเวอร์เลย</b> — ใช้แสดงผลในเบราว์เซอร์นี้เท่านั้น ไม่ถูกบันทึกลงไฟล์ ไม่ถูก log
+          ที่ไหนทั้งสิ้น ปิด/รีเฟรชหน้านี้แล้วข้อมูลหายไปทันที
+        </p>
+        <p>
+          ปุ่ม "🔍 ค้นหาประเภทธุรกิจอัตโนมัติ" เป็นข้อยกเว้นเดียว — ปุ่มนี้จะ<b>ส่งชื่อบริษัทออกไป
+          ค้นหาที่เว็บสาธารณะของกรมพัฒนาธุรกิจการค้า (DBD)</b> เพื่อดึงประเภทธุรกิจ (TSIC) มาเติมให้
+          อัตโนมัติ — ต่างจากการกด "พยากรณ์" ที่<b>ไม่ส่งชื่อออกจากเบราว์เซอร์เลย</b> ไม่จำเป็นต้อง
+          กดปุ่มนี้ก็ได้ถ้าอยากเลือกประเภทธุรกิจเอง — ต้องรันเว็บนี้ในเครื่องที่มี Google Chrome
+          ติดตั้งอยู่และมี network ออกอินเทอร์เน็ตได้
+        </p>
+        <a class="back-to-top" href="#top">↑ กลับไปสารบัญ</a>
+      </div>
+
+    </main>
+  </div>
+</body>
+</html>

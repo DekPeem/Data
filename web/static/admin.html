@@ -102,24 +102,19 @@
           <div class="header-subtitle">ดาวน์โหลดข้อมูล AMR จากเว็บ PEA แล้วคำนวณโปรไฟล์ P/OP/H อัตโนมัติ</div>
         </div>
       </div>
-      <a href="/" style="font-size:13px;color:#2a78d6;text-decoration:none;">← กลับหน้าแรก</a>
+      <div style="display:flex;gap:16px;align-items:center;">
+        <a target="_blank" rel="noopener" href="/manual" style="font-size:13px;color:#2a78d6;text-decoration:none;">📖 คู่มือการใช้งาน</a>
+        <a href="/" style="font-size:13px;color:#2a78d6;text-decoration:none;">← กลับหน้าแรก</a>
+      </div>
     </header>
 
     <main class="body-wrap">
 
       <div class="warn-box">
-        ⚠️ ต้องรันเว็บนี้ในเครื่องที่มี Google Chrome ติดตั้งอยู่ กรอกแค่ <b>Username/Password</b>
-        เข้าเว็บ AMR ของ PEA + ช่วงวันที่ ก็พอ — ระบบจะ<b>ตรวจจับประเภทธุรกิจ/อัตรา/KVA ให้เอง
-        อัตโนมัติ</b>จากหน้าข้อมูลผู้ใช้ไฟของ PEA (ไม่ต้องเลือก/กรอกเอง เว้นแต่ต้องการกำหนดเอง
-        ให้เปิด "ตัวเลือกขั้นสูง" ด้านล่าง) — ใช้แค่ครั้งเดียวสำหรับงานนี้แล้วทิ้งทันที
-        <b>ไม่ถูกบันทึกลงดิสก์/log ที่ไหนเลย</b> (หรือจะตั้งค่าตัวแปรสภาพแวดล้อม
-        <code>PEA_AMR_USERNAME</code> / <code>PEA_AMR_PASSWORD</code> ไว้เป็นค่า default แทนก็ได้
-        ดู README) ไฟล์ดิบที่ดาวน์โหลดมา (มีเลขบัญชี/เลขมิเตอร์) จะถูก<b>เก็บไว้ในเครื่องนี้ที่
-        โฟลเดอร์ <code>amr_downloads/</code></b> เพื่อให้รันซ้ำ/นำเข้าเดือนเพิ่มไม่ต้องดาวน์โหลด
-        ของเดิมใหม่ — โฟลเดอร์นี้อยู่ใน <code>.gitignore</code> แล้ว <b>ไม่มีทางหลุดเข้า repo
-        public ได้เด็ดขาด</b> เหมือนหลักการเดียวกับ <code>customers_local.csv</code> ส่วนไฟล์
-        <code>load_profiles.csv</code>/<code>business_types.csv</code> ที่ commit เข้า repo
-        ยังคงมีแค่ค่าเฉลี่ย P/OP/H แบบไม่ระบุตัวตนเหมือนเดิม
+        ⚠️ ต้องรันเว็บนี้ในเครื่องที่มี Google Chrome ติดตั้งอยู่ กรอกแค่ Username/Password เข้าเว็บ
+        AMR ของ PEA + ช่วงวันที่ ก็พอ ระบบจะตรวจจับประเภทธุรกิจ/อัตรา/KVA ให้เองอัตโนมัติ — ข้อมูล
+        ที่กรอกและไฟล์ที่ดาวน์โหลดมาปลอดภัย ไม่หลุดเข้า repo public
+        <a target="_blank" rel="noopener" href="/manual#chrome-credentials" style="color:#7a5a00;font-weight:600;">อ่านรายละเอียดในคู่มือ →</a>
       </div>
 
       <div class="card" style="padding: 28px; display: flex; flex-direction: column; gap: 20px;">
@@ -208,14 +203,9 @@
 
         <div id="import-mode-file" style="display:none;">
           <div class="hint" style="margin-bottom: 16px;">
-            ใช้ตอนมีไฟล์ "รายงานข้อมูลกิโลวัตต์ชั่วโมงแบบช่วงเวลา" จากเว็บ AMR ของ PEA อยู่แล้ว
-            (เช่น ได้รับไฟล์มาจากที่อื่น ไม่มี username/password ของบัญชีนั้นเอง) — ต้องเป็นไฟล์
-            รูปแบบเดียวกับที่โหมดดึงจากเว็บดาวน์โหลดมาให้เอง (นามสกุล .xls ที่จริงๆ เป็นตาราง
-            HTML มีคอลัมน์ RATE A/B/C) แนบได้หลายไฟล์พร้อมกัน (เช่นหลายเดือน) จะถูกเฉลี่ยรวมกัน
-            เหมือนโหมดดึงจากเว็บ — <b>แนบแค่ไฟล์ก็พอ ไม่ต้องกรอกอะไรเพิ่มเลย</b> ระบบจะอ่านเลข
-            บัญชีจากในไฟล์แล้วเทียบกับทะเบียนลูกค้า (customers.csv/customers_local.csv) ให้เอง
-            ถ้าบัญชีนี้เคยลงทะเบียนประเภทธุรกิจ/อัตราไว้แล้วจะดึงมาใช้อัตโนมัติทันที — ถ้าไม่เจอใน
-            ทะเบียนถึงจะต้องกรอกประเภทธุรกิจ/รหัสอัตราเองด้านล่าง (ระบบจะแจ้งเตือนให้ตอนนั้น)
+            ใช้ตอนมีไฟล์ AMR จากเว็บ PEA อยู่แล้ว — <b>แนบแค่ไฟล์ก็พอ ไม่ต้องกรอกอะไรเพิ่มเลย</b>
+            ระบบจะอ่านเลขบัญชีจากในไฟล์แล้วหาประเภทธุรกิจ/อัตราจากทะเบียนลูกค้าให้เอง
+            <a target="_blank" rel="noopener" href="/manual#file-attach-mode">อ่านรายละเอียดในคู่มือ →</a>
           </div>
 
           <div class="form-grid">
@@ -273,7 +263,7 @@
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
           <div>
             <div style="font-size: 15px; font-weight: 700;">ประวัติการนำเข้า AMR ในเครื่องนี้</div>
-            <div class="hint">ชื่อบริษัท/นิติบุคคลและเลขบัญชีจริงที่เคยนำเข้าแบบอัตโนมัติจากเครื่องนี้ — ไว้ดูว่า "ทำอะไรไปแล้วบ้าง มีข้อมูลของใครบ้าง" เท่านั้น อ่านจากไฟล์ <code>import_log_local.csv</code> ซึ่งอยู่ใน <code>.gitignore</code> แล้ว <b>ไม่ถูก commit เข้า repo public เด็ดขาด</b> เหมือนหลักการเดียวกับ <code>customers_local.csv</code></div>
+            <div class="hint">ประวัติสิ่งที่เคยนำเข้าจากเครื่องนี้ — ไม่ถูก commit เข้า repo public <a target="_blank" rel="noopener" href="/manual#import-history">อ่านรายละเอียดในคู่มือ →</a></div>
           </div>
           <button type="button" id="import-log-refresh-btn" class="day-type-btn">🔄 รีเฟรช</button>
         </div>
@@ -285,12 +275,8 @@
           <div>
             <div style="font-size: 15px; font-weight: 700;">หมวดหมู่ธุรกิจทั้งหมดในระบบ (แบ่งตาม Section)</div>
             <div class="hint">
-              จัดกลุ่มตาม Section (TSIC) ก่อน แล้วค่อยแยกเป็น Division/ประเภทธุรกิจย่อยด้านใน —
-              กดที่ Section เพื่อดูรายชื่อบริษัทที่เคยนำเข้าในกลุ่มนั้น และกด "📈 ดูกราฟ" เพื่อดู
-              รูปแบบการใช้ไฟที่นำเข้าจาก AMR จริง (ส่วนนี้ยังไม่ใช่การพยากรณ์ — เป็นขั้นแรกที่นำข้อมูล
-              AMR เข้าระบบและดูว่าประเภทธุรกิจนี้มีรูปแบบกราฟเป็นอย่างไรก่อน) หมวดที่ยังไม่ได้ตรวจสอบ
-              TSIC จะถูกจัดไว้ในกลุ่ม "ยังไม่ตรวจสอบ" — กดปุ่ม "ตรวจสอบ TSIC" ในการ์ดนั้นเพื่อค้นหา
-              และบันทึกได้เลย
+              จัดกลุ่มตาม Section (TSIC) ก่อน แล้วแยกเป็น Division/ประเภทธุรกิจย่อยด้านใน
+              <a target="_blank" rel="noopener" href="/manual#business-types-grouping">อ่านรายละเอียดในคู่มือ →</a>
             </div>
           </div>
           <button type="button" id="business-types-refresh-btn" class="day-type-btn">🔄 รีเฟรช</button>

@@ -56,7 +56,10 @@
           <div class="header-subtitle">โครงการ No AMR — สำหรับผู้ใช้ไฟที่ยังไม่มีข้อมูลมิเตอร์ AMR ของตัวเอง</div>
         </div>
       </div>
-      <a href="/admin" style="font-size:13px;color:#2a78d6;text-decoration:none;">นำเข้า AMR (Admin) →</a>
+      <div style="display:flex;gap:16px;align-items:center;">
+        <a target="_blank" rel="noopener" href="/manual" style="font-size:13px;color:#2a78d6;text-decoration:none;">📖 คู่มือการใช้งาน</a>
+        <a href="/admin" style="font-size:13px;color:#2a78d6;text-decoration:none;">นำเข้า AMR (Admin) →</a>
+      </div>
     </header>
 
     <main class="body-wrap">
@@ -69,8 +72,8 @@
       <!-- โหมด: พยากรณ์แบบไม่บันทึกข้อมูล (ค่าเริ่มต้น — เหมาะกับผู้ใช้ไฟที่ยังไม่มีอยู่ในทะเบียน) -->
       <div id="adhoc-panel" class="mode-panel-wrap">
         <div class="warn-box">
-          ℹ️ พิมพ์ชื่อบริษัทได้อย่างอิสระ (แม้เป็นชื่อจริง) เพราะ<b>ชื่อที่พิมพ์จะไม่ถูกส่งไปที่เซิร์ฟเวอร์เลย</b> —
-          ใช้แสดงผลในเบราว์เซอร์นี้เท่านั้น ไม่ถูกบันทึกลงไฟล์ ไม่ถูก log ที่ไหนทั้งสิ้น ปิด/รีเฟรชหน้านี้แล้วข้อมูลหายไปทันที
+          ℹ️ พิมพ์ชื่อบริษัทได้อย่างอิสระ (แม้เป็นชื่อจริง) เพราะชื่อที่พิมพ์จะไม่ถูกส่งไปที่เซิร์ฟเวอร์เลย
+          <a target="_blank" rel="noopener" href="/manual#name-privacy" style="color:#184f95;font-weight:600;">อ่านรายละเอียดในคู่มือ →</a>
         </div>
 
         <div class="form-grid">
@@ -81,9 +84,8 @@
               <button type="button" id="lookup-business-type-btn" class="day-type-btn" style="white-space:nowrap;padding:0 16px;height:44px;">🔍 ค้นหาประเภทธุรกิจอัตโนมัติ</button>
             </div>
             <div class="hint">
-              ปุ่มค้นหานี้จะ<b>ส่งชื่อบริษัทออกไปค้นหาที่เว็บสาธารณะของกรมพัฒนาธุรกิจการค้า (DBD)</b>
-              เพื่อดึงประเภทธุรกิจ (TSIC) มาเติมให้อัตโนมัติ — ต่างจากการกด "พยากรณ์" ด้านล่างที่<b>ไม่ส่งชื่อออกจากเบราว์เซอร์เลย</b>
-              ไม่จำเป็นต้องกดก็ได้ถ้าอยากเลือกประเภทธุรกิจเอง — ต้องรันเว็บนี้ในเครื่องที่มี Google Chrome ติดตั้งอยู่และมี network ออกอินเทอร์เน็ตได้
+              ปุ่มนี้จะส่งชื่อบริษัทออกไปค้นหาที่ฐานข้อมูล DBD (ไม่จำเป็นต้องกดถ้าอยากเลือกเอง)
+              <a target="_blank" rel="noopener" href="/manual#name-privacy">อ่านรายละเอียดในคู่มือ →</a>
             </div>
             <div id="business-type-lookup-status"></div>
           </div>

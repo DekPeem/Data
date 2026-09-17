@@ -590,20 +590,10 @@ function renderVerifyPanel(code) {
       </div>
       <div id="verify-status-${code}" class="hint"></div>
 
-      <details style="margin-top:10px;">
-        <summary style="cursor:pointer;font-size:12.5px;font-weight:600;color:#55647a;">
-          ℹ️ ช่อง Section / Division ด้านล่างคืออะไร ใช้ทำไม
-        </summary>
-        <div class="hint" style="margin-top:8px;line-height:1.7;">
-          TSIC คือระบบจัดหมวดหมู่ธุรกิจมาตรฐานของไทย จัดเป็นลำดับชั้น <b>Section</b> (หมวดใหญ่สุด —
-          ตัวอักษร A-U) → <b>Division</b> (หมวดย่อยลงมา — ตัวเลข 2 หลัก) รหัสประเภทธุรกิจของ กฟภ.
-          (รหัส ${code} นี้) ไม่ใช่รหัส TSIC มาตรฐาน — 4 ช่องนี้คือการ "แปลง" ให้รู้ว่าตรงกับหมวด
-          TSIC ไหน เพื่อเก็บไว้ใช้เฉพาะตอน<b>ไม่มีข้อมูล AMR จริงของประเภทนี้เลย</b> ระบบจะได้ไปหยิบ
-          ค่าเฉลี่ยจากประเภทธุรกิจอื่นที่อยู่ Division เดียวกันมาใช้แทนแบบคร่าวๆ ดีกว่าตกไปใช้ค่ากลาง
-          ทั่วไป — ถ้าประเภทนี้มีข้อมูล AMR จริงอยู่แล้ว การกรอก/ไม่กรอกช่องนี้จะไม่กระทบผลพยากรณ์ของ
-          ประเภทนี้เอง มีผลแค่กับประเภทธุรกิจอื่นที่ยังไม่มีข้อมูลเท่านั้น
-        </div>
-      </details>
+      <div class="hint" style="margin-top:10px;">
+        ℹ️ ช่อง Section / Division ด้านล่างคืออะไร ใช้ทำไม —
+        <a href="/manual#tsic-explained" target="_blank" rel="noopener">อ่านรายละเอียดในคู่มือ →</a>
+      </div>
 
       <div class="hint" style="margin-top:10px;">
         กรอกเอง หรือเลือกจากผลค้นหาด้านบนเพื่อเติมให้อัตโนมัติ — พิมพ์ Division code แล้ว Section

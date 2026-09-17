@@ -529,6 +529,11 @@ def admin_page():
     return app.send_static_file("admin.html")
 
 
+@app.route("/manual")
+def manual_page():
+    return app.send_static_file("manual.html")
+
+
 def _run_import_job(job_id: str, username: str, password: str, params: dict) -> None:
     def log(msg: str) -> None:
         with _JOBS_LOCK:
