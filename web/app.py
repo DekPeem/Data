@@ -450,14 +450,17 @@ def _run_dataforthai_fallback(company_name: str, log) -> Optional[dict]:
 
     ⚠️ ขั้นตอนคลิกเลือก suggestion + อ่านหน้าโปรไฟล์ยังไม่เคยทดสอบกับเว็บจริง (ดู docstring ของ
     dataforthai_lookup.lookup_business_category) คืน None ได้ถ้าล้มเหลว ไม่ raise ทำให้ job หลัก
-    ล้มไปด้วย เพราะเป็นแค่ทางเลือกเสริมตอน DBD ใช้ไม่ได้อยู่แล้ว"""
+    ล้มไปด้วย เพราะเป็นแค่ทางเลือกเสริมตอน DBD ใช้ไม่ได้อยู่แล้ว
 
-    log("🔁 ลอง fallback ไปที่ dataforthai.com (เว็บบุคคลที่สาม ไม่ใช่แหล่งข้อมูลทางการของ DBD)")
-    suggestions = suggest_companies_with_fallback(company_name, log=log)
-    if not suggestions:
-        log("⚠️ ไม่พบชื่อที่ใกล้เคียงใน dataforthai.com เลย (ลองครบทุกคำค้นหาสำรองแล้ว)")
-        return None
-    log(f"✅ พบ {len(suggestions)} ชื่อที่ใกล้เคียงใน dataforthai.com")
+    ยืนยันจากผู้ใช้จริง: เรียก /api/suggest ตรงๆ ด้วย HTTP GET ธรรมดา (ไม่ผ่านเบราว์เซอร์จริง)
+    ไม่เจอผลลัพธ์เลยแม้แต่คำค้นหาสั้นๆ ที่เคยเห็นเองในเบราว์เซอร์จริงว่ามี suggestion จริง — จึง
+    "ไม่ใช้ผลจาก HTTP request ตรงๆ เป็นเงื่อนไขตัดสินใจว่าจะลอง Selenium ต่อหรือไม่" อีกต่อไป (เดิม
+    เคยเขียนไว้แบบนั้น กลายเป็นบล็อกไม่ให้ไปถึงขั้น Selenium เลยทั้งที่ Selenium อาจจะเจอก็ได้ เพราะ
+    เป็นการพิมพ์ผ่านเบราว์เซอร์จริงเหมือนที่ผู้ใช้ทำเอง) — ไปลอง lookup_business_category (Selenium
+    เปิดเว็บจริง พิมพ์ค้นหา คลิกเลือก อ่านหน้า) ตรงๆ เลย ส่วนผล suggest_companies_with_fallback
+    เก็บไว้แค่เป็นข้อมูลประกอบ (รายชื่อใกล้เคียง) เท่านั้น ไม่ใช้ตัดสินใจว่าจะหยุดหรือไปต่อ"""
+
+    log("🔁 ลอง fallback ไปที่ dataforthai.com (เว็บบุคคลที่สาม ไม่ใช่แหล่งข้อมูลทางการของ DBD) ด้วยเบราว์เซอร์จริง")
 
     category = None
     try:
@@ -468,6 +471,14 @@ def _run_dataforthai_fallback(company_name: str, log) -> Optional[dict]:
             driver.quit()
     except Exception as e:  # noqa: BLE001 — fallback เสริม ล้มแล้วต้องไม่ทำให้ job หลักพังไปด้วย
         log(f"⚠️ ดึงหมวดธุรกิจจาก dataforthai.com ไม่สำเร็จ: {e}")
+
+    # suggest_companies เป็นแค่ HTTP request ธรรมดา (ไม่ผ่านเบราว์เซอร์จริง) เก็บไว้แค่เป็นข้อมูล
+    # ประกอบเพิ่มเติมเฉยๆ (รายชื่อใกล้เคียง) — ล้มเหลวได้โดยไม่กระทบผลหลักจาก Selenium ข้างบน
+    suggestions = suggest_companies_with_fallback(company_name, log=log)
+
+    if not category and not suggestions:
+        log("⚠️ ไม่พบข้อมูลใดๆ จาก dataforthai.com เลยทั้งสองทาง")
+        return None
 
     return {
         "source": "dataforthai",

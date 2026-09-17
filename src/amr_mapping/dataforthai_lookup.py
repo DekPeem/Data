@@ -51,7 +51,7 @@ class CompanySuggestion:
     value: str  # ชื่อแบบตัดคำนำหน้า/ต่อท้ายออก เช่น "ซีพี ออลล์"
 
 
-def suggest_companies(query: str, timeout: float = 10.0) -> List[CompanySuggestion]:
+def suggest_companies(query: str, timeout: float = 10.0, log: ProgressCallback = _noop) -> List[CompanySuggestion]:
     """เรียก /api/suggest?q=... ตรงๆ ด้วย HTTP GET ธรรมดา (ไม่ต้องใช้ Selenium — ยืนยันจาก
     response จริงแล้วว่าเป็น REST API เปิดเผย ไม่มีการเข้ารหัส/ป้องกันบอทแบบ DBD) คืน list ว่าง
     ถ้าไม่มีผลลัพธ์หรือเรียกไม่สำเร็จ (ไม่ raise — endpoint นี้เป็นแค่ตัวช่วยเดาชื่อ ไม่ใช่ผลลัพธ์
@@ -59,22 +59,36 @@ def suggest_companies(query: str, timeout: float = 10.0) -> List[CompanySuggesti
 
     encode ด้วย safe="()" ให้วงเล็บไม่ถูกแปลงเป็น %28/%29 — ยืนยันจาก URL จริงที่ผู้ใช้ capture
     จาก DevTools ว่าเบราว์เซอร์ (encodeURIComponent ของ JS) ปล่อยวงเล็บไว้แบบนั้นไม่เข้ารหัส
-    ต่างจาก Python quote() ปกติที่เข้ารหัสวงเล็บด้วย — เผื่อฝั่งเซิร์ฟเวอร์สนใจความต่างนี้"""
+    ต่างจาก Python quote() ปกติที่เข้ารหัสวงเล็บด้วย — เผื่อฝั่งเซิร์ฟเวอร์สนใจความต่างนี้
+
+    ยืนยันจากผู้ใช้จริงว่าลองคำค้นหาสั้นๆ ("ซีพี" คำเดียว ซึ่งเคยเห็นเองในเบราว์เซอร์จริงว่ามี
+    suggestion โผล่ขึ้นมาจริง) แล้วยัง "ไม่พบผลลัพธ์" ทุกครั้งจากโค้ดนี้ — ต่างจากตอนพิมพ์ในเบราว์เซอร์
+    เอง จึงต้อง log สถานะ/เนื้อหาที่ตอบกลับมาจริงทุกครั้งที่ไม่ได้ผลลัพธ์ตามคาด (คล้าย dbd_lookup ที่
+    เจอว่าเป็นเพราะระบบป้องกันบอทมาก่อนแล้ว) แทนที่จะรู้แค่ว่า "ไม่พบ" เฉยๆ โดยไม่รู้สาเหตุ"""
 
     url = f"{SUGGEST_URL}?q={quote(query, safe='()')}"
     request = Request(url, headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"})
     try:
         with urlopen(request, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8")
-    except Exception:  # noqa: BLE001 — เครือข่ายมีปัญหา/เว็บเปลี่ยน format ก็ถือว่าไม่มีผลลัพธ์
+            status = getattr(resp, "status", None)
+            raw = resp.read().decode("utf-8", errors="replace")
+    except Exception as e:  # noqa: BLE001 — เครือข่ายมีปัญหา/เว็บเปลี่ยน format ก็ถือว่าไม่มีผลลัพธ์
+        body_snippet = ""
+        try:
+            body_snippet = e.read().decode("utf-8", errors="replace")[:300]  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 — ไม่ใช่ HTTPError หรืออ่าน body ไม่ได้ ก็แค่ไม่มี snippet
+            pass
+        log(f"⚠️ เรียก {url} ไม่สำเร็จ: {e}{f' — เนื้อหา: {body_snippet}' if body_snippet else ''}")
         return []
 
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
+        log(f"⚠️ {url} ตอบกลับมา (status={status}) แต่ไม่ใช่ JSON ที่ถูกต้อง: {raw[:300]}")
         return []
 
     if not isinstance(data, list):
+        log(f"⚠️ {url} ตอบกลับมาเป็น JSON แต่ไม่ใช่ list ตามที่คาด (status={status}): {raw[:300]}")
         return []
 
     results = []

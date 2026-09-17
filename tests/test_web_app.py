@@ -971,10 +971,19 @@ def test_business_type_lookup_reports_blocked_even_when_dataforthai_fallback_fai
     def fake_lookup(company_name, log=lambda m: None, headless=True):
         raise BlockedByAntiBot("Incapsula incident ID: 999")
 
+    def fake_category(driver, company_name, log=lambda m: None, timeout=20.0):
+        return None  # Selenium ก็หาหมวดธุรกิจไม่เจอเช่นกัน (จำลอง)
+
     def fake_suggest(company_name, log=lambda m: None, timeout=10.0):
         raise RuntimeError("dataforthai.com ก็ล่มด้วย (จำลอง)")
 
+    class _FakeDriver:
+        def quit(self):
+            pass
+
     monkeypatch.setattr(app_module, "lookup_business_type_for_company", fake_lookup)
+    monkeypatch.setattr(app_module, "setup_dataforthai_driver", lambda headless=True: _FakeDriver())
+    monkeypatch.setattr(app_module, "lookup_business_category", fake_category)
     monkeypatch.setattr(app_module, "suggest_companies_with_fallback", fake_suggest)
 
     res = client.post("/api/business-type-lookup", json={"company_name": "บริษัท ทดสอบ จำกัด"})
