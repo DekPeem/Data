@@ -105,6 +105,20 @@ def setup_driver(download_dir: str, headless: bool = True):
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_opts)
     driver.implicitly_wait(5)
+
+    # Chrome headless (--headless=new) บล็อกการดาวน์โหลดไฟล์โดย default เป็นเรื่องที่รู้กันดี —
+    # ต้องอนุญาตผ่าน CDP command นี้อย่างชัดเจน ไม่งั้น browser จะสร้าง .crdownload ขึ้นมาได้
+    # (เห็น element/คลิกได้ปกติ ไม่มี exception ใดๆ เลย) แต่ไฟล์ไม่มีวันเสร็จ/ไม่มีวันเขียนจริง —
+    # ตรงกับอาการที่ผู้ใช้เจอจริง (.crdownload ค้างอยู่ทั้ง wait หลักและ grace period โดยไม่ error)
+    # เดิมโค้ดนี้ไม่เคยส่งคำสั่งนี้เลย ทั้งที่ headless=True เป็นค่า default — เพิ่งพบตอนไล่หาสาเหตุ
+    # ของ .crdownload ที่ค้างไม่จบ (ดู _wait_for_download diagnostics)
+    try:
+        driver.execute_cdp_cmd(
+            "Page.setDownloadBehavior", {"behavior": "allow", "downloadPath": download_dir}
+        )
+    except Exception:  # noqa: BLE001 — บาง environment/เวอร์ชัน ChromeDriver อาจไม่รองรับ ไม่ควรทำให้ setup พังไปด้วย
+        pass
+
     return driver
 
 
