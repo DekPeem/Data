@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import amr_mapping.dbd_lookup as dbd_lookup
 from amr_mapping.dbd_lookup import (
+    BlockedByAntiBot,
     CompanyBusinessInfo,
     _fallback_search_terms,
     _strip_legal_form,
@@ -386,5 +387,56 @@ def test_search_once_diagnostics_failure_does_not_crash_search():
 
     assert results == []
     assert any("มี div#table-filter-data=False" in m for m in logs)
+
+
+def test_search_company_business_type_raises_when_blocked_by_antibot():
+    """ยืนยันจากผู้ใช้จริง: ค้นหาด้วยคำสั้นๆ ที่ควรเจอผลลัพธ์แน่ๆ (เช่น "ซีพี") แล้วหน้าที่โหลดมา
+    จริงๆ กลับเป็นหน้า "Request unsuccessful. Incapsula incident ID: ..." (ระบบป้องกันบอทของ
+    เว็บ DBD) — ต้องแยกแยะออกจาก "ไม่พบผลลัพธ์" ธรรมดาชัดเจน (raise BlockedByAntiBot) และต้อง
+    "หยุดค้นหาทันที" ไม่ลองคำค้นหาสำรองต่อ เพราะทุกรอบก็จะโดนบล็อกเหมือนกันหมด เสียเวลาเปล่า"""
+
+    driver = _FakeDiagnosticsDriver(
+        has_table_filter_data=False,
+        body_text="Request unsuccessful. Incapsula incident ID: 390000490867484822-1167330703298661490",
+    )
+
+    import pytest
+
+    with pytest.raises(BlockedByAntiBot):
+        search_company_business_type(driver, "ซีพี", timeout=0.3)
+
+    # ต้องหยุดทันทีตั้งแต่ครั้งแรก ไม่ลองคำค้นหาสำรองต่อ (ชื่อ "ซีพี" ไม่มีคำนำหน้า/ต่อท้ายนิติบุคคล
+    # ให้ตัด แต่ถ้าไม่หยุดจริงจะยังเห็นความพยายามค้นซ้ำใน get_calls มากกว่า 1 ครั้งอยู่ดีถ้าโค้ดผิด)
+    assert len(driver.get_calls) == 1
+
+
+def test_lookup_business_type_for_company_closes_driver_even_when_blocked(monkeypatch):
+    """lookup_business_type_for_company ไม่มีพารามิเตอร์ timeout ให้ override (ใช้ default
+    ของ search_company_business_type = 15 วินาทีจริง) จึง mock search_company_business_type
+    ให้ raise ตรงๆ แทนการใช้ driver จำลองที่ไม่เจอผลลัพธ์เลย (จะทำให้เทสต์นี้ต้องรอ WebDriverWait
+    จริง 15 วินาทีโดยไม่จำเป็น — สิ่งที่เทสต์นี้ต้องการยืนยันคือ driver.quit() ถูกเรียกเสมอแม้
+    exception ประเภทนี้จะหลุดออกมาจาก search_company_business_type ก็ตาม ไม่ได้เกี่ยวกับ
+    รายละเอียดการค้นหาเอง)"""
+
+    closed = {"quit_called": False}
+
+    class _FakeDriver:
+        def quit(self):
+            closed["quit_called"] = True
+
+    fake_driver = _FakeDriver()
+    monkeypatch.setattr(dbd_lookup, "setup_driver", lambda headless=True: fake_driver)
+    monkeypatch.setattr(
+        dbd_lookup,
+        "search_company_business_type",
+        lambda driver, name, log=lambda m: None: (_ for _ in ()).throw(BlockedByAntiBot("Incapsula incident ID: 123")),
+    )
+
+    import pytest
+
+    with pytest.raises(BlockedByAntiBot):
+        dbd_lookup.lookup_business_type_for_company("ซีพี")
+
+    assert closed["quit_called"] is True
 
 

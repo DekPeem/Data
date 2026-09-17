@@ -192,6 +192,32 @@ def _parse_result_rows(driver) -> List[CompanyBusinessInfo]:
     return results
 
 
+class BlockedByAntiBot(Exception):
+    """เว็บ DBD DataWarehouse บล็อกการเข้าถึงอัตโนมัติ (พบข้อความยืนยันจากผู้ใช้จริง: "Request
+    unsuccessful. Incapsula incident ID: ..." — Incapsula คือระบบป้องกันบอท/WAF ของ Imperva)
+    ไม่ใช่ว่าไม่พบบริษัทนี้จริงๆ — สำคัญมากที่ต้องแยกสองกรณีนี้ออกจากกันให้ชัดเจน เพราะ "ไม่พบ"
+    ธรรมดาจะทำให้ผู้ใช้เข้าใจผิดว่าบริษัทที่ค้นหาไม่มีอยู่จริง ทั้งที่จริงๆ คือระบบป้องกันของเว็บ
+    ทำงานอยู่ (ตามเจตนาของเขา)
+
+    ⚠️ โมดูลนี้ไม่พยายามหลีกเลี่ยง/ปลอมตัวให้พ้นการตรวจจับนี้เด็ดขาด (เช่น ปลอม navigator.webdriver,
+    หมุน user-agent/IP ฯลฯ) — ตรงกับหลักการเดียวกับที่ประกาศไว้หัวไฟล์นี้แล้วเรื่องไม่แตะ API ที่
+    เข้ารหัสไว้: Incapsula คือมาตรการป้องกันที่เว็บตั้งใจทำขึ้นมาโดยเจตนา การพยายามหลบเลี่ยงจะขัดกับ
+    หลักการที่ยึดถือมาตั้งแต่ต้น"""
+
+    def __init__(self, snippet: str = ""):
+        message = (
+            "เว็บ DBD DataWarehouse บล็อกการเข้าถึงอัตโนมัติ (ระบบป้องกันบอทของเว็บ ไม่ใช่ว่าไม่พบ"
+            "บริษัทนี้จริงๆ) — ลองค้นหาด้วยตัวเองที่ https://datawarehouse.dbd.go.th/juristic/searchInfo "
+            f"แทน หรือรอสักครู่แล้วลองใหม่{f' (ข้อความจากเว็บ: {snippet})' if snippet else ''}"
+        )
+        super().__init__(message)
+
+
+# คำ/วลีที่บ่งชี้ว่าเว็บบล็อกการเข้าถึงอัตโนมัติ (ไม่ใช่แค่ "ไม่พบผลลัพธ์" ธรรมดา) — เช็คแบบ
+# case-insensitive เพราะภาษาอังกฤษบางทีสลับตัวพิมพ์เล็กใหญ่ได้
+_BLOCK_INDICATORS = ("incapsula", "request unsuccessful", "access denied", "are you a robot", "captcha")
+
+
 def _log_search_diagnostics(driver, log: ProgressCallback) -> None:
     """เก็บรายละเอียดหน้าไว้ใน log ตอนรอตารางผลลัพธ์ไม่เจอเลย (url/title/ข้อความในหน้า/มี
     div#table-filter-data อยู่ไหมแม้จะไม่มีแถวเลย) — ยืนยันจากผู้ใช้จริงว่าค้นหาด้วยคำสั้นๆ ที่
@@ -212,6 +238,13 @@ def _log_search_diagnostics(driver, log: ProgressCallback) -> None:
         )
         if snippet:
             log(f"🔎 ข้อความในหน้า (300 ตัวอักษรแรก): {snippet}")
+
+        lowered = body_text.lower()
+        if any(indicator in lowered for indicator in _BLOCK_INDICATORS):
+            log("🚫 เว็บ DBD บล็อกการเข้าถึงอัตโนมัติ (ตรวจพบข้อความของระบบป้องกันบอท) — ไม่ใช่ว่าไม่พบบริษัทนี้จริงๆ")
+            raise BlockedByAntiBot(snippet)
+    except BlockedByAntiBot:
+        raise
     except Exception as e:  # noqa: BLE001 — เก็บ diagnostics ไม่สำเร็จ ต้องไม่ทำให้การค้นหาหลักพังไปด้วย
         log(f"⚠️ เก็บรายละเอียดหน้าไม่สำเร็จ: {e}")
 
