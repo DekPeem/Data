@@ -215,17 +215,60 @@ class _FakeShowPageDriver:
         raise ValueError(f"unexpected tag: {tag}")
 
 
+def _install_fake_clock(monkeypatch):
+    """แทน time.sleep/time.time ด้วยนาฬิกาจำลอง (เดินเวลาไปตามที่ sleep() เรียก แทนที่จะรอจริง) —
+    ใช้กับเทสต์ที่ทำให้โค้ดต้องวนลูปรอจนหมดเวลาก่อน fallback (เช่นรอ popup ที่ไม่มีวันเปิด) ซึ่งถ้า
+    mock แค่ time.sleep เฉยๆ ลูปจะ busy-spin จนกว่านาฬิกาจริงจะถึง deadline อยู่ดี (ยังช้าเท่าเดิม)"""
+    fake_clock = {"t": 0.0}
+
+    def fake_sleep(seconds):
+        fake_clock["t"] += seconds
+
+    monkeypatch.setattr(amr_downloader.time, "sleep", fake_sleep)
+    monkeypatch.setattr(amr_downloader.time, "time", lambda: fake_clock["t"])
+
+
 def test_try_download_from_show_page_clicks_matching_input_button(monkeypatch):
     btn = _FakeClickable(value="Download Excel")
     driver = _FakeShowPageDriver(inputs=[btn])
 
     monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60: "/tmp/fake_downloaded.xls")
     monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)  # ข้าม sleep จริงตอนเทสต์
+    # ไม่มี popup เปิดในเทสต์นี้เลย (fallback ไปรอดาวน์โหลดตรงๆ) — ต้องใช้นาฬิกาจำลอง ไม่งั้นจะ
+    # รอจริง 20 วินาทีเต็มตามลูป popup-wait ใหม่ก่อนจะ fallback (busy-spin จนถึง deadline จริง)
+    _install_fake_clock(monkeypatch)
 
     result = amr_downloader._try_download_from_show_page(driver, "main", "/tmp/dl", log=lambda m: None)
 
     assert btn.clicked is True
     assert result == "/tmp/fake_downloaded.xls"
+
+
+def test_try_download_from_show_page_waits_past_5_seconds_for_slow_popup(monkeypatch):
+    """ยืนยันจากผู้ใช้จริง: กดปุ่ม Download แล้ว popup "เลือกเอกสารที่ต้องการ" เปิดช้ากว่า 5
+    วินาที (เดิม) ทำให้ log ขึ้น "ไม่มี popup" ทั้งที่จริงๆ เปิดแค่ช้า แล้วไปรอดาวน์โหลดไฟล์
+    ตรงๆ ที่ไม่มีวันมาถึง — ต้องรอได้นานกว่า 5 วินาทีเดิม (ตอนนี้ขยายเป็น 20 วินาที)"""
+
+    btn = _FakeClickable(value="Download")
+    driver = _FakeShowPageDriver(inputs=[btn])
+
+    sleep_calls = {"n": 0}
+
+    def fake_sleep(seconds):
+        sleep_calls["n"] += 1
+        if sleep_calls["n"] == 50:  # เกิน 20 ครั้ง (ขีดจำกัดเดิม) ไปมาก — ต้องยังตรวจจับได้
+            driver.window_handles = ["main", "popup"]
+
+    monkeypatch.setattr(amr_downloader.time, "sleep", fake_sleep)
+    monkeypatch.setattr(
+        amr_downloader, "_handle_popup", lambda driver, main_handle, download_dir, log: "/tmp/fake_slow_popup.xls"
+    )
+    monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
+
+    result = amr_downloader._try_download_from_show_page(driver, "main", "/tmp/dl", log=lambda m: None)
+
+    assert btn.clicked is True
+    assert result == "/tmp/fake_slow_popup.xls"
 
 
 def test_try_download_from_show_page_clicks_image_input_button(monkeypatch):
@@ -238,6 +281,7 @@ def test_try_download_from_show_page_clicks_image_input_button(monkeypatch):
 
     monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60: "/tmp/fake_image_btn.xls")
     monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
+    _install_fake_clock(monkeypatch)
 
     result = amr_downloader._try_download_from_show_page(driver, "main", "/tmp/dl", log=lambda m: None)
 
@@ -251,6 +295,7 @@ def test_try_download_from_show_page_clicks_matching_anchor_link(monkeypatch):
 
     monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60: "/tmp/fake2.xls")
     monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
+    _install_fake_clock(monkeypatch)
 
     result = amr_downloader._try_download_from_show_page(driver, "main", "/tmp/dl", log=lambda m: None)
 
@@ -267,6 +312,7 @@ def test_try_download_from_show_page_clicks_matching_button_element(monkeypatch)
 
     monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60: "/tmp/fake3.xls")
     monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
+    _install_fake_clock(monkeypatch)
 
     result = amr_downloader._try_download_from_show_page(driver, "main", "/tmp/dl", log=lambda m: None)
 
@@ -458,7 +504,7 @@ def test_try_download_from_show_page_retries_until_element_appears(monkeypatch):
 
     monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60: "/tmp/fake4.xls")
     monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
-    monkeypatch.setattr(amr_downloader.time, "sleep", lambda s: None)  # ข้าม sleep จริงระหว่าง retry
+    _install_fake_clock(monkeypatch)  # กันไม่ให้ popup-wait loop รอจริง 20 วินาที (ไม่มี popup เปิดในเทสต์นี้)
 
     result = amr_downloader._try_download_from_show_page(driver, "main", "/tmp/dl", log=lambda m: None, timeout=5)
 

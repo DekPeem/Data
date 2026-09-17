@@ -499,10 +499,15 @@ def _try_download_from_show_page(
     initial_handles = set(driver.window_handles)
 
     def click_and_wait(element) -> Optional[str]:
+        # รอ popup เปิดขึ้นนานสูงสุด 20 วินาที (เดิม 5 วินาทีสั้นเกินไป — ยืนยันจากผู้ใช้จริงว่า
+        # เว็บ PEA เปิด popup "เลือกเอกสารที่ต้องการ" เสมอหลังกดปุ่มนี้ ไม่เคยดาวน์โหลดตรงๆ เลย
+        # แต่ log กลับขึ้น "ไม่มี popup" เพราะ popup เปิดช้ากว่า 5 วินาทีที่เคยรอ ทำให้ตกไปรอไฟล์
+        # ดาวน์โหลดตรงๆ ที่ไม่มีวันมาถึง 60 วินาทีโดยเปล่าประโยชน์)
         handles_before = set(driver.window_handles)
         element.click()
 
-        for _ in range(20):
+        deadline = time.time() + 20
+        while time.time() < deadline:
             time.sleep(0.25)
             if set(driver.window_handles) - handles_before:
                 log("✅ มี popup เปิดขึ้นหลังกดปุ่มดาวน์โหลดในหน้านี้")
