@@ -438,27 +438,41 @@ def _handle_popup(driver, main_handle, download_dir: str, log: ProgressCallback)
 _DOWNLOAD_KEYWORDS = ("excel", "download", "ดาวน์โหลด", "ส่งออก", "export")
 
 
+def _matches_download_keyword(*parts: str) -> bool:
+    combined = " ".join(p for p in parts if p).lower()
+    return any(kw in combined for kw in _DOWNLOAD_KEYWORDS)
+
+
 def _find_download_element(driver):
     """ไล่หาปุ่ม/ลิงก์ที่มีคำว่า download/excel/ดาวน์โหลด/ส่งออก อยู่บนหน้าปัจจุบัน — เช็คทั้ง
-    <input> (ASP.NET classic webform), <a> (ลิงก์), และ <button> (ยืนยันจากผู้ใช้จริงว่าบาง
-    หน้ามีปุ่มแบบนี้) คืน (element, ข้อความที่จับคู่ได้) หรือ (None, None) ถ้าไม่เจอเลย"""
+    <input> (ASP.NET classic webform รวมถึง <input type="image"> ปุ่มรูปภาพที่คำใบ้อยู่ใน
+    alt/src/name/id แทน value — ยืนยันจาก diagnostics จริงว่าหน้าที่หาปุ่มไม่เจอมี input=24
+    แต่ไม่มีตัวไหน value ตรงเลย น่าจะเป็นปุ่มรูปภาพแบบนี้), <a> (ลิงก์ เช็ค href/title ด้วยเผื่อ
+    เป็นลิงก์ไอคอนไม่มีข้อความ), และ <button> คืน (element, ข้อความที่จับคู่ได้) หรือ
+    (None, None) ถ้าไม่เจอเลย"""
 
     from selenium.webdriver.common.by import By
 
     for b in driver.find_elements(By.TAG_NAME, "input"):
-        value = (b.get_attribute("value") or "").lower()
-        if any(kw in value for kw in _DOWNLOAD_KEYWORDS):
-            return b, value
+        value = b.get_attribute("value") or ""
+        alt = b.get_attribute("alt") or ""
+        src = b.get_attribute("src") or ""
+        name = b.get_attribute("name") or ""
+        elem_id = b.get_attribute("id") or ""
+        if _matches_download_keyword(value, alt, src, name, elem_id):
+            return b, (value or alt or src or name or elem_id).strip().lower()
 
     for a in driver.find_elements(By.TAG_NAME, "a"):
-        text = (a.text or "").strip().lower()
-        if any(kw in text for kw in _DOWNLOAD_KEYWORDS):
-            return a, text
+        text = (a.text or "").strip()
+        href = a.get_attribute("href") or ""
+        title_attr = a.get_attribute("title") or ""
+        if _matches_download_keyword(text, href, title_attr):
+            return a, (text or title_attr or href).strip().lower()
 
     for btn in driver.find_elements(By.TAG_NAME, "button"):
-        text = (btn.text or btn.get_attribute("value") or "").strip().lower()
-        if any(kw in text for kw in _DOWNLOAD_KEYWORDS):
-            return btn, text
+        text = (btn.text or btn.get_attribute("value") or "").strip()
+        if _matches_download_keyword(text):
+            return btn, text.lower()
 
     return None, None
 

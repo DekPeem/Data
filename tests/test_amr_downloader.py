@@ -155,13 +155,16 @@ def test_get_customer_profile_maps_fields_and_splits_business_type():
 
 
 class _FakeClickable:
-    def __init__(self, value=None, text=""):
+    def __init__(self, value=None, text="", **attrs):
         self._value = value
         self.text = text
+        self._attrs = attrs
         self.clicked = False
 
     def get_attribute(self, name):
-        return self._value if name == "value" else None
+        if name == "value":
+            return self._value
+        return self._attrs.get(name)
 
     def click(self):
         self.clicked = True
@@ -217,6 +220,23 @@ def test_try_download_from_show_page_clicks_matching_input_button(monkeypatch):
 
     assert btn.clicked is True
     assert result == "/tmp/fake_downloaded.xls"
+
+
+def test_try_download_from_show_page_clicks_image_input_button(monkeypatch):
+    """ยืนยันจาก diagnostics จริง: หน้าที่หาปุ่มไม่เจอมี input=24 แต่ไม่มีตัวไหน value ตรงเลย
+    (button=0, a=1 ก็ไม่ตรง) — น่าจะเป็น <input type="image"> ปุ่มรูปภาพที่ค่าใบ้อยู่ใน
+    alt/src แทน value ต้องหาเจอด้วย"""
+
+    img_btn = _FakeClickable(value="", alt="Download", src="images/btnDownload.gif")
+    driver = _FakeShowPageDriver(inputs=[img_btn])
+
+    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60: "/tmp/fake_image_btn.xls")
+    monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
+
+    result = amr_downloader._try_download_from_show_page(driver, "main", "/tmp/dl", log=lambda m: None)
+
+    assert img_btn.clicked is True
+    assert result == "/tmp/fake_image_btn.xls"
 
 
 def test_try_download_from_show_page_clicks_matching_anchor_link(monkeypatch):
