@@ -575,3 +575,25 @@ def test_wait_for_download_extends_grace_period_when_crdownload_present_at_deadl
 
     assert result == str(final_path)
     assert any("ต่อเวลาให้อีก" in m for m in logs), f"ต้อง log ว่าต่อเวลาให้: {logs}"
+
+
+def test_wait_for_download_warns_when_crdownload_size_never_grows(monkeypatch, tmp_path):
+    """ยืนยันจากผู้ใช้จริง: มี .crdownload ค้างอยู่ยาวนานเกินแม้จะต่อเวลาให้แล้ว — ต้อง log
+    ขนาดไฟล์ทุก heartbeat เพื่อแยกให้ออกว่า "กำลังโหลดจริง (ขนาดโตขึ้นเรื่อยๆ)" หรือ "ค้างนิ่ง
+    ตาย" (ขนาดไม่ขยับเลย เช่นเซิร์ฟเวอร์ตัด connection ไปแล้วแต่ Chrome ยัง finalize ไม่ได้)
+    แทนที่จะรู้แค่ว่ามี .crdownload เฉยๆ โดยไม่รู้ว่ามันตายหรือยังไปต่อ"""
+
+    download_dir = str(tmp_path)
+    crdownload_path = tmp_path / "stuck.xls.crdownload"
+    crdownload_path.write_text("x" * 100, encoding="utf-8")  # ขนาดคงที่ตลอดทั้งเทสต์ — ไม่เคยโตขึ้นเลย
+    fake_clock = {"t": 0.0}
+
+    monkeypatch.setattr(amr_downloader.time, "sleep", lambda s: fake_clock.__setitem__("t", fake_clock["t"] + s))
+    monkeypatch.setattr(amr_downloader.time, "time", lambda: fake_clock["t"])
+
+    logs = []
+    result = amr_downloader._wait_for_download(download_dir, timeout=10, log=logs.append)
+
+    assert result is None
+    assert any("ไม่ขยับเลย" in m for m in logs), f"ต้อง log เตือนว่าขนาดไฟล์ค้างนิ่ง: {logs}"
+    assert any("ยอมแพ้" in m for m in logs), f"ต้อง log สรุปตอนยอมแพ้พร้อมขนาดไฟล์ล่าสุด: {logs}"

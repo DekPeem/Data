@@ -340,6 +340,11 @@ def _wait_for_download(
     end_time = time.time() + timeout
     grace_end_time = None
     next_heartbeat = time.time() + 15
+    last_size = None  # ขนาดไฟล์ .crdownload ตอน heartbeat ก่อนหน้า — ใช้เช็คว่ายังโตอยู่จริง
+    # (กำลังดาวน์โหลดจริง) หรือค้างนิ่ง (0 ไบต์/ขนาดเดิมไม่ขยับเลย เช่นเซิร์ฟเวอร์ปิด connection
+    # ไปแล้วแต่ Chrome ยังไม่ finalize ไฟล์ หรือโปรแกรมป้องกันไวรัสถือไฟล์ค้างไว้สแกน) — ยืนยันจาก
+    # ผู้ใช้จริงว่ามี .crdownload ค้างอยู่นานเกิน grace period เดิม (60 วินาที) ยังไม่รู้ว่าโตอยู่จริง
+    # หรือค้างนิ่งตาย ต้องเก็บ evidence นี้ไว้วินิจฉัยครั้งต่อไปแทนที่จะเดา
     while True:
         now = time.time()
         files = [f for f in os.listdir(download_dir) if f.endswith((".xls", ".xlsx", ".zip"))]
@@ -348,16 +353,32 @@ def _wait_for_download(
             latest = max(files, key=lambda f: os.path.getmtime(os.path.join(download_dir, f)))
             return os.path.join(download_dir, latest)
 
+        cur_size = None
+        if downloading:
+            try:
+                cur_size = os.path.getsize(os.path.join(download_dir, downloading[0]))
+            except OSError:
+                cur_size = None
+
         if now >= end_time:
             if downloading and grace_end_time is None:
                 grace_end_time = now + 60
-                log(f"⏳ ไฟล์กำลังดาวน์โหลดอยู่ ({downloading[0]}) แต่ครบเวลาแล้ว — ต่อเวลาให้อีก 60 วินาที")
+                log(f"⏳ ไฟล์กำลังดาวน์โหลดอยู่ ({downloading[0]}, {cur_size} ไบต์) แต่ครบเวลาแล้ว — ต่อเวลาให้อีก 60 วินาที")
             if grace_end_time is None or now >= grace_end_time:
+                if downloading:
+                    log(f"❌ ไฟล์ {downloading[0]} ยังไม่เสร็จหลังต่อเวลาให้แล้ว (ขนาดล่าสุด {cur_size} ไบต์) — ยอมแพ้")
                 return None
 
         if now >= next_heartbeat:
-            state = f"กำลังดาวน์โหลด {downloading[0]}" if downloading else "ยังไม่มีไฟล์ปรากฏ"
-            log(f"⏳ รอไฟล์ดาวน์โหลดอยู่ ({state}) ...")
+            if downloading:
+                growth = "" if last_size is None or cur_size is None else (
+                    f" (+{cur_size - last_size} ไบต์ จากรอบก่อน)" if cur_size != last_size
+                    else " ⚠️ ขนาดไฟล์ไม่ขยับเลยตั้งแต่รอบก่อน — อาจค้างนิ่ง"
+                )
+                log(f"⏳ รอไฟล์ดาวน์โหลดอยู่ (กำลังดาวน์โหลด {downloading[0]}, {cur_size} ไบต์{growth}) ...")
+                last_size = cur_size
+            else:
+                log("⏳ รอไฟล์ดาวน์โหลดอยู่ (ยังไม่มีไฟล์ปรากฏ) ...")
             next_heartbeat = now + 15
 
         time.sleep(1)
