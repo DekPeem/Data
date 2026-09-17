@@ -325,16 +325,42 @@ def _find_cached_file(download_dir: str, cache_key: str) -> Optional[str]:
     return None
 
 
-def _wait_for_download(download_dir: str, timeout: int = 180) -> Optional[str]:
+def _wait_for_download(
+    download_dir: str, timeout: int = 180, log: ProgressCallback = _noop
+) -> Optional[str]:
+    """รอไฟล์ .xls/.xlsx/.zip โผล่ใน download_dir สูงสุด timeout วินาที
+
+    ถ้าใกล้หมดเวลาแล้วแต่ยังเห็นไฟล์ .crdownload (กำลังดาวน์โหลดอยู่จริง แค่ยังไม่เสร็จ) จะ
+    ต่อเวลาให้อีก (สูงสุด 60 วินาที) แทนที่จะตัดทิ้งกลางคัน — ยืนยันจากผู้ใช้จริงว่าบัญชี/เดือน
+    ที่มีข้อมูลเต็มเดือน (~30 วัน) ฝั่งเซิร์ฟเวอร์ใช้เวลาสร้างไฟล์ export นานไม่คงที่เหมือนกับที่
+    เคยเจอตอน render หน้า showPeriodProfile.aspx ช้า (จุดนั้นแก้ไปแล้วด้วยการขยาย timeout
+    15->30->60 วินาที) จุดนี้จึงน่าจะเป็นปัญหาเดียวกันแค่คนละขั้นตอน — ถ้าดาวน์โหลดเริ่มขึ้นแล้ว
+    (มี .crdownload) ไม่ควรตัดทิ้งแค่เพราะนาฬิกาหมดพอดี ควรรอให้ดาวน์โหลดเสร็จจริงๆ"""
+
     end_time = time.time() + timeout
-    while time.time() < end_time:
+    grace_end_time = None
+    next_heartbeat = time.time() + 15
+    while True:
+        now = time.time()
         files = [f for f in os.listdir(download_dir) if f.endswith((".xls", ".xlsx", ".zip"))]
         downloading = [f for f in os.listdir(download_dir) if f.endswith(".crdownload")]
         if files and not downloading:
             latest = max(files, key=lambda f: os.path.getmtime(os.path.join(download_dir, f)))
             return os.path.join(download_dir, latest)
+
+        if now >= end_time:
+            if downloading and grace_end_time is None:
+                grace_end_time = now + 60
+                log(f"⏳ ไฟล์กำลังดาวน์โหลดอยู่ ({downloading[0]}) แต่ครบเวลาแล้ว — ต่อเวลาให้อีก 60 วินาที")
+            if grace_end_time is None or now >= grace_end_time:
+                return None
+
+        if now >= next_heartbeat:
+            state = f"กำลังดาวน์โหลด {downloading[0]}" if downloading else "ยังไม่มีไฟล์ปรากฏ"
+            log(f"⏳ รอไฟล์ดาวน์โหลดอยู่ ({state}) ...")
+            next_heartbeat = now + 15
+
         time.sleep(1)
-    return None
 
 
 def _fill_form(driver, meter_point: str, date_from: str, date_to: str, log: ProgressCallback) -> None:
@@ -439,9 +465,9 @@ def _handle_popup(driver, main_handle, download_dir: str, log: ProgressCallback)
         driver.execute_script("arguments[0].click();", btn)
         log("⏳ กด ตกลง แล้ว — รอดาวน์โหลด ...")
         random_delay(2, 3)
-        downloaded = _wait_for_download(download_dir, timeout=60)
+        downloaded = _wait_for_download(download_dir, timeout=120, log=log)
         if not downloaded:
-            # ไม่มี exception เลยตลอดขั้นตอน (เลือก Excel/กด ตกลง สำเร็จ) แต่ไฟล์ไม่มาเลยใน 60
+            # ไม่มี exception เลยตลอดขั้นตอน (เลือก Excel/กด ตกลง สำเร็จ) แต่ไฟล์ไม่มาเลยใน 120
             # วินาที — เก็บรายละเอียดโฟลเดอร์ดาวน์โหลดไว้วินิจฉัย (เช่นมีไฟล์ .crdownload ค้าง
             # ตลอด แปลว่าเริ่มดาวน์โหลดแล้วแต่ไม่จบ, หรือไม่มีไฟล์ใหม่เกิดขึ้นเลยแปลว่าคลิกไม่ทำงานจริง)
             try:
@@ -541,7 +567,7 @@ def _try_download_from_show_page(
 
         log("⏳ ไม่มี popup หลังกดปุ่ม — รอดาวน์โหลดไฟล์ตรงๆ ...")
         random_delay(1, 2)
-        return _wait_for_download(download_dir, timeout=60)
+        return _wait_for_download(download_dir, timeout=120, log=log)
 
     try:
         start = time.time()

@@ -232,7 +232,7 @@ def test_try_download_from_show_page_clicks_matching_input_button(monkeypatch):
     btn = _FakeClickable(value="Download Excel")
     driver = _FakeShowPageDriver(inputs=[btn])
 
-    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60: "/tmp/fake_downloaded.xls")
+    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60, log=None: "/tmp/fake_downloaded.xls")
     monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)  # ข้าม sleep จริงตอนเทสต์
     # ไม่มี popup เปิดในเทสต์นี้เลย (fallback ไปรอดาวน์โหลดตรงๆ) — ต้องใช้นาฬิกาจำลอง ไม่งั้นจะ
     # รอจริง 20 วินาทีเต็มตามลูป popup-wait ใหม่ก่อนจะ fallback (busy-spin จนถึง deadline จริง)
@@ -279,7 +279,7 @@ def test_try_download_from_show_page_clicks_image_input_button(monkeypatch):
     img_btn = _FakeClickable(value="", alt="Download", src="images/btnDownload.gif")
     driver = _FakeShowPageDriver(inputs=[img_btn])
 
-    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60: "/tmp/fake_image_btn.xls")
+    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60, log=None: "/tmp/fake_image_btn.xls")
     monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
     _install_fake_clock(monkeypatch)
 
@@ -293,7 +293,7 @@ def test_try_download_from_show_page_clicks_matching_anchor_link(monkeypatch):
     link = _FakeClickable(text="ดาวน์โหลดข้อมูล")
     driver = _FakeShowPageDriver(anchors=[link])
 
-    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60: "/tmp/fake2.xls")
+    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60, log=None: "/tmp/fake2.xls")
     monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
     _install_fake_clock(monkeypatch)
 
@@ -310,7 +310,7 @@ def test_try_download_from_show_page_clicks_matching_button_element(monkeypatch)
     btn = _FakeClickable(text="Download")
     driver = _FakeShowPageDriver(buttons=[btn])
 
-    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60: "/tmp/fake3.xls")
+    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60, log=None: "/tmp/fake3.xls")
     monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
     _install_fake_clock(monkeypatch)
 
@@ -502,7 +502,7 @@ def test_try_download_from_show_page_retries_until_element_appears(monkeypatch):
 
     driver.find_elements = delayed_find_elements
 
-    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60: "/tmp/fake4.xls")
+    monkeypatch.setattr(amr_downloader, "_wait_for_download", lambda download_dir, timeout=60, log=None: "/tmp/fake4.xls")
     monkeypatch.setattr(amr_downloader, "random_delay", lambda a, b: None)
     _install_fake_clock(monkeypatch)  # กันไม่ให้ popup-wait loop รอจริง 20 วินาที (ไม่มี popup เปิดในเทสต์นี้)
 
@@ -539,3 +539,39 @@ def test_try_download_from_show_page_logs_heartbeat_while_waiting(monkeypatch):
     assert result is None
     heartbeat_lines = [m for m in logs if "รอต่อ" in m]
     assert len(heartbeat_lines) >= 2, f"ต้องมี heartbeat log อย่างน้อย 2 บรรทัดในเวลา 25 วินาที: {logs}"
+
+
+def test_wait_for_download_returns_none_when_nothing_appears(monkeypatch, tmp_path):
+    _install_fake_clock(monkeypatch)
+    result = amr_downloader._wait_for_download(str(tmp_path), timeout=5, log=lambda m: None)
+    assert result is None
+
+
+def test_wait_for_download_extends_grace_period_when_crdownload_present_at_deadline(monkeypatch, tmp_path):
+    """ยืนยันจากผู้ใช้จริง: บัญชี/เดือนที่มีข้อมูลเต็มเดือน (~30 วัน) ฝั่งเซิร์ฟเวอร์ใช้เวลาสร้าง
+    ไฟล์ export นานไม่คงที่ เหมือนที่เคยเจอตอนหน้า showPeriodProfile.aspx render ช้า — ถ้าไฟล์
+    เริ่มดาวน์โหลดแล้วจริง (มี .crdownload) ตอนครบเวลาที่ตั้งไว้พอดี ต้องต่อเวลาให้ ไม่ใช่ตัดทิ้ง
+    กลางคันทั้งที่ใกล้เสร็จแล้ว"""
+
+    download_dir = str(tmp_path)
+    crdownload_path = tmp_path / "report.xls.crdownload"
+    final_path = tmp_path / "report.xls"
+    fake_clock = {"t": 0.0}
+
+    def fake_sleep(seconds):
+        fake_clock["t"] += seconds
+        t = fake_clock["t"]
+        if t >= 2 and not crdownload_path.exists() and not final_path.exists():
+            crdownload_path.write_text("partial", encoding="utf-8")
+        if t >= 8 and crdownload_path.exists():
+            crdownload_path.unlink()
+            final_path.write_text("done", encoding="utf-8")
+
+    monkeypatch.setattr(amr_downloader.time, "sleep", fake_sleep)
+    monkeypatch.setattr(amr_downloader.time, "time", lambda: fake_clock["t"])
+
+    logs = []
+    result = amr_downloader._wait_for_download(download_dir, timeout=5, log=logs.append)
+
+    assert result == str(final_path)
+    assert any("ต่อเวลาให้อีก" in m for m in logs), f"ต้อง log ว่าต่อเวลาให้: {logs}"
