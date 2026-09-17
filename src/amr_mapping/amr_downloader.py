@@ -395,6 +395,7 @@ def _hide_overlays(driver) -> None:
 
 
 def _handle_popup(driver, main_handle, download_dir: str, log: ProgressCallback) -> Optional[str]:
+    from selenium.common.exceptions import NoSuchElementException, TimeoutException
     from selenium.webdriver.common.by import By
     from selenium.webdriver.support import expected_conditions as EC
     from selenium.webdriver.support.ui import WebDriverWait
@@ -411,19 +412,43 @@ def _handle_popup(driver, main_handle, download_dir: str, log: ProgressCallback)
     except Exception:  # noqa: BLE001
         pass
     random_delay(0.5, 1)
+    log(f"📄 popup url={driver.current_url}")
 
     downloaded = None
     try:
         _hide_overlays(driver)
-        rdo = driver.find_element(By.ID, "rdoExcel")
+
+        try:
+            rdo = driver.find_element(By.ID, "rdoExcel")
+        except NoSuchElementException:
+            log("❌ ไม่พบ rdoExcel ใน popup (เลือกไฟล์ประเภท Excel ไม่ได้)")
+            raise
         driver.execute_script("arguments[0].click();", rdo)
         random_delay(0.2, 0.3)
+        # อ่านค่ากลับมาเช็คว่าคลิกติดจริง (ไม่ใช่แค่เรียก .click() แล้วเชื่อเฉยๆ) — ยืนยันจาก
+        # สคริปต์ต้นฉบับของผู้ใช้ว่าเช็คแบบนี้ไว้ด้วยเหมือนกัน
+        checked = driver.execute_script("return arguments[0].checked;", rdo)
+        log(f"✅ เลือก Excel แล้ว (checked={checked})")
+
         _hide_overlays(driver)
-        btn = driver.find_element(By.ID, "btnSubmit")
+        try:
+            btn = popup_wait.until(EC.element_to_be_clickable((By.ID, "btnSubmit")))
+        except TimeoutException:
+            log("❌ ปุ่ม ตกลง ใน popup ไม่ clickable ภายใน 30 วินาที")
+            raise
         driver.execute_script("arguments[0].click();", btn)
         log("⏳ กด ตกลง แล้ว — รอดาวน์โหลด ...")
         random_delay(2, 3)
         downloaded = _wait_for_download(download_dir, timeout=60)
+        if not downloaded:
+            # ไม่มี exception เลยตลอดขั้นตอน (เลือก Excel/กด ตกลง สำเร็จ) แต่ไฟล์ไม่มาเลยใน 60
+            # วินาที — เก็บรายละเอียดโฟลเดอร์ดาวน์โหลดไว้วินิจฉัย (เช่นมีไฟล์ .crdownload ค้าง
+            # ตลอด แปลว่าเริ่มดาวน์โหลดแล้วแต่ไม่จบ, หรือไม่มีไฟล์ใหม่เกิดขึ้นเลยแปลว่าคลิกไม่ทำงานจริง)
+            try:
+                entries = os.listdir(download_dir)
+            except OSError as e:  # noqa: BLE001
+                entries = [f"<list dir error: {e}>"]
+            log(f"🔎 ไม่มีไฟล์ปรากฏใน download_dir หลังรอ 60 วินาที — รายการไฟล์ปัจจุบัน: {entries}")
     except Exception as e:  # noqa: BLE001
         log(f"❌ error ใน popup: {e}")
 
