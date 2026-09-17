@@ -327,3 +327,64 @@ def test_search_company_business_type_returns_empty_when_every_fallback_term_fai
     assert len(driver.get_calls) == 5
 
 
+class _FakeDiagnosticsDriver:
+    """ตัวแทน driver ที่ไม่มีผลลัพธ์เลย (ไม่พบตารางผลลัพธ์) แต่จำลองหน้าเว็บที่โหลดมาจริงได้
+    ละเอียดกว่า _FakeSearchDriver (แยก selector ของแถวผลลัพธ์ ออกจาก div#table-filter-data
+    กับ body) — ใช้ทดสอบว่า _log_search_diagnostics เก็บรายละเอียดหน้าได้ถูกต้องตอนหาไม่เจอ
+    ยืนยันจากผู้ใช้จริง: ค้นหาด้วยคำสั้นๆ ที่ควรเจอผลลัพธ์เยอะ (เช่น "ซีพี") แล้ว "ไม่พบผลลัพธ์"
+    ทุกครั้ง ผิดปกติมาก ต้องมีวิธีวินิจฉัยว่าหน้าเว็บที่โหลดมาจริงๆ เป็นยังไง"""
+
+    current_url = "https://datawarehouse.dbd.go.th/juristic/searchInfo?keyword=%E0%B8%8B%E0%B8%B5%E0%B8%9E%E0%B8%B5"
+    title = "DBD DataWarehouse"
+
+    def __init__(self, has_table_filter_data=False, body_text=""):
+        self._has_table_filter_data = has_table_filter_data
+        self._body_text = body_text
+        self.get_calls = []
+
+    def get(self, url):
+        self.get_calls.append(url)
+
+    def find_element(self, by, selector):
+        from selenium.common.exceptions import NoSuchElementException
+        from selenium.webdriver.common.by import By
+
+        if by == By.TAG_NAME and selector == "body":
+            return _FakeCell(self._body_text)
+        raise NoSuchElementException(selector)
+
+    def find_elements(self, by, selector):
+        if selector == "div#table-filter-data":
+            return [object()] if self._has_table_filter_data else []
+        return []  # แถวผลลัพธ์ — ไม่มีเลยเสมอในเทสต์นี้
+
+
+def test_search_once_logs_page_diagnostics_when_no_results_found():
+    driver = _FakeDiagnosticsDriver(
+        has_table_filter_data=True, body_text="ไม่พบข้อมูลที่ค้นหา"
+    )
+    logs = []
+
+    results = search_company_business_type(driver, "ซีพี", log=logs.append, timeout=0.3)
+
+    assert results == []
+    joined = "\n".join(logs)
+    assert "url=" in joined and driver.current_url in joined
+    assert "title=" in joined
+    assert "มี div#table-filter-data=True" in joined
+    assert "ไม่พบข้อมูลที่ค้นหา" in joined
+
+
+def test_search_once_diagnostics_failure_does_not_crash_search():
+    """ถ้าเก็บ diagnostics เองไม่สำเร็จ (เช่น หา body element ไม่เจอเลย) ต้องไม่ทำให้การค้นหา
+    หลักพังไปด้วย — คืนผลลัพธ์ว่างตามปกติ แค่ log ว่าเก็บ diagnostics ไม่สำเร็จ"""
+
+    driver = _FakeDiagnosticsDriver(has_table_filter_data=False, body_text="")
+    logs = []
+
+    results = search_company_business_type(driver, "ซีพี", log=logs.append, timeout=0.3)
+
+    assert results == []
+    assert any("มี div#table-filter-data=False" in m for m in logs)
+
+

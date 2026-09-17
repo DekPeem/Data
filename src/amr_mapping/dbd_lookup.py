@@ -192,6 +192,30 @@ def _parse_result_rows(driver) -> List[CompanyBusinessInfo]:
     return results
 
 
+def _log_search_diagnostics(driver, log: ProgressCallback) -> None:
+    """เก็บรายละเอียดหน้าไว้ใน log ตอนรอตารางผลลัพธ์ไม่เจอเลย (url/title/ข้อความในหน้า/มี
+    div#table-filter-data อยู่ไหมแม้จะไม่มีแถวเลย) — ยืนยันจากผู้ใช้จริงว่าค้นหาด้วยคำสั้นๆ ที่
+    ควรจะเจอผลลัพธ์เยอะมาก (เช่น "ซีพี" ซึ่งเป็นคำขึ้นต้นชื่อบริษัทในเครือเจริญโภคภัณฑ์นับสิบๆ
+    แห่ง) กลับ "ไม่พบผลลัพธ์" ทุกครั้ง — ผิดปกติมากถ้าเว็บทำงานถูกต้อง จึงต้องเก็บหลักฐานว่า
+    หน้าเว็บที่โหลดมาจริงๆ หน้าตาเป็นยังไง (เว็บ DBD เปลี่ยนโครงสร้าง DOM ไปจากตอนเขียนโค้ดนี้?
+    ถูกบล็อก/ขึ้น CAPTCHA? หรือค้นหาแล้วไม่มีผลลัพธ์จริงๆ?) แทนที่จะรู้แค่ว่า "ไม่พบ" เฉยๆ"""
+
+    from selenium.webdriver.common.by import By
+
+    try:
+        has_result_container = len(driver.find_elements(By.CSS_SELECTOR, "div#table-filter-data")) > 0
+        body_text = driver.find_element(By.TAG_NAME, "body").text
+        snippet = " ".join(body_text.split())[:300]
+        log(
+            f"🔎 รายละเอียดหน้า ณ ตอนหาผลลัพธ์ไม่เจอ: url={driver.current_url} title={driver.title!r} "
+            f"มี div#table-filter-data={has_result_container}"
+        )
+        if snippet:
+            log(f"🔎 ข้อความในหน้า (300 ตัวอักษรแรก): {snippet}")
+    except Exception as e:  # noqa: BLE001 — เก็บ diagnostics ไม่สำเร็จ ต้องไม่ทำให้การค้นหาหลักพังไปด้วย
+        log(f"⚠️ เก็บรายละเอียดหน้าไม่สำเร็จ: {e}")
+
+
 def _search_once(driver, keyword: str, log: ProgressCallback, timeout: int) -> List[CompanyBusinessInfo]:
     """ค้นหา 1 รอบด้วยคำค้นหาเดียว — ใช้ driver ที่เปิดอยู่แล้ว (ไม่ต้อง login เพราะเป็นข้อมูล
     สาธารณะ) แค่ driver.get() ไปที่ URL ค้นหา แล้วรอให้ตารางผลลัพธ์ปรากฏก่อนอ่านค่า"""
@@ -209,6 +233,7 @@ def _search_once(driver, keyword: str, log: ProgressCallback, timeout: int) -> L
         wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, _RESULT_ROW_SELECTOR)))
     except Exception:  # noqa: BLE001 — TimeoutException หรืออื่นๆ ถือว่าไม่พบผลลัพธ์เหมือนกัน
         log(f"⚠️ ไม่พบผลลัพธ์สำหรับ '{keyword}'")
+        _log_search_diagnostics(driver, log)
         return []
 
     results = _parse_result_rows(driver)
