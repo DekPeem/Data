@@ -10,6 +10,7 @@ from amr_mapping.dataforthai_lookup import (
     _extract_business_category,
     lookup_business_category,
     suggest_companies,
+    suggest_companies_with_fallback,
 )
 
 
@@ -93,6 +94,61 @@ def test_suggest_companies_skips_malformed_items(monkeypatch):
     results = suggest_companies("ดี")
     assert len(results) == 1
     assert results[0].label == "บริษัท ดี จำกัด"
+
+
+def test_suggest_companies_leaves_parentheses_unescaped_like_browser(monkeypatch):
+    """ยืนยันจาก URL จริงที่ผู้ใช้ capture จาก DevTools Network tab: เบราว์เซอร์ (encodeURIComponent
+    ของ JS) ไม่เข้ารหัสวงเล็บ "(" ")" เป็น %28/%29 — โค้ดฝั่งเราต้องส่ง URL แบบเดียวกัน เผื่อ
+    ฝั่งเซิร์ฟเวอร์สนใจความต่างของการเข้ารหัสนี้"""
+
+    captured_urls = []
+
+    def fake_urlopen(request, timeout=None):
+        captured_urls.append(request.full_url)
+        return _FakeResponse(b"[]")
+
+    monkeypatch.setattr(dataforthai_lookup, "urlopen", fake_urlopen)
+
+    suggest_companies("บริษัท ซีพี ออลล์ จำกัด (มหาชน)")
+
+    assert "(" in captured_urls[0] and ")" in captured_urls[0]
+    assert "%28" not in captured_urls[0] and "%29" not in captured_urls[0]
+
+
+# ── suggest_companies_with_fallback (ลองคำค้นหากว้างขึ้นเรื่อยๆ ถ้าชื่อเต็มไม่เจอ) ──
+
+
+def test_suggest_companies_with_fallback_returns_first_successful_result(monkeypatch):
+    """ยืนยันจากผู้ใช้จริง: ค้นด้วยชื่อเต็มพร้อมคำนำหน้า/ต่อท้ายนิติบุคคล (เช่น "บริษัท ซีพี ออลล์
+    จำกัด (มหาชน)") ไม่เจอผลลัพธ์เลย ทั้งที่บริษัทนี้มีอยู่จริงแน่ๆ — ต้องลองคำค้นหาที่กว้างขึ้น
+    เรื่อยๆ (ตัดคำนำหน้า/ต่อท้ายออกก่อน) จนกว่าจะเจอ ไม่ใช่ยอมแพ้ตั้งแต่ครั้งแรก"""
+
+    calls = []
+
+    def fake_suggest(query, timeout=10.0):
+        calls.append(query)
+        if query == "ซีพี ออลล์":
+            return [CompanySuggestion(label="บริษัท ซีพี ออลล์ จำกัด (มหาชน)", value="ซีพี ออลล์")]
+        return []
+
+    monkeypatch.setattr(dataforthai_lookup, "suggest_companies", fake_suggest)
+
+    logs = []
+    results = suggest_companies_with_fallback("บริษัท ซีพี ออลล์ จำกัด (มหาชน)", log=logs.append)
+
+    assert len(results) == 1
+    assert results[0].value == "ซีพี ออลล์"
+    assert calls[0] == "บริษัท ซีพี ออลล์ จำกัด (มหาชน)"  # ต้องลองชื่อเต็มก่อนเสมอ
+    assert "ซีพี ออลล์" in calls  # แล้วค่อยลองแบบตัดคำนำหน้า/ต่อท้ายออก
+    assert any("ลองค้นหาอีกครั้งด้วยคำค้นหาที่กว้างขึ้น" in m for m in logs)
+
+
+def test_suggest_companies_with_fallback_returns_empty_when_all_terms_fail(monkeypatch):
+    monkeypatch.setattr(dataforthai_lookup, "suggest_companies", lambda query, timeout=10.0: [])
+
+    results = suggest_companies_with_fallback("บริษัท ตัวอย่างที่ไม่มีอยู่จริง จำกัด")
+
+    assert results == []
 
 
 # ── _extract_business_category (ทดสอบด้วยข้อความจริงจาก screenshot ของผู้ใช้) ──

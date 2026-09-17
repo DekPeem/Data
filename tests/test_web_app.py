@@ -925,7 +925,7 @@ def test_business_type_lookup_falls_back_to_dataforthai_when_dbd_blocked(client,
     def fake_lookup(company_name, log=lambda m: None, headless=True):
         raise BlockedByAntiBot("Incapsula incident ID: 123-456")
 
-    def fake_suggest(company_name, timeout=10.0):
+    def fake_suggest(company_name, log=lambda m: None, timeout=10.0):
         return [CompanySuggestion(label="บริษัท ทดสอบ จำกัด (มหาชน)", value="ทดสอบ")]
 
     def fake_category(driver, company_name, log=lambda m: None, timeout=20.0):
@@ -937,7 +937,7 @@ def test_business_type_lookup_falls_back_to_dataforthai_when_dbd_blocked(client,
             pass
 
     monkeypatch.setattr(app_module, "lookup_business_type_for_company", fake_lookup)
-    monkeypatch.setattr(app_module, "suggest_companies", fake_suggest)
+    monkeypatch.setattr(app_module, "suggest_companies_with_fallback", fake_suggest)
     monkeypatch.setattr(app_module, "lookup_business_category", fake_category)
     monkeypatch.setattr(app_module, "setup_dataforthai_driver", lambda headless=True: _FakeDriver())
 
@@ -971,11 +971,11 @@ def test_business_type_lookup_reports_blocked_even_when_dataforthai_fallback_fai
     def fake_lookup(company_name, log=lambda m: None, headless=True):
         raise BlockedByAntiBot("Incapsula incident ID: 999")
 
-    def fake_suggest(company_name, timeout=10.0):
+    def fake_suggest(company_name, log=lambda m: None, timeout=10.0):
         raise RuntimeError("dataforthai.com ก็ล่มด้วย (จำลอง)")
 
     monkeypatch.setattr(app_module, "lookup_business_type_for_company", fake_lookup)
-    monkeypatch.setattr(app_module, "suggest_companies", fake_suggest)
+    monkeypatch.setattr(app_module, "suggest_companies_with_fallback", fake_suggest)
 
     res = client.post("/api/business-type-lookup", json={"company_name": "บริษัท ทดสอบ จำกัด"})
     job_id = res.get_json()["job_id"]

@@ -33,7 +33,7 @@ from amr_mapping.amr_import import (
     import_amr_from_files,
 )
 from amr_mapping.clustering import cluster_business_types, nearest_business_type_by_tsic
-from amr_mapping.dataforthai_lookup import lookup_business_category, suggest_companies
+from amr_mapping.dataforthai_lookup import lookup_business_category, suggest_companies_with_fallback
 from amr_mapping.dataforthai_lookup import setup_driver as setup_dataforthai_driver
 from amr_mapping.dbd_lookup import BlockedByAntiBot, find_exact_match, lookup_business_type_for_company
 from amr_mapping.loader import (
@@ -453,9 +453,9 @@ def _run_dataforthai_fallback(company_name: str, log) -> Optional[dict]:
     ล้มไปด้วย เพราะเป็นแค่ทางเลือกเสริมตอน DBD ใช้ไม่ได้อยู่แล้ว"""
 
     log("🔁 ลอง fallback ไปที่ dataforthai.com (เว็บบุคคลที่สาม ไม่ใช่แหล่งข้อมูลทางการของ DBD)")
-    suggestions = suggest_companies(company_name)
+    suggestions = suggest_companies_with_fallback(company_name, log=log)
     if not suggestions:
-        log("⚠️ ไม่พบชื่อที่ใกล้เคียงใน dataforthai.com เลย")
+        log("⚠️ ไม่พบชื่อที่ใกล้เคียงใน dataforthai.com เลย (ลองครบทุกคำค้นหาสำรองแล้ว)")
         return None
     log(f"✅ พบ {len(suggestions)} ชื่อที่ใกล้เคียงใน dataforthai.com")
 

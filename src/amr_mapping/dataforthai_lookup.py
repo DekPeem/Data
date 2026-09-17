@@ -30,6 +30,8 @@ from typing import Callable, List, Optional
 from urllib.parse import quote
 from urllib.request import Request, urlopen
 
+from .dbd_lookup import _fallback_search_terms
+
 BASE_URL = "https://www.dataforthai.com"
 SUGGEST_URL = f"{BASE_URL}/api/suggest"
 BUSINESS_SEARCH_URL = f"{BASE_URL}/business"
@@ -53,9 +55,13 @@ def suggest_companies(query: str, timeout: float = 10.0) -> List[CompanySuggesti
     """เรียก /api/suggest?q=... ตรงๆ ด้วย HTTP GET ธรรมดา (ไม่ต้องใช้ Selenium — ยืนยันจาก
     response จริงแล้วว่าเป็น REST API เปิดเผย ไม่มีการเข้ารหัส/ป้องกันบอทแบบ DBD) คืน list ว่าง
     ถ้าไม่มีผลลัพธ์หรือเรียกไม่สำเร็จ (ไม่ raise — endpoint นี้เป็นแค่ตัวช่วยเดาชื่อ ไม่ใช่ผลลัพธ์
-    สุดท้าย พังแล้วควรจะข้ามไปเฉยๆ ไม่ทำให้ทั้ง flow ล้ม)"""
+    สุดท้าย พังแล้วควรจะข้ามไปเฉยๆ ไม่ทำให้ทั้ง flow ล้ม)
 
-    url = f"{SUGGEST_URL}?q={quote(query)}"
+    encode ด้วย safe="()" ให้วงเล็บไม่ถูกแปลงเป็น %28/%29 — ยืนยันจาก URL จริงที่ผู้ใช้ capture
+    จาก DevTools ว่าเบราว์เซอร์ (encodeURIComponent ของ JS) ปล่อยวงเล็บไว้แบบนั้นไม่เข้ารหัส
+    ต่างจาก Python quote() ปกติที่เข้ารหัสวงเล็บด้วย — เผื่อฝั่งเซิร์ฟเวอร์สนใจความต่างนี้"""
+
+    url = f"{SUGGEST_URL}?q={quote(query, safe='()')}"
     request = Request(url, headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"})
     try:
         with urlopen(request, timeout=timeout) as resp:
@@ -76,6 +82,34 @@ def suggest_companies(query: str, timeout: float = 10.0) -> List[CompanySuggesti
         if isinstance(item, dict) and item.get("label") and item.get("value"):
             results.append(CompanySuggestion(label=str(item["label"]), value=str(item["value"])))
     return results
+
+
+def suggest_companies_with_fallback(
+    company_name: str, log: ProgressCallback = _noop, timeout: float = 10.0
+) -> List[CompanySuggestion]:
+    """เหมือน suggest_companies แต่ลองค้นหาซ้ำด้วยคำที่กว้างขึ้นเรื่อยๆ ถ้าค้นด้วยชื่อเต็มแล้วไม่
+    เจอเลย — ยืนยันจากผู้ใช้จริงว่าค้นด้วยชื่อเต็มพร้อมคำนำหน้า/ต่อท้ายนิติบุคคล (เช่น "บริษัท ซีพี
+    ออลล์ จำกัด (มหาชน)") ไม่เจอผลลัพธ์เลยทั้งที่บริษัทนี้มีอยู่จริงแน่ๆ (เจอตอนพิมพ์ในหน้าเว็บจริง)
+    — ใช้กลยุทธ์เดียวกับ dbd_lookup._fallback_search_terms (ตัดคำนำหน้า/ต่อท้ายออกก่อน แล้วค่อยๆ
+    ตัดคำท้ายทีละคำ) เพราะน่าจะเป็นปัญหาแบบเดียวกัน (endpoint นี้อาจต้องการคำค้นหาที่ตรงกับชื่อ
+    "แกน" ของบริษัทมากกว่าชื่อเต็มที่มีคำนำหน้า/ต่อท้ายกำกับ)"""
+
+    log(f"🔍 ค้นหาใน dataforthai.com: {company_name}")
+    results = suggest_companies(company_name, timeout=timeout)
+    if results:
+        log(f"✅ พบ {len(results)} รายการที่ตรงกับ '{company_name}'")
+        return results
+    log(f"⚠️ ไม่พบผลลัพธ์สำหรับ '{company_name}'")
+
+    for fallback_keyword in _fallback_search_terms(company_name):
+        log(f"🔁 ลองค้นหาอีกครั้งด้วยคำค้นหาที่กว้างขึ้น: '{fallback_keyword}'")
+        results = suggest_companies(fallback_keyword, timeout=timeout)
+        if results:
+            log(f"✅ พบ {len(results)} รายการที่ตรงกับ '{fallback_keyword}'")
+            return results
+        log(f"⚠️ ไม่พบผลลัพธ์สำหรับ '{fallback_keyword}'")
+
+    return []
 
 
 def _require_selenium():
