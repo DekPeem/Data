@@ -475,41 +475,57 @@ def _handle_popup(driver, main_handle, download_dir: str, log: ProgressCallback)
     random_delay(0.5, 1)
     log(f"📄 popup url={driver.current_url}")
 
+    # จำนวนครั้งสูงสุดที่ "กด ตกลง" ใหม่จริงๆ ในหน้า popup เดิม (ไม่ใช่แค่รอเพิ่ม) ก่อนยอมแพ้ —
+    # ยืนยันจากสคริปต์ต้นฉบับของผู้ใช้เอง (AMR_PEA_Selenium.py, ฟังก์ชัน handle_popup) ว่ามี
+    # "วิธี 1"/"วิธี 2" คือกด ตกลง ถึง 2 รอบจริงๆ (rdoExcel/btnSubmit ใหม่ทั้งคู่) ถ้ารอบแรกไม่ได้
+    # ไฟล์ภายใน 60 วินาที — และสคริปต์นั้นดาวน์โหลดช่วงเต็มเดือน (28-31 วัน) ได้สำเร็จจริงในเครื่อง
+    # ผู้ใช้ ขณะที่โค้ดนี้ (กด ตกลง แค่ครั้งเดียวแล้วรอเพิ่มเรื่อยๆ) ติดค้างที่ .crdownload ขนาดเท่า
+    # เดิมเป๊ะซ้ำทุกรอบสำหรับ request ขนาดเดียวกัน — ชี้ว่าปัญหาไม่ใช่ "รอไม่นานพอ" แต่การ submit
+    # ครั้งแรกบางครั้งค้าง (เช่น race condition ของ postback) ต้อง submit ใหม่จริงๆ ถึงจะหลุด ไม่ใช่
+    # แค่รอไฟล์เดิมที่ไม่มีวันมาถึงนานขึ้นเรื่อยๆ
+    _MAX_SUBMIT_ATTEMPTS = 2
+
     downloaded = None
     try:
-        _hide_overlays(driver)
-
         try:
             rdo = driver.find_element(By.ID, "rdoExcel")
         except NoSuchElementException:
             log("❌ ไม่พบ rdoExcel ใน popup (เลือกไฟล์ประเภท Excel ไม่ได้)")
             raise
-        driver.execute_script("arguments[0].click();", rdo)
-        random_delay(0.2, 0.3)
-        # อ่านค่ากลับมาเช็คว่าคลิกติดจริง (ไม่ใช่แค่เรียก .click() แล้วเชื่อเฉยๆ) — ยืนยันจาก
-        # สคริปต์ต้นฉบับของผู้ใช้ว่าเช็คแบบนี้ไว้ด้วยเหมือนกัน
-        checked = driver.execute_script("return arguments[0].checked;", rdo)
-        log(f"✅ เลือก Excel แล้ว (checked={checked})")
 
-        _hide_overlays(driver)
-        try:
-            btn = popup_wait.until(EC.element_to_be_clickable((By.ID, "btnSubmit")))
-        except TimeoutException:
-            log("❌ ปุ่ม ตกลง ใน popup ไม่ clickable ภายใน 30 วินาที")
-            raise
-        driver.execute_script("arguments[0].click();", btn)
-        log("⏳ กด ตกลง แล้ว — รอดาวน์โหลด ...")
-        random_delay(2, 3)
-        downloaded = _wait_for_download(download_dir, timeout=120, log=log)
+        for submit_attempt in range(1, _MAX_SUBMIT_ATTEMPTS + 1):
+            _hide_overlays(driver)
+            driver.execute_script("arguments[0].click();", rdo)
+            random_delay(0.2, 0.3)
+            # อ่านค่ากลับมาเช็คว่าคลิกติดจริง (ไม่ใช่แค่เรียก .click() แล้วเชื่อเฉยๆ) — ยืนยันจาก
+            # สคริปต์ต้นฉบับของผู้ใช้ว่าเช็คแบบนี้ไว้ด้วยเหมือนกัน
+            checked = driver.execute_script("return arguments[0].checked;", rdo)
+            log(f"✅ เลือก Excel แล้ว (checked={checked})")
+
+            _hide_overlays(driver)
+            try:
+                btn = popup_wait.until(EC.element_to_be_clickable((By.ID, "btnSubmit")))
+            except TimeoutException:
+                log("❌ ปุ่ม ตกลง ใน popup ไม่ clickable ภายใน 30 วินาที")
+                raise
+            driver.execute_script("arguments[0].click();", btn)
+            log(f"⏳ กด ตกลง แล้ว (ครั้งที่ {submit_attempt}/{_MAX_SUBMIT_ATTEMPTS}) — รอดาวน์โหลด ...")
+            random_delay(2, 3)
+            downloaded = _wait_for_download(download_dir, timeout=60, log=log)
+            if downloaded:
+                break
+            if submit_attempt < _MAX_SUBMIT_ATTEMPTS:
+                log("🔁 ยังไม่ได้ไฟล์ — ลอง กด ตกลง ใหม่อีกครั้ง (submit ใหม่จริงๆ ไม่ใช่แค่รอเพิ่ม)")
+
         if not downloaded:
-            # ไม่มี exception เลยตลอดขั้นตอน (เลือก Excel/กด ตกลง สำเร็จ) แต่ไฟล์ไม่มาเลยใน 120
-            # วินาที — เก็บรายละเอียดโฟลเดอร์ดาวน์โหลดไว้วินิจฉัย (เช่นมีไฟล์ .crdownload ค้าง
-            # ตลอด แปลว่าเริ่มดาวน์โหลดแล้วแต่ไม่จบ, หรือไม่มีไฟล์ใหม่เกิดขึ้นเลยแปลว่าคลิกไม่ทำงานจริง)
+            # ไม่มี exception เลยตลอดขั้นตอน (เลือก Excel/กด ตกลง สำเร็จทั้ง 2 รอบ) แต่ไฟล์ไม่มาเลย
+            # — เก็บรายละเอียดโฟลเดอร์ดาวน์โหลดไว้วินิจฉัย (เช่นมีไฟล์ .crdownload ค้างตลอด แปลว่า
+            # เริ่มดาวน์โหลดแล้วแต่ไม่จบ, หรือไม่มีไฟล์ใหม่เกิดขึ้นเลยแปลว่าคลิกไม่ทำงานจริง)
             try:
                 entries = os.listdir(download_dir)
             except OSError as e:  # noqa: BLE001
                 entries = [f"<list dir error: {e}>"]
-            log(f"🔎 ไม่มีไฟล์ปรากฏใน download_dir หลังรอ 60 วินาที — รายการไฟล์ปัจจุบัน: {entries}")
+            log(f"🔎 ไม่มีไฟล์ปรากฏใน download_dir หลังลอง {_MAX_SUBMIT_ATTEMPTS} ครั้ง — รายการไฟล์ปัจจุบัน: {entries}")
     except Exception as e:  # noqa: BLE001
         log(f"❌ error ใน popup: {e}")
 
