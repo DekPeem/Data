@@ -117,6 +117,28 @@
         <a target="_blank" rel="noopener" href="/manual#chrome-credentials" style="color:#7a5a00;font-weight:600;">อ่านรายละเอียดในคู่มือ →</a>
       </div>
 
+      <div class="card" style="padding: 28px; display: flex; flex-direction: column; gap: 16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+          <div>
+            <div style="font-size: 15px; font-weight: 700;">ฐานข้อมูล DBD Open Data (ค้นชื่อบริษัทแบบออฟไลน์)</div>
+            <div class="hint">
+              เว็บ DBD DataWarehouse และ dataforthai.com บางครั้งบล็อกการค้นหาอัตโนมัติ — ปุ่มนี้ดึงข้อมูลนิติบุคคล
+              "จดทะเบียนใหม่/เลิกกิจการ" ที่ DBD เปิดเผยเป็น Open Data มาเก็บไว้ในเครื่องแทน เพื่อค้นหาได้เร็วโดยไม่ต้องต่อเน็ตทุกครั้ง
+              (ครอบคลุมเฉพาะบริษัทที่ตั้งใหม่/เลิกในช่วงที่ดึง ไม่ใช่ทะเบียนบริษัทเก่าทั้งหมด)
+            </div>
+          </div>
+          <span id="dbd-opendata-status-pill" class="status-pill">กำลังตรวจสอบ...</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+          <button type="button" id="dbd-opendata-fetch-btn" class="day-type-btn">⬇️ ดึงข้อมูล DBD Open Data มาเก็บในเครื่อง</button>
+          <div class="hint">ดึงตั้งแต่ปี 2020 ถึงเดือนปัจจุบัน (ใช้เวลาหลายนาที ทำครั้งเดียวหรือกดซ้ำเพื่ออัปเดตได้)</div>
+        </div>
+        <div id="dbd-opendata-job-area" style="display:none;flex-direction:column;gap:12px;">
+          <div id="dbd-opendata-log" class="log-console" style="height:160px;"></div>
+          <div id="dbd-opendata-result" class="hint"></div>
+        </div>
+      </div>
+
       <div class="card" style="padding: 28px; display: flex; flex-direction: column; gap: 20px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
           <div style="font-size: 15px; font-weight: 700;">ตั้งค่าการนำเข้า</div>

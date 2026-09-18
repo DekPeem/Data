@@ -241,7 +241,15 @@ async function pollBusinessTypeLookupJob(jobId) {
     return;
   }
 
-  const { candidates, exact_match_index, blocked, blocked_message, fallback } = data.result;
+  const {
+    candidates,
+    exact_match_index,
+    blocked,
+    blocked_message,
+    fallback,
+    dbd_opendata_matches,
+    dbd_opendata_available,
+  } = data.result;
 
   if (blocked) {
     let html = `<div class="lookup-status-text" style="color:#a5670b;">🚫 เว็บ DBD DataWarehouse บล็อกการเข้าถึงอัตโนมัติ (ไม่ใช่ว่าไม่พบบริษัทนี้จริงๆ) — ${blocked_message || ""}</div>`;
@@ -256,6 +264,20 @@ async function pollBusinessTypeLookupJob(jobId) {
     } else {
       html += `<div class="lookup-status-text" style="margin-top:8px;">ลองหาข้อมูลจาก dataforthai.com แทนก็ไม่สำเร็จ — กรุณาเลือกประเภทธุรกิจเองด้านบน</div>`;
     }
+
+    if (dbd_opendata_available) {
+      if (dbd_opendata_matches && dbd_opendata_matches.length) {
+        html += `<div class="lookup-status-text" style="margin-top:8px;">🗂️ พบในฐานข้อมูล DBD Open Data ที่เก็บไว้ในเครื่อง (เฉพาะบริษัทที่ตั้งใหม่/เลิกกิจการ ไม่ใช่ทะเบียนเต็ม):</div>`;
+        html += `<div class="lookup-status-text" style="margin-top:4px;color:#8996ab;">${dbd_opendata_matches
+          .map((m) => `${m.name}${m.status === "dissolution" ? " (เลิกกิจการ)" : ""}`)
+          .join(", ")}</div>`;
+      } else {
+        html += `<div class="lookup-status-text" style="margin-top:8px;color:#8996ab;">🗂️ ค้นในฐานข้อมูล DBD Open Data ที่เก็บไว้ในเครื่องแล้วไม่พบ (ครอบคลุมแค่บริษัทที่ตั้งใหม่/เลิกกิจการในช่วงที่ดึงมา)</div>`;
+      }
+    } else {
+      html += `<div class="lookup-status-text" style="margin-top:8px;color:#8996ab;">ℹ️ ยังไม่เคยดึงฐานข้อมูล DBD Open Data มาเก็บในเครื่องเลย (ดึงได้จากหน้า Admin) — จะช่วยค้นหาแบบออฟไลน์ได้เร็วขึ้นในครั้งถัดไป</div>`;
+    }
+
     lookupStatus.innerHTML = html + renderSearchLogDetails(data.logs, true);
     return;
   }

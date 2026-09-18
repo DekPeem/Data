@@ -951,3 +951,94 @@ loadBusinessTypes();
 // ต้องโหลด import log ให้เสร็จก่อน (เติม importLogEntries) แล้วค่อยวาดการ์ดประเภทธุรกิจ ไม่งั้น
 // ชื่อบริษัทในการ์ดจะว่างเพราะ fetch สองอันแข่งกัน (race condition)
 loadImportLogLocal().then(loadBusinessTypesTable);
+
+// ── ฐานข้อมูล DBD Open Data (ดึงมาเก็บในเครื่องเพื่อค้นชื่อบริษัทแบบออฟไลน์) ──
+
+const dbdOpendataStatusPill = document.getElementById("dbd-opendata-status-pill");
+const dbdOpendataFetchBtn = document.getElementById("dbd-opendata-fetch-btn");
+const dbdOpendataJobArea = document.getElementById("dbd-opendata-job-area");
+const dbdOpendataLog = document.getElementById("dbd-opendata-log");
+const dbdOpendataResult = document.getElementById("dbd-opendata-result");
+
+function setDbdOpendataStatusPill(state) {
+  const map = {
+    checking: { text: "กำลังตรวจสอบ...", bg: "#eef3fa", color: "#55647a" },
+    available: { text: "✅ มีข้อมูลแล้วในเครื่อง", bg: "#e8f7ec", color: "#006300" },
+    unavailable: { text: "ยังไม่มีข้อมูล", bg: "#fdecea", color: "#a01818" },
+    running: { text: "⏳ กำลังดึงข้อมูล...", bg: "#eef3fa", color: "#184f95" },
+  };
+  const s = map[state] || map.checking;
+  dbdOpendataStatusPill.textContent = s.text;
+  dbdOpendataStatusPill.style.background = s.bg;
+  dbdOpendataStatusPill.style.color = s.color;
+}
+
+async function loadDbdOpendataStatus() {
+  try {
+    const res = await fetch("/api/admin/dbd-opendata/status");
+    const data = await res.json();
+    setDbdOpendataStatusPill(data.available ? "available" : "unavailable");
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+async function pollDbdOpendataJob(jobId) {
+  const res = await fetch(`/api/admin/dbd-opendata/fetch/${jobId}`);
+  const data = await res.json();
+
+  dbdOpendataLog.textContent = (data.logs || []).join("\n");
+  dbdOpendataLog.scrollTop = dbdOpendataLog.scrollHeight;
+
+  if (data.status === "running") {
+    setTimeout(() => pollDbdOpendataJob(jobId), 1500);
+    return;
+  }
+
+  dbdOpendataFetchBtn.disabled = false;
+
+  if (data.status === "success") {
+    const r = data.result || {};
+    dbdOpendataResult.textContent =
+      `เสร็จแล้ว — เก็บได้ ${(r.total_rows || 0).toLocaleString("th-TH")} รายการ ` +
+      `จาก ${r.months_with_data || 0}/${r.months_tried || 0} เดือนที่มีข้อมูล`;
+    setDbdOpendataStatusPill("available");
+    loadDbdOpendataStatus();
+  } else {
+    dbdOpendataResult.textContent = data.error || "เกิดข้อผิดพลาด";
+    loadDbdOpendataStatus();
+  }
+}
+
+async function startDbdOpendataFetch() {
+  dbdOpendataFetchBtn.disabled = true;
+  dbdOpendataJobArea.style.display = "flex";
+  dbdOpendataLog.textContent = "";
+  dbdOpendataResult.textContent = "";
+  setDbdOpendataStatusPill("running");
+
+  try {
+    const res = await fetch("/api/admin/dbd-opendata/fetch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      dbdOpendataFetchBtn.disabled = false;
+      dbdOpendataResult.textContent = data.message || "เกิดข้อผิดพลาด";
+      loadDbdOpendataStatus();
+      return;
+    }
+
+    pollDbdOpendataJob(data.job_id);
+  } catch (err) {
+    dbdOpendataFetchBtn.disabled = false;
+    dbdOpendataResult.textContent = "เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ";
+    console.error(err);
+  }
+}
+
+dbdOpendataFetchBtn.addEventListener("click", startDbdOpendataFetch);
+loadDbdOpendataStatus();
