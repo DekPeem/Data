@@ -68,7 +68,24 @@ def suggest_companies(query: str, timeout: float = 10.0, log: ProgressCallback =
     เจอว่าเป็นเพราะระบบป้องกันบอทมาก่อนแล้ว) แทนที่จะรู้แค่ว่า "ไม่พบ" เฉยๆ โดยไม่รู้สาเหตุ"""
 
     url = f"{SUGGEST_URL}?q={quote(query, safe='()')}"
-    request = Request(url, headers={"Accept": "application/json", "User-Agent": "Mozilla/5.0"})
+    # เพิ่ม Referer/Origin ให้เหมือน request จริงจากเบราว์เซอร์ (AJAX call ที่ยิงจากหน้า /business
+    # เสมอ) — ยืนยันจากผู้ใช้จริงว่าคำค้นหาสั้นๆ ที่เคยเห็นเองว่ามี suggestion จริงในเบราว์เซอร์
+    # (เช่น "ซีพี") กลับได้ [] ว่างเปล่าทุกครั้งจากโค้ดนี้ (ไม่ error แค่ไม่มีผลลัพธ์) ทั้งที่ URL/
+    # การเข้ารหัสตรงกับที่เบราว์เซอร์จริงส่งแล้ว — ความต่างที่เหลือคือ header พวกนี้ที่ request
+    # เปล่าๆ แบบนี้ไม่มีติดมาด้วยเหมือนเบราว์เซอร์จริง
+    request = Request(
+        url,
+        headers={
+            "Accept": "application/json",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Referer": BUSINESS_SEARCH_URL,
+            "Origin": BASE_URL,
+            "X-Requested-With": "XMLHttpRequest",
+        },
+    )
     try:
         with urlopen(request, timeout=timeout) as resp:
             status = getattr(resp, "status", None)
@@ -96,6 +113,12 @@ def suggest_companies(query: str, timeout: float = 10.0, log: ProgressCallback =
     for item in data:
         if isinstance(item, dict) and item.get("label") and item.get("value"):
             results.append(CompanySuggestion(label=str(item["label"]), value=str(item["value"])))
+
+    if not results:
+        # parse สำเร็จ (status ปกติ, เป็น list จริง) แต่ไม่มีรายการเลย — ยัง log ไว้ เผื่อ list ว่าง
+        # เปล่าๆ ([]) ต่างจาก "หา element/label/value ไม่เจอในแต่ละ item เลย" (data ผิดรูปแบบ)
+        log(f"🔎 {url} ตอบกลับมา status={status} เป็น list จริง แต่มี {len(data)} รายการดิบ ({len(results)} ที่ parse สำเร็จ)")
+
     return results
 
 
