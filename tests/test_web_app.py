@@ -959,6 +959,87 @@ def test_business_type_lookup_falls_back_to_dataforthai_when_dbd_blocked(client,
     assert result["fallback"]["source"] == "dataforthai"
     assert result["fallback"]["business_category"] == "ร้านสะดวกซื้อ/มินิมาร์ท"
     assert result["fallback"]["candidates"][0]["label"] == "บริษัท ทดสอบ จำกัด (มหาชน)"
+    assert result["dbd_opendata_available"] is False
+    assert result["dbd_opendata_matches"] == []
+
+
+def test_business_type_lookup_includes_local_dbd_opendata_matches_when_available(client, monkeypatch):
+    """ถ้าเคยดึงฐานข้อมูล DBD Open Data มาเก็บในเครื่องไว้แล้ว (ดู dbd_opendata.py) ตอน DBD
+    DataWarehouse บล็อก ต้องลองค้นจากฐานข้อมูลนี้ด้วย (ค้นออฟไลน์ เร็วกว่า) แล้วใส่ผลลัพธ์กลับมา"""
+
+    from amr_mapping.dbd_lookup import BlockedByAntiBot
+
+    def fake_lookup(company_name, log=lambda m: None, headless=True):
+        raise BlockedByAntiBot("Incapsula incident ID: 789")
+
+    def fake_category(driver, company_name, log=lambda m: None, timeout=20.0):
+        return None
+
+    class _FakeDriver:
+        def quit(self):
+            pass
+
+    monkeypatch.setattr(app_module, "lookup_business_type_for_company", fake_lookup)
+    monkeypatch.setattr(app_module, "setup_dataforthai_driver", lambda headless=True: _FakeDriver())
+    monkeypatch.setattr(app_module, "lookup_business_category", fake_category)
+    monkeypatch.setattr(app_module, "suggest_companies_with_fallback", lambda company_name, log=lambda m: None, timeout=10.0: [])
+    monkeypatch.setattr(app_module, "dbd_opendata_is_available", lambda: True)
+    monkeypatch.setattr(
+        app_module, "search_juristic_person",
+        lambda name_query, limit=10: [{"reg_id": "0105544000157", "name": "บริษัท ทดสอบ เก่า จำกัด", "status": "registration"}],
+    )
+
+    res = client.post("/api/business-type-lookup", json={"company_name": "บริษัท ทดสอบ เก่า จำกัด"})
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/business-type-lookup/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    result = status["result"]
+    assert result["dbd_opendata_available"] is True
+    assert len(result["dbd_opendata_matches"]) == 1
+    assert result["dbd_opendata_matches"][0]["name"] == "บริษัท ทดสอบ เก่า จำกัด"
+
+
+def test_dbd_opendata_status_reports_unavailable_by_default(client):
+    res = client.get("/api/admin/dbd-opendata/status")
+    assert res.status_code == 200
+    assert res.get_json() == {"available": False}
+
+
+def test_dbd_opendata_fetch_starts_background_job(client, monkeypatch):
+    def fake_fetch(start_year=2020, start_month=1, log=lambda m: None):
+        log("📥 ดึง registration 2024-01 ...")
+        log("🏁 เสร็จสิ้น รวมทั้งหมด 5 แถว")
+        return {"total_rows": 5, "months_with_data": 1, "months_tried": 2, "db_path": "/tmp/fake.db"}
+
+    monkeypatch.setattr(app_module, "fetch_dbd_opendata", fake_fetch)
+
+    res = client.post("/api/admin/dbd-opendata/fetch", json={"start_year": 2024, "start_month": 1})
+    assert res.status_code == 200
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/dbd-opendata/fetch/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    assert status["result"]["total_rows"] == 5
+    assert any("เสร็จสิ้น" in m for m in status["logs"])
+
+
+def test_dbd_opendata_fetch_rejects_non_numeric_year(client):
+    res = client.post("/api/admin/dbd-opendata/fetch", json={"start_year": "ไม่ใช่ตัวเลข"})
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
 
 
 def test_business_type_lookup_reports_blocked_even_when_dataforthai_fallback_fails(client, monkeypatch):

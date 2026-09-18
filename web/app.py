@@ -36,6 +36,9 @@ from amr_mapping.clustering import cluster_business_types, nearest_business_type
 from amr_mapping.dataforthai_lookup import lookup_business_category, suggest_companies_with_fallback
 from amr_mapping.dataforthai_lookup import setup_driver as setup_dataforthai_driver
 from amr_mapping.dbd_lookup import BlockedByAntiBot, find_exact_match, lookup_business_type_for_company
+from amr_mapping.dbd_opendata import fetch_all as fetch_dbd_opendata
+from amr_mapping.dbd_opendata import is_db_available as dbd_opendata_is_available
+from amr_mapping.dbd_opendata import search_juristic_person
 from amr_mapping.loader import (
     DEFAULT_DATA_DIR,
     load_import_log_local,
@@ -565,6 +568,21 @@ def _run_business_type_lookup_job(job_id: str, company_name: str) -> None:
         except Exception as fallback_error:  # noqa: BLE001 — fallback ล้มก็ไม่ควรทำให้ job ทั้งหมดกลายเป็น error
             log(f"⚠️ fallback ไป dataforthai.com ก็ไม่สำเร็จเช่นกัน: {fallback_error}")
 
+        # ทางเลือกสุดท้าย: ค้นจากฐานข้อมูล DBD Open Data ที่ดึงมาเก็บไว้ในเครื่องแล้ว (ถ้ามี — ดู
+        # dbd_opendata.py) เร็วเพราะไม่ต้องต่อเน็ต แต่ครอบคลุมแค่บริษัทที่ "ตั้งใหม่/เลิกกิจการ" ใน
+        # ช่วงที่เคยดึงมาเท่านั้น ไม่ใช่ทะเบียนเต็ม — ต้องบอกข้อจำกัดนี้ในผลลัพธ์เสมอ ไม่ใช่แค่คืนค่า
+        # ว่างเงียบๆ ถ้าไม่มีฐานข้อมูลนี้เลย (ยังไม่เคยกดดึงข้อมูล)
+        dbd_opendata_matches = []
+        if dbd_opendata_is_available():
+            log("🔁 ลองค้นจากฐานข้อมูล DBD Open Data ที่เคยดึงมาเก็บในเครื่องแล้ว (ค้นออฟไลน์)")
+            try:
+                dbd_opendata_matches = search_juristic_person(company_name, limit=10)
+                log(f"✅ พบ {len(dbd_opendata_matches)} รายการในฐานข้อมูล DBD Open Data")
+            except Exception as opendata_error:  # noqa: BLE001
+                log(f"⚠️ ค้นจากฐานข้อมูล DBD Open Data ไม่สำเร็จ: {opendata_error}")
+        else:
+            log("ℹ️ ยังไม่เคยดึงฐานข้อมูล DBD Open Data มาเก็บในเครื่องเลย (ดึงได้จากหน้า Admin)")
+
         with _JOBS_LOCK:
             _JOBS[job_id]["status"] = "success"
             _JOBS[job_id]["result"] = {
@@ -574,6 +592,8 @@ def _run_business_type_lookup_job(job_id: str, company_name: str) -> None:
                 "blocked": True,
                 "blocked_message": str(e),
                 "fallback": fallback,
+                "dbd_opendata_matches": dbd_opendata_matches,
+                "dbd_opendata_available": dbd_opendata_is_available(),
             }
     except Exception as e:  # noqa: BLE001 — ต้อง catch ทุก error เพื่อรายงานสถานะ job ให้ถูกต้อง
         with _JOBS_LOCK:
@@ -603,6 +623,63 @@ def api_start_business_type_lookup():
 
 @app.route("/api/business-type-lookup/<job_id>")
 def api_get_business_type_lookup_status(job_id: str):
+    with _JOBS_LOCK:
+        job = _JOBS.get(job_id)
+        if job is None:
+            return jsonify({"error": "not_found", "message": "ไม่พบ job นี้"}), 404
+        return jsonify(dict(job))
+
+
+def _run_dbd_opendata_fetch_job(job_id: str, start_year: int, start_month: int) -> None:
+    """ดึงข้อมูล DBD Open Data (นิติบุคคลตั้งใหม่/เลิกกิจการรายเดือน) มาเก็บเป็นฐานข้อมูลในเครื่อง
+    (ดู dbd_opendata.py) — รันเป็น background job เพราะดึงทีละเดือนหลายปีอาจใช้เวลานาน"""
+
+    def log(msg: str) -> None:
+        with _JOBS_LOCK:
+            _JOBS[job_id]["logs"].append(msg)
+
+    try:
+        summary = fetch_dbd_opendata(start_year=start_year, start_month=start_month, log=log)
+        with _JOBS_LOCK:
+            _JOBS[job_id]["status"] = "success"
+            _JOBS[job_id]["result"] = summary
+    except Exception as e:  # noqa: BLE001 — ต้อง catch ทุก error เพื่อรายงานสถานะ job ให้ถูกต้อง
+        with _JOBS_LOCK:
+            _JOBS[job_id]["status"] = "error"
+            _JOBS[job_id]["error"] = str(e)
+
+
+@app.route("/api/admin/dbd-opendata/status")
+def api_dbd_opendata_status():
+    return jsonify({"available": dbd_opendata_is_available()})
+
+
+@app.route("/api/admin/dbd-opendata/fetch", methods=["POST"])
+def api_start_dbd_opendata_fetch():
+    """เริ่ม job ดึงข้อมูล DBD Open Data มาเก็บในเครื่อง (background job — ดู
+    _run_dbd_opendata_fetch_job) ค่าเริ่มต้นดึงตั้งแต่ปี 2020 จนถึงเดือนปัจจุบัน"""
+
+    body = request.get_json(force=True, silent=True) or {}
+    try:
+        start_year = int(body.get("start_year") or 2020)
+        start_month = int(body.get("start_month") or 1)
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid_request", "message": "ปี/เดือนเริ่มต้นต้องเป็นตัวเลข"}), 400
+
+    job_id = uuid.uuid4().hex
+    with _JOBS_LOCK:
+        _JOBS[job_id] = {"status": "running", "logs": [], "result": None, "error": None}
+
+    thread = threading.Thread(
+        target=_run_dbd_opendata_fetch_job, args=(job_id, start_year, start_month), daemon=True
+    )
+    thread.start()
+
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/admin/dbd-opendata/fetch/<job_id>")
+def api_get_dbd_opendata_fetch_status(job_id: str):
     with _JOBS_LOCK:
         job = _JOBS.get(job_id)
         if job is None:

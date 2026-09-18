@@ -28,3 +28,7 @@ data/reference/import_log_local.csv
 # อัตโนมัติโดย amr_import.import_amr_auto ทุกครั้งที่นำเข้าสำเร็จ ต่างจาก load_curves.csv ซึ่ง
 # เป็นค่าเฉลี่ยรวมของทุกไซต์แบบ anonymized ที่ commit เข้า repo ได้
 data/reference/site_curves_local.csv
+
+# ฐานข้อมูล SQLite ที่ดึงมาจาก DBD Open Data (dbd_opendata.py) — ไฟล์ใหญ่/เป็นข้อมูลที่ดึงมาเอง
+# ในเครื่อง (reproducible ได้ด้วยการรันดึงใหม่) ไม่ใช่ source data ของโปรเจกต์ ไม่ควร commit
+data/reference/dbd_juristic_local.db
