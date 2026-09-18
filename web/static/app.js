@@ -166,7 +166,16 @@ function updateRateCodeOptions() {
   }
 }
 
-businessTypeSelect.addEventListener("change", updateRateCodeOptions);
+// เลือกประเภทธุรกิจเอง (เช่นตอน DBD DataWarehouse บล็อกและไม่มีรหัส TSIC ให้จับคู่อัตโนมัติ
+// จึงต้องให้ผู้ใช้เลือกเองจากคำใบ้ที่แสดงไว้) → พยากรณ์ให้ทันทีเลย ไม่ต้องกดปุ่ม "พยากรณ์" ซ้ำ
+businessTypeSelect.addEventListener("change", () => {
+  updateRateCodeOptions();
+  if (rateCodeSelect.value) {
+    runForecast().then(() => {
+      resultArea.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+});
 
 // ── ค้นหาประเภทธุรกิจอัตโนมัติจากชื่อบริษัท (ผ่าน DBD DataWarehouse) ──
 // ⚠️ ต่างจากทุกอย่างในโหมดนี้: ชื่อบริษัทที่พิมพ์ "จะถูกส่งไป server" (แล้ว server ส่งต่อไป
