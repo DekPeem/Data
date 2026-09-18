@@ -185,10 +185,12 @@ businessTypeSelect.addEventListener("change", () => {
 const lookupBtn = document.getElementById("lookup-business-type-btn");
 const lookupStatus = document.getElementById("business-type-lookup-status");
 
-function applyBusinessTypeSuggestion(candidate) {
+// สร้างข้อความแจ้งผล + ตั้งค่า dropdown/พยากรณ์ให้อัตโนมัติ (side effect) — แยกออกมาจาก
+// applyBusinessTypeSuggestion เพื่อให้จุดอื่น (เช่น ผลจากฐานข้อมูล DBD Open Data ตอน DBD
+// DataWarehouse บล็อก) เอาข้อความนี้ไปต่อท้าย html อื่นได้ แทนที่จะเขียนทับ lookupStatus ทั้งหมด
+function buildBusinessTypeSuggestionMessage(candidate) {
   if (!candidate.suggested_business_type_code) {
-    lookupStatus.innerHTML = `<div class="lookup-status-text">พบข้อมูล TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} แต่ยังไม่มีโปรไฟล์อ้างอิงของหมวดนี้ในระบบ กรุณาเลือกประเภทธุรกิจที่ใกล้เคียงเองด้านบน</div>`;
-    return;
+    return `<div class="lookup-status-text">พบข้อมูล TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} แต่ยังไม่มีโปรไฟล์อ้างอิงของหมวดนี้ในระบบ กรุณาเลือกประเภทธุรกิจที่ใกล้เคียงเองด้านบน</div>`;
   }
   businessTypeSelect.value = candidate.suggested_business_type_code;
   updateRateCodeOptions();
@@ -204,10 +206,13 @@ function applyBusinessTypeSuggestion(candidate) {
     : "";
 
   if (candidate.suggested_is_approximate) {
-    lookupStatus.innerHTML = `<div class="lookup-status-text">⚠️ ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} — ไม่มีธุรกิจนี้ตรงๆ ในระบบ จึงตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" แทนแบบประมาณการ (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)${autoForecastNote}<br><span style="color:#8996ab;">${candidate.suggested_explanation}</span></div>`;
-    return;
+    return `<div class="lookup-status-text">⚠️ ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} — ไม่มีธุรกิจนี้ตรงๆ ในระบบ จึงตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" แทนแบบประมาณการ (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)${autoForecastNote}<br><span style="color:#8996ab;">${candidate.suggested_explanation}</span></div>`;
   }
-  lookupStatus.innerHTML = `<div class="lookup-status-text">✅ ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} → ตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" ให้อัตโนมัติแล้ว (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)${autoForecastNote}</div>`;
+  return `<div class="lookup-status-text">✅ ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} → ตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" ให้อัตโนมัติแล้ว (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)${autoForecastNote}</div>`;
+}
+
+function applyBusinessTypeSuggestion(candidate) {
+  lookupStatus.innerHTML = buildBusinessTypeSuggestionMessage(candidate);
 }
 
 function renderLookupCandidates(candidates) {
@@ -269,6 +274,7 @@ async function pollBusinessTypeLookupJob(jobId) {
     fallback,
     dbd_opendata_matches,
     dbd_opendata_available,
+    dbd_opendata_exact_match_index,
   } = data.result;
 
   if (blocked) {
@@ -285,12 +291,31 @@ async function pollBusinessTypeLookupJob(jobId) {
       html += `<div class="lookup-status-text" style="margin-top:8px;">ลองหาข้อมูลจาก dataforthai.com แทนก็ไม่สำเร็จ — กรุณาเลือกประเภทธุรกิจเองด้านบน</div>`;
     }
 
+    let dbdOpendataButtonsHtml = "";
     if (dbd_opendata_available) {
       if (dbd_opendata_matches && dbd_opendata_matches.length) {
-        html += `<div class="lookup-status-text" style="margin-top:8px;">🗂️ พบในฐานข้อมูล DBD Open Data ที่เก็บไว้ในเครื่อง (เฉพาะบริษัทที่ตั้งใหม่/เลิกกิจการ ไม่ใช่ทะเบียนเต็ม):</div>`;
-        html += `<div class="lookup-status-text" style="margin-top:4px;color:#8996ab;">${dbd_opendata_matches
-          .map((m) => `${m.name}${m.status === "dissolution" ? " (เลิกกิจการ)" : ""}`)
-          .join(", ")}</div>`;
+        if (dbd_opendata_exact_match_index !== null && dbd_opendata_exact_match_index !== undefined) {
+          html += `<div class="lookup-status-text" style="margin-top:8px;">🗂️ พบชื่อตรงเป๊ะในฐานข้อมูล DBD Open Data ที่เก็บไว้ในเครื่อง (เฉพาะบริษัทที่ตั้งใหม่/เลิกกิจการ ไม่ใช่ทะเบียนเต็ม):</div>`;
+          html += `<div style="margin-top:6px;">${buildBusinessTypeSuggestionMessage(dbd_opendata_matches[dbd_opendata_exact_match_index])}</div>`;
+        } else {
+          html += `<div class="lookup-status-text" style="margin-top:8px;">🗂️ พบในฐานข้อมูล DBD Open Data ที่เก็บไว้ในเครื่อง (เฉพาะบริษัทที่ตั้งใหม่/เลิกกิจการ ไม่ใช่ทะเบียนเต็ม) — เลือกอันที่ใช่เพื่อพยากรณ์อัตโนมัติ:</div>`;
+          dbdOpendataButtonsHtml = `
+            <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px;">
+              ${dbd_opendata_matches
+                .map(
+                  (m, i) => `
+                <div class="lookup-candidate">
+                  <div>
+                    <div class="lookup-candidate-name">${m.name}${m.status === "dissolution" ? " (เลิกกิจการ)" : ""}</div>
+                    <div class="lookup-candidate-meta">${m.tsic_code ? `TSIC ${m.tsic_code} - ${m.tsic_name_th || ""}` : "ไม่มีข้อมูลวัตถุประสงค์ในทะเบียน"}</div>
+                  </div>
+                  <button type="button" class="lookup-pick-btn" data-dbdidx="${i}">เลือกอันนี้</button>
+                </div>`
+                )
+                .join("")}
+            </div>`;
+          html += dbdOpendataButtonsHtml;
+        }
       } else {
         html += `<div class="lookup-status-text" style="margin-top:8px;color:#8996ab;">🗂️ ค้นในฐานข้อมูล DBD Open Data ที่เก็บไว้ในเครื่องแล้วไม่พบ (ครอบคลุมแค่บริษัทที่ตั้งใหม่/เลิกกิจการในช่วงที่ดึงมา)</div>`;
       }
@@ -299,6 +324,11 @@ async function pollBusinessTypeLookupJob(jobId) {
     }
 
     lookupStatus.innerHTML = html + renderSearchLogDetails(data.logs, true);
+    if (dbdOpendataButtonsHtml) {
+      lookupStatus.querySelectorAll(".lookup-pick-btn[data-dbdidx]").forEach((btn) => {
+        btn.addEventListener("click", () => applyBusinessTypeSuggestion(dbd_opendata_matches[Number(btn.dataset.dbdidx)]));
+      });
+    }
     return;
   }
 

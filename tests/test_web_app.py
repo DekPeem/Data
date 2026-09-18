@@ -1004,6 +1004,62 @@ def test_business_type_lookup_includes_local_dbd_opendata_matches_when_available
     assert result["dbd_opendata_available"] is True
     assert len(result["dbd_opendata_matches"]) == 1
     assert result["dbd_opendata_matches"][0]["name"] == "บริษัท ทดสอบ เก่า จำกัด"
+    # ชื่อตรงเป๊ะกับคำค้น (case/เว้นวรรคเหมือนกัน) แต่ mock ไม่มี purpose_code เลยไม่มีข้อเสนอ
+    # ประเภทธุรกิจให้ — ยังต้อง mark ว่าตรงเป๊ะไว้ (ให้ UI auto-apply ได้ แม้จะไม่มีโปรไฟล์ก็ตาม)
+    assert result["dbd_opendata_exact_match_index"] == 0
+    assert result["dbd_opendata_matches"][0]["suggested_business_type_code"] is None
+
+
+def test_business_type_lookup_suggests_business_type_from_dbd_opendata_purpose_code(client, monkeypatch):
+    """ข้อมูล DBD Open Data มี "รหัสวัตถุประสงค์" (TSIC-like 5 หลัก) ติดมาด้วย — ต้องใช้จับคู่
+    ประเภทธุรกิจในระบบเราได้แบบเดียวกับผลจาก DBD DataWarehouse โดยตรง เพื่อพยากรณ์อัตโนมัติได้แม้
+    ตอน DBD DataWarehouse บล็อกอยู่ (ดู _suggest_business_type_for_division ใน web/app.py)"""
+
+    from amr_mapping.dbd_lookup import BlockedByAntiBot
+
+    def fake_lookup(company_name, log=lambda m: None, headless=True):
+        raise BlockedByAntiBot("Incapsula incident ID: 999")
+
+    class _FakeDriver:
+        def quit(self):
+            pass
+
+    monkeypatch.setattr(app_module, "lookup_business_type_for_company", fake_lookup)
+    monkeypatch.setattr(app_module, "setup_dataforthai_driver", lambda headless=True: _FakeDriver())
+    monkeypatch.setattr(app_module, "lookup_business_category", lambda *a, **k: None)
+    monkeypatch.setattr(app_module, "suggest_companies_with_fallback", lambda *a, **k: [])
+    monkeypatch.setattr(app_module, "dbd_opendata_is_available", lambda: True)
+    monkeypatch.setattr(
+        app_module, "search_juristic_person",
+        lambda name_query, limit=10: [
+            {
+                "reg_id": "0105544000199",
+                "name": "โรงแรม ทดสอบ จำกัด",
+                "status": "registration",
+                "purpose_code": "55101",
+                "purpose": "กิจการโรงแรม",
+            }
+        ],
+    )
+
+    res = client.post("/api/business-type-lookup", json={"company_name": "โรงแรม ทดสอบ จำกัด"})
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/business-type-lookup/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    result = status["result"]
+    match = result["dbd_opendata_matches"][0]
+    assert match["tsic_code"] == "55101"
+    assert match["tsic_name_th"] == "กิจการโรงแรม"
+    assert match["suggested_business_type_code"] == "63201"  # หมวดโรงแรม (division 55) มีโปรไฟล์จริงรองรับ
+    assert match["suggested_is_approximate"] is False
+    assert result["dbd_opendata_exact_match_index"] == 0
 
 
 def test_dbd_opendata_status_reports_unavailable_by_default(client):

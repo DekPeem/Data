@@ -490,6 +490,41 @@ def _run_dataforthai_fallback(company_name: str, log) -> Optional[dict]:
     }
 
 
+def _build_division_to_business(reference) -> dict:
+    """หา business_type_code ของเราที่ "อยู่ TSIC division เดียวกัน" กับ division ที่เจอจาก DBD
+    (ถ้ามีและเคยตรวจสอบ/บันทึก division_code ไว้แล้วใน business_types.csv)"""
+
+    division_to_business: dict = {}
+    for p in reference.load_profiles:
+        bt = reference.business_types.get(p.business_type_code)
+        if bt and bt.division_code and bt.division_code not in division_to_business:
+            division_to_business[bt.division_code] = p.business_type_code
+    return division_to_business
+
+
+def _suggest_business_type_for_division(
+    division_code: Optional[str], division_to_business: dict, reference, clusters
+) -> tuple:
+    """คืน (suggested_code, suggested_name, is_approximate, explanation) จาก TSIC division_code
+    — ใช้ร่วมกันทั้งผลจาก DBD DataWarehouse โดยตรง และผลจากฐานข้อมูล DBD Open Data ในเครื่อง
+    (ทั้งคู่มี division code ติดมาด้วยเหมือนกัน) ดู clustering.nearest_business_type_by_tsic
+    เหตุผลละเอียดของการจับคู่แบบผ่อนลง (section เดียวกัน / ตัวแทนกลุ่มรูปแบบการใช้ไฟ)"""
+
+    suggested_code = division_to_business.get(division_code) if division_code else None
+    approximate_match = None
+    if not suggested_code and division_code:
+        approximate_match = nearest_business_type_by_tsic(None, division_code, reference, clusters=clusters)
+        if approximate_match:
+            suggested_code = approximate_match.business_type_code
+    suggested_bt = reference.business_types.get(suggested_code) if suggested_code else None
+    return (
+        suggested_code,
+        suggested_bt.name_th if suggested_bt else None,
+        approximate_match is not None,
+        approximate_match.explanation_th if approximate_match else None,
+    )
+
+
 def _run_business_type_lookup_job(job_id: str, company_name: str) -> None:
     """ค้นหาประเภทธุรกิจ (TSIC) ของบริษัทจากชื่อ ผ่าน DBD DataWarehouse (ดู dbd_lookup.py) —
     รันเป็น background job แบบเดียวกับ AMR import เพราะเปิดเบราว์เซอร์จริงใช้เวลาหลายวินาที
@@ -503,35 +538,22 @@ def _run_business_type_lookup_job(job_id: str, company_name: str) -> None:
         with _JOBS_LOCK:
             _JOBS[job_id]["logs"].append(msg)
 
+    reference = get_reference()
+    division_to_business = _build_division_to_business(reference)
+    # ถ้าไม่มี division ตรงเป๊ะเลย ลองใช้การจับคู่แบบผ่อนลง (section เดียวกัน หรือถ้าไม่มีเลย
+    # ใช้ตัวแทนของกลุ่มรูปแบบการใช้ไฟที่พบบ่อยที่สุด) แทนที่จะปล่อยให้ผู้ใช้เลือกเองทันที — ใช้ร่วมกัน
+    # ทั้งผลจาก DBD DataWarehouse โดยตรง (try ข้างล่าง) และผลจากฐานข้อมูล DBD Open Data ในเครื่อง
+    # (except BlockedByAntiBot ข้างล่าง) จึงคำนวณไว้ครั้งเดียวตรงนี้ก่อนแยกสองเส้นทาง
+    clusters = cluster_business_types(reference)
+
     try:
         results = lookup_business_type_for_company(company_name, log=log)
-        reference = get_reference()
-
-        # หา business_type_code ของเราที่ "อยู่ TSIC division เดียวกัน" กับที่เจอจาก DBD (ถ้ามี
-        # และเคยตรวจสอบ/บันทึก division_code ไว้แล้วใน business_types.csv) — แค่แนะนำเฉยๆ
-        # ผู้ใช้ยังต้องกดยืนยัน/เลือกเองในหน้าเว็บ ไม่ auto-apply ให้ทันที
-        division_to_business: dict = {}
-        for p in reference.load_profiles:
-            bt = reference.business_types.get(p.business_type_code)
-            if bt and bt.division_code and bt.division_code not in division_to_business:
-                division_to_business[bt.division_code] = p.business_type_code
-
-        # ถ้าไม่มี division ตรงเป๊ะเลย ลองใช้การจับคู่แบบผ่อนลง (section เดียวกัน หรือถ้าไม่มีเลย
-        # ใช้ตัวแทนของกลุ่มรูปแบบการใช้ไฟที่พบบ่อยที่สุด) แทนที่จะปล่อยให้ผู้ใช้เลือกเองทันที —
-        # ดู clustering.nearest_business_type_by_tsic เหตุผลละเอียด
-        clusters = cluster_business_types(reference)
 
         candidates = []
         for r in results:
-            suggested_code = division_to_business.get(r.tsic_division_code)
-            approximate_match = None
-            if not suggested_code:
-                approximate_match = nearest_business_type_by_tsic(
-                    None, r.tsic_division_code, reference, clusters=clusters
-                )
-                if approximate_match:
-                    suggested_code = approximate_match.business_type_code
-            suggested_bt = reference.business_types.get(suggested_code) if suggested_code else None
+            suggested_code, suggested_name, is_approximate, explanation = _suggest_business_type_for_division(
+                r.tsic_division_code, division_to_business, reference, clusters
+            )
             candidates.append(
                 {
                     "registration_no": r.registration_no,
@@ -542,9 +564,9 @@ def _run_business_type_lookup_job(job_id: str, company_name: str) -> None:
                     "tsic_name_th": r.tsic_name_th,
                     "tsic_division_code": r.tsic_division_code,
                     "suggested_business_type_code": suggested_code,
-                    "suggested_business_type_name": suggested_bt.name_th if suggested_bt else None,
-                    "suggested_is_approximate": approximate_match is not None,
-                    "suggested_explanation": approximate_match.explanation_th if approximate_match else None,
+                    "suggested_business_type_name": suggested_name,
+                    "suggested_is_approximate": is_approximate,
+                    "suggested_explanation": explanation,
                 }
             )
 
@@ -573,11 +595,32 @@ def _run_business_type_lookup_job(job_id: str, company_name: str) -> None:
         # ช่วงที่เคยดึงมาเท่านั้น ไม่ใช่ทะเบียนเต็ม — ต้องบอกข้อจำกัดนี้ในผลลัพธ์เสมอ ไม่ใช่แค่คืนค่า
         # ว่างเงียบๆ ถ้าไม่มีฐานข้อมูลนี้เลย (ยังไม่เคยกดดึงข้อมูล)
         dbd_opendata_matches = []
+        dbd_opendata_exact_index = None
         if dbd_opendata_is_available():
             log("🔁 ลองค้นจากฐานข้อมูล DBD Open Data ที่เคยดึงมาเก็บในเครื่องแล้ว (ค้นออฟไลน์)")
             try:
                 dbd_opendata_matches = search_juristic_person(company_name, limit=10)
                 log(f"✅ พบ {len(dbd_opendata_matches)} รายการในฐานข้อมูล DBD Open Data")
+
+                # ข้อมูล DBD Open Data มี "รหัสวัตถุประสงค์" ติดมาด้วย (เลข 5 หลัก 2 หลักแรกคือ TSIC
+                # division ตามมาตรฐานเดียวกับที่ DBD DataWarehouse ใช้) จึงจับคู่ประเภทธุรกิจใน
+                # ระบบเราได้แบบเดียวกับผลจาก DBD DataWarehouse โดยตรง (ดู _suggest_business_type_
+                # for_division) — ทำให้พยากรณ์อัตโนมัติได้แม้ตอน DBD DataWarehouse บล็อกอยู่ก็ตาม
+                normalized_query = company_name.strip().lower()
+                for i, m in enumerate(dbd_opendata_matches):
+                    purpose_code = (m.get("purpose_code") or "").strip()
+                    division_code = purpose_code[:2] if len(purpose_code) >= 2 and purpose_code[:2].isdigit() else None
+                    suggested_code, suggested_name, is_approximate, explanation = _suggest_business_type_for_division(
+                        division_code, division_to_business, reference, clusters
+                    )
+                    m["tsic_code"] = purpose_code
+                    m["tsic_name_th"] = m.get("purpose") or ""
+                    m["suggested_business_type_code"] = suggested_code
+                    m["suggested_business_type_name"] = suggested_name
+                    m["suggested_is_approximate"] = is_approximate
+                    m["suggested_explanation"] = explanation
+                    if dbd_opendata_exact_index is None and (m.get("name") or "").strip().lower() == normalized_query:
+                        dbd_opendata_exact_index = i
             except Exception as opendata_error:  # noqa: BLE001
                 log(f"⚠️ ค้นจากฐานข้อมูล DBD Open Data ไม่สำเร็จ: {opendata_error}")
         else:
@@ -594,6 +637,7 @@ def _run_business_type_lookup_job(job_id: str, company_name: str) -> None:
                 "fallback": fallback,
                 "dbd_opendata_matches": dbd_opendata_matches,
                 "dbd_opendata_available": dbd_opendata_is_available(),
+                "dbd_opendata_exact_match_index": dbd_opendata_exact_index,
             }
     except Exception as e:  # noqa: BLE001 — ต้อง catch ทุก error เพื่อรายงานสถานะ job ให้ถูกต้อง
         with _JOBS_LOCK:
