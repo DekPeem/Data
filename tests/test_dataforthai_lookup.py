@@ -206,12 +206,16 @@ class _FakeBody:
 
 
 class _FakeDataforthaiDriver:
-    def __init__(self, input_selector="#search", suggestion_selector=None, body_text="", url_changes_to=None):
+    def __init__(
+        self, input_selector="#search", suggestion_selector=None, body_text="",
+        url_changes_to=None, all_inputs_dump=None,
+    ):
         self._input_selector = input_selector
         self._suggestion_selector = suggestion_selector
         self._body_text = body_text
         self.current_url = "https://www.dataforthai.com/business"
         self._url_changes_to = url_changes_to
+        self._all_inputs_dump = all_inputs_dump if all_inputs_dump is not None else []
         self.get_calls = []
         self._script_call_count = 0
 
@@ -227,7 +231,7 @@ class _FakeDataforthaiDriver:
                 self.current_url = self._url_changes_to or self.current_url
             return self._suggestion_selector
         if "querySelectorAll('input')" in script:
-            return []  # dump diagnostics — ไม่มี input เลยในเทสต์นี้
+            return self._all_inputs_dump  # dump diagnostics
 
     def find_element(self, by, selector):
         from selenium.common.exceptions import NoSuchElementException
@@ -263,6 +267,28 @@ def test_lookup_business_category_returns_none_when_search_input_not_found(monke
     assert result is None
     assert any("ไม่พบช่องค้นหา" in m for m in logs)
     assert any("ไม่มี <input> เลยสักตัว" in m for m in logs)
+
+
+def test_lookup_business_category_detects_cloudflare_turnstile_block(monkeypatch):
+    """ยืนยันจากผู้ใช้จริง: input ตัวเดียวที่เจอในหน้า dataforthai.com/business ผ่าน Selenium คือ
+    'cf-turnstile-response' (hidden input ของ Cloudflare Turnstile) — ต้องแยกแยะกรณีนี้ออกจาก
+    "หาช่องค้นหาไม่เจอ" ทั่วไป (ซึ่งอาจแปลว่าแค่โครงสร้างหน้าเปลี่ยน) และรายงานให้ชัดเจนว่าถูก
+    Cloudflare บล็อกแทน"""
+
+    driver = _FakeDataforthaiDriver(
+        input_selector=None,
+        all_inputs_dump=[
+            "type=hidden id=cf-chl-widget-n4mb5_response name=cf-turnstile-response placeholder=(none) visible=false"
+        ],
+    )
+    logs = []
+    _install_fake_clock(monkeypatch)
+
+    result = lookup_business_category(driver, "บริษัท ทดสอบ จำกัด", log=logs.append, timeout=0.3)
+
+    assert result is None
+    assert any("Cloudflare Turnstile" in m for m in logs)
+    assert not any("โครงสร้างหน้าอาจเปลี่ยนไป" in m for m in logs)
 
 
 def test_lookup_business_category_returns_none_when_no_suggestion_matches():

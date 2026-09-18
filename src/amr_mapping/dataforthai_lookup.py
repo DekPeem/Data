@@ -12,13 +12,14 @@ dataforthai.com เป็นเว็บบุคคลที่สาม (ไ�
        ธรรมดาที่เรียกตรงได้เลยไม่ต้องใช้ Selenium (ยืนยันจาก response จริงที่ผู้ใช้ capture มา)
     2. คลิกเลือกชื่อจากรายการนั้นในหน้าเว็บ จะพาไปหน้า https://www.dataforthai.com/company/<เลข
        ทะเบียน>/ ซึ่งมีข้อความ "ประกอบธุรกิจ" / "หมวดธุรกิจ" อยู่ในหน้า (เห็นจาก screenshot จริง)
-       — ยังไม่ยืนยัน CSS selector ที่แน่นอนของช่องค้นหา/รายการ suggestion ในหน้าเว็บ (ลอง
-       Inspect Element แล้วแต่ไปโดน element ที่ไม่เกี่ยวข้อง เหมือนปัญหาเดียวกับตอนแกะปุ่ม
-       Download ของ PEA ในช่วงแรก) จึงใช้วิธีสแกนหา element ที่เข้าเงื่อนไขกว้างๆ แทนการพึ่ง
-       selector ที่เจาะจงตายตัว (ทนทานกว่า เหมือนที่ทำสำเร็จกับ amr_downloader._find_download_element)
-       — ⚠️ ขั้นตอนนี้ (คลิก suggestion + อ่านหน้าโปรไฟล์) ยังไม่เคยทดสอบกับเว็บจริง ต้องรอผลทดสอบ
-       จริงรอบแรกก่อนถึงจะยืนยันได้ว่าใช้งานได้จริงหรือไม่ — diagnostics ในนี้เตรียมไว้ล่วงหน้าเพื่อ
-       ให้รอบแรกที่ล้มเหลว (ถ้าล้มเหลว) ให้หลักฐานที่ใช้วินิจฉัยต่อได้ทันที แทนที่จะต้องเดาใหม่
+       — ⚠️ ยืนยันจากผู้ใช้จริงแล้วว่า "ทำแบบนี้ผ่าน Selenium ไม่ได้" หน้า /business ที่เปิดผ่าน
+       เบราว์เซอร์อัตโนมัติถูก Cloudflare Turnstile บล็อก (input เดียวที่เจอในหน้าคือ
+       cf-turnstile-response ตัว hidden ของ Turnstile เอง ไม่มีช่องค้นหาจริงให้เห็นเลย) — เหมือน
+       Incapsula ของ DBD คนละระบบแต่หลักการเดียวกัน โมดูลนี้จึงไม่พยายามข้าม Cloudflare Turnstile
+       เช่นกัน (ดูหลักการเดียวกันในหัวไฟล์ dbd_lookup.py) lookup_business_category() จะตรวจจับ
+       สัญญาณนี้แล้ว log ให้ชัดเจนว่าโดนบล็อก ไม่ใช่แค่ "หาไม่เจอ" แล้วคืน None เสมอ — ฟีเจอร์ดึง
+       "หมวดธุรกิจ" จาก dataforthai.com จึงใช้งานไม่ได้จริงในทางปฏิบัติ เหลือแค่ suggest_companies
+       (ข้อ 1 ด้านบน) ที่ยังใช้ยืนยันชื่อบริษัทที่ใกล้เคียง/มีอยู่จริงได้
 """
 
 from __future__ import annotations
@@ -285,17 +286,34 @@ def lookup_business_category(
         input_selector = driver.execute_script(_FIND_SEARCH_INPUT_JS)
 
     if not input_selector:
-        log("❌ ไม่พบช่องค้นหาในหน้า dataforthai.com/business เลย (โครงสร้างหน้าอาจเปลี่ยนไป)")
         try:
             all_inputs = driver.execute_script(_DUMP_ALL_INPUTS_JS)
-            if all_inputs:
-                log(f"🔎 input ทั้งหมดที่เจอในหน้า ({len(all_inputs)} ตัว):")
-                for line in all_inputs:
-                    log(f"🔎   {line}")
-            else:
-                log("🔎 ไม่มี <input> เลยสักตัวในหน้านี้ (อาจจะยังโหลดไม่เสร็จ/ถูกบล็อก)")
         except Exception as e:  # noqa: BLE001 — เก็บ diagnostics ไม่สำเร็จ ต้องไม่ทำให้ฟังก์ชันพังไปด้วย
+            all_inputs = None
             log(f"⚠️ เก็บรายละเอียด input ไม่สำเร็จ: {e}")
+
+        # ยืนยันจากผู้ใช้จริง: input ตัวเดียวที่เจอในหน้าคือ cf-turnstile-response (Cloudflare
+        # Turnstile — ระบบป้องกันบอทของ Cloudflare) แปลว่าหน้าโดนบล็อกไม่ให้ Selenium เห็นเนื้อหา
+        # จริงเลย ไม่ใช่แค่ "โครงสร้างหน้าเปลี่ยน" เฉยๆ — ตามหลักการเดียวกับที่ยึดถือมาตลอด (ไม่พยายาม
+        # หลบเลี่ยงระบบป้องกันบอทของเว็บใคร ดู dbd_lookup.BlockedByAntiBot) จึงแค่รายงานให้ชัดเจน
+        # แล้วหยุด ไม่พยายามข้ามไป
+        is_cloudflare_blocked = bool(all_inputs) and any(
+            "turnstile" in line.lower() or "cf-chl" in line.lower() for line in all_inputs
+        )
+        if is_cloudflare_blocked:
+            log(
+                "🚫 หน้า dataforthai.com/business ถูกบล็อกโดย Cloudflare Turnstile (ระบบป้องกันบอท) "
+                "— ไม่ใช่ว่าหน้าเปลี่ยนโครงสร้าง แต่เนื้อหาจริงของหน้าไม่ถูกส่งมาให้เห็นเลย"
+            )
+        else:
+            log("❌ ไม่พบช่องค้นหาในหน้า dataforthai.com/business เลย (โครงสร้างหน้าอาจเปลี่ยนไป)")
+
+        if all_inputs:
+            log(f"🔎 input ทั้งหมดที่เจอในหน้า ({len(all_inputs)} ตัว):")
+            for line in all_inputs:
+                log(f"🔎   {line}")
+        elif all_inputs is not None:
+            log("🔎 ไม่มี <input> เลยสักตัวในหน้านี้ (อาจจะยังโหลดไม่เสร็จ/ถูกบล็อก)")
         return None
     log(f"✅ พบช่องค้นหา ({input_selector})")
 
