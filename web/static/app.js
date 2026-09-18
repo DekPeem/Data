@@ -275,6 +275,7 @@ async function pollBusinessTypeLookupJob(jobId) {
     dbd_opendata_matches,
     dbd_opendata_available,
     dbd_opendata_exact_match_index,
+    wikipedia_result,
   } = data.result;
 
   if (blocked) {
@@ -321,6 +322,17 @@ async function pollBusinessTypeLookupJob(jobId) {
       }
     } else {
       html += `<div class="lookup-status-text" style="margin-top:8px;color:#8996ab;">ℹ️ ยังไม่เคยดึงฐานข้อมูล DBD Open Data มาเก็บในเครื่องเลย (ดึงได้จากหน้า Admin) — จะช่วยค้นหาแบบออฟไลน์ได้เร็วขึ้นในครั้งถัดไป</div>`;
+    }
+
+    // Wikipedia (ฟรี ไม่มีค่าใช้จ่าย) — ช่วยเฉพาะบริษัทใหญ่/มีชื่อเสียงที่มักไม่อยู่ในฐานข้อมูล
+    // DBD Open Data ด้านบนพอดี (เพราะเป็นบริษัทเก่า) — เป็นข้อความอิสระประกอบการตัดสินใจเท่านั้น
+    // ไม่ใช่รหัส TSIC จึงเลือกประเภทธุรกิจให้อัตโนมัติไม่ได้
+    if (wikipedia_result) {
+      // เนื้อหามาจาก Wikipedia (ใครก็แก้ไขได้) — escape ก่อนใส่ลง innerHTML เหมือน log details
+      const wpTitle = wikipedia_result.title.replace(/</g, "&lt;");
+      const wpSummary = wikipedia_result.summary.replace(/</g, "&lt;");
+      html += `<div class="lookup-status-text" style="margin-top:8px;">📖 พบข้อมูลจาก <a href="${wikipedia_result.url}" target="_blank" rel="noopener">Wikipedia: ${wpTitle}</a> (ใช้ประกอบการตัดสินใจเท่านั้น ไม่ใช่แหล่งข้อมูลทางการ):</div>`;
+      html += `<div class="lookup-status-text" style="margin-top:4px;color:#8996ab;">${wpSummary}</div>`;
     }
 
     lookupStatus.innerHTML = html + renderSearchLogDetails(data.logs, true);

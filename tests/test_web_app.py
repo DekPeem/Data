@@ -940,6 +940,7 @@ def test_business_type_lookup_falls_back_to_dataforthai_when_dbd_blocked(client,
     monkeypatch.setattr(app_module, "suggest_companies_with_fallback", fake_suggest)
     monkeypatch.setattr(app_module, "lookup_business_category", fake_category)
     monkeypatch.setattr(app_module, "setup_dataforthai_driver", lambda headless=True: _FakeDriver())
+    monkeypatch.setattr(app_module, "search_wikipedia_company", lambda company_name, log=lambda m: None: None)
 
     res = client.post("/api/business-type-lookup", json={"company_name": "บริษัท ทดสอบ จำกัด (มหาชน)"})
     job_id = res.get_json()["job_id"]
@@ -961,6 +962,44 @@ def test_business_type_lookup_falls_back_to_dataforthai_when_dbd_blocked(client,
     assert result["fallback"]["candidates"][0]["label"] == "บริษัท ทดสอบ จำกัด (มหาชน)"
     assert result["dbd_opendata_available"] is False
     assert result["dbd_opendata_matches"] == []
+    assert result["wikipedia_result"] is None
+
+
+def test_business_type_lookup_includes_wikipedia_result_when_found(client, monkeypatch):
+    """เสริมช่องทางฟรี Wikipedia (ดู wikipedia_lookup.py) — ตอน DBD บล็อก ต้องลองค้น Wikipedia
+    ด้วย แล้วใส่ผลลัพธ์ (แค่ข้อความอิสระประกอบการตัดสินใจ ไม่ใช่รหัส TSIC) กลับไปในผล job"""
+
+    from amr_mapping.dbd_lookup import BlockedByAntiBot
+    from amr_mapping.wikipedia_lookup import WikipediaCompanyInfo
+
+    def fake_lookup(company_name, log=lambda m: None, headless=True):
+        raise BlockedByAntiBot("Incapsula incident ID: 111")
+
+    monkeypatch.setattr(app_module, "lookup_business_type_for_company", fake_lookup)
+    monkeypatch.setattr(app_module, "setup_dataforthai_driver", lambda headless=True: (_ for _ in ()).throw(Exception("no chrome")))
+    monkeypatch.setattr(app_module, "suggest_companies_with_fallback", lambda *a, **k: [])
+    monkeypatch.setattr(
+        app_module,
+        "search_wikipedia_company",
+        lambda company_name, log=lambda m: None: WikipediaCompanyInfo(
+            title="ซีพี ออลล์", summary="ซีพี ออลล์ เป็นบริษัทค้าปลีก...", url="https://th.wikipedia.org/wiki/ซีพี_ออลล์"
+        ),
+    )
+
+    res = client.post("/api/business-type-lookup", json={"company_name": "ซีพี ออลล์"})
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/business-type-lookup/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    result = status["result"]
+    assert result["wikipedia_result"]["title"] == "ซีพี ออลล์"
+    assert result["wikipedia_result"]["summary"] == "ซีพี ออลล์ เป็นบริษัทค้าปลีก..."
 
 
 def test_business_type_lookup_includes_local_dbd_opendata_matches_when_available(client, monkeypatch):
@@ -988,6 +1027,7 @@ def test_business_type_lookup_includes_local_dbd_opendata_matches_when_available
         app_module, "search_juristic_person",
         lambda name_query, limit=10: [{"reg_id": "0105544000157", "name": "บริษัท ทดสอบ เก่า จำกัด", "status": "registration"}],
     )
+    monkeypatch.setattr(app_module, "search_wikipedia_company", lambda company_name, log=lambda m: None: None)
 
     res = client.post("/api/business-type-lookup", json={"company_name": "บริษัท ทดสอบ เก่า จำกัด"})
     job_id = res.get_json()["job_id"]
@@ -1041,6 +1081,7 @@ def test_business_type_lookup_suggests_business_type_from_dbd_opendata_purpose_c
             }
         ],
     )
+    monkeypatch.setattr(app_module, "search_wikipedia_company", lambda company_name, log=lambda m: None: None)
 
     res = client.post("/api/business-type-lookup", json={"company_name": "โรงแรม ทดสอบ จำกัด"})
     job_id = res.get_json()["job_id"]

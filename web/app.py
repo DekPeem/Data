@@ -48,6 +48,7 @@ from amr_mapping.loader import (
 )
 from amr_mapping.mapping import MatchLevel, find_load_curve
 from amr_mapping.models import Customer
+from amr_mapping.wikipedia_lookup import search_wikipedia_company
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 
@@ -626,6 +627,18 @@ def _run_business_type_lookup_job(job_id: str, company_name: str) -> None:
         else:
             log("ℹ️ ยังไม่เคยดึงฐานข้อมูล DBD Open Data มาเก็บในเครื่องเลย (ดึงได้จากหน้า Admin)")
 
+        # ช่องทางฟรีเพิ่มเติม: Wikipedia ภาษาไทย (ดู wikipedia_lookup.py) — ครอบคลุมเฉพาะบริษัทใหญ่/
+        # มีชื่อเสียงเท่านั้น แต่บังเอิญเป็นกลุ่มเดียวกับที่ฐานข้อมูล DBD Open Data ด้านบนมักหาไม่เจอ
+        # พอดี (บริษัทเก่า ไม่ใช่ตั้งใหม่) จึงช่วยเติมเต็มจุดที่ยังขาดได้แบบไม่มีค่าใช้จ่าย — คืนแค่
+        # ข้อความอิสระเหมือน dataforthai's business_category ไม่ใช่รหัส TSIC จึงจับคู่อัตโนมัติไม่ได้
+        wikipedia_result = None
+        try:
+            wp = search_wikipedia_company(company_name, log=log)
+            if wp:
+                wikipedia_result = {"title": wp.title, "summary": wp.summary, "url": wp.url}
+        except Exception as wikipedia_error:  # noqa: BLE001 — ฟรี/เสริมเฉยๆ ล้มแล้วไม่ควรทำให้ job พัง
+            log(f"⚠️ ค้นจาก Wikipedia ไม่สำเร็จ: {wikipedia_error}")
+
         with _JOBS_LOCK:
             _JOBS[job_id]["status"] = "success"
             _JOBS[job_id]["result"] = {
@@ -638,6 +651,7 @@ def _run_business_type_lookup_job(job_id: str, company_name: str) -> None:
                 "dbd_opendata_matches": dbd_opendata_matches,
                 "dbd_opendata_available": dbd_opendata_is_available(),
                 "dbd_opendata_exact_match_index": dbd_opendata_exact_index,
+                "wikipedia_result": wikipedia_result,
             }
     except Exception as e:  # noqa: BLE001 — ต้อง catch ทุก error เพื่อรายงานสถานะ job ให้ถูกต้อง
         with _JOBS_LOCK:
