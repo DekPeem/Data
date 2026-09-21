@@ -498,6 +498,11 @@ async function runForecast() {
     }
 
     const kva = kvaRaw ? Number(kvaRaw) : null;
+    // ในโหมดนี้ KVA เป็นช่องไม่บังคับกรอกอยู่แล้ว (เห็นค่า "ไม่ทราบ" ในฟิลด์ด้านล่างชัดเจนอยู่แล้ว)
+    // เตือนซ้ำเป็นกล่อง ⚠️ ทุกครั้งที่ไม่กรอกจึงเป็นแค่ noise ไม่ใช่ปัญหาจริง — กรองออกเฉพาะโหมดนี้
+    // (ไม่แตะต้อง warnings ของโหมดค้นหาด้วยเลขบัญชีจริง ซึ่งควรได้เห็นคำเตือนนี้ถ้าลูกค้าจริงขาด
+    // contract_kva เพราะนั่นคือข้อมูลที่ควรมีแต่ขาดไปจริงๆ)
+    data.match.warnings = data.match.warnings.filter((w) => !w.includes("ไม่ทราบ contract_kva ของลูกค้า"));
     renderResult(data, {
       name: displayName || "(ไม่ได้ระบุชื่อ)",
       subLabel: "พยากรณ์แบบไม่บันทึกข้อมูล — ไม่มีเลขบัญชีผู้ใช้ไฟ",
@@ -623,6 +628,8 @@ function renderResult(data, identity) {
         : ""
     }
 
+    <div id="matched-companies-block"></div>
+
     <div>
       <div class="stats-title" style="margin-bottom:12px;">ผลพยากรณ์โปรไฟล์การใช้ไฟฟ้า</div>
       <div class="stats-grid">${renderStatTiles(f.demand_kw, f.energy_kwh)}</div>
@@ -652,6 +659,44 @@ function renderResult(data, identity) {
   resultArea.style.display = "flex";
 
   initDailyCurveSection(document.getElementById("daily-curve-root"), data.curve);
+  renderMatchedCompanies(p.business_type_code, p.rate_code);
+}
+
+// แสดงว่าโปรไฟล์ที่ใช้พยากรณ์ (business_type_code+rate_code นี้) มาจากการนำเข้า AMR จริงของ
+// บริษัทไหนบ้างในเครื่องนี้ — ใช้ /api/import-log-local ตัวเดียวกับที่หน้า Admin ใช้อยู่แล้ว (ข้อมูล
+// local-only มีชื่อบริษัท/เลขบัญชีจริง ไม่ถูก commit เข้า repo — ดู .gitignore) คืนรายการว่างเงียบๆ
+// ถ้ายังไม่เคยนำเข้า AMR จริงเลย (ไฟล์ import_log_local.csv ไม่มี) ไม่ใช่ error
+async function renderMatchedCompanies(businessTypeCode, rateCode) {
+  const container = document.getElementById("matched-companies-block");
+  if (!container || !businessTypeCode || !rateCode) return;
+
+  try {
+    const res = await fetch("/api/import-log-local");
+    if (!res.ok) return;
+    const entries = await res.json();
+
+    const matched = entries.filter(
+      (e) => e.business_type_code === businessTypeCode && e.rate_code === rateCode
+    );
+    const seen = new Set();
+    const names = [];
+    for (const e of matched) {
+      const key = `${e.company_name}|${e.account_no}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      names.push(e.company_name || e.account_no || "(ไม่ทราบชื่อ)");
+    }
+    if (!names.length) return;
+
+    const escapedNames = names.map((n) => n.replace(/</g, "&lt;")).join(", ");
+    container.innerHTML = `
+      <div class="card" style="padding:16px 28px;background:#f7f9fc;">
+        <div class="lookup-status-text" style="font-weight:600;">🔗 แมทกับข้อมูล AMR จริงในเครื่องนี้ของ:</div>
+        <div class="lookup-status-text" style="margin-top:4px;color:#55647a;">${escapedNames}</div>
+      </div>`;
+  } catch (err) {
+    console.warn("โหลดรายชื่อบริษัทที่แมทกับโปรไฟล์นี้ไม่สำเร็จ", err);
+  }
 }
 
 // ── เริ่มต้น ──
