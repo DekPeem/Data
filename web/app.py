@@ -296,7 +296,17 @@ def api_get_site_curve(account_no: str):
     entry = next((e for e in entries if e["account_no"] == account_no), None)
     if entry is None:
         return jsonify(_NO_CURVE)
-    return jsonify({"available": True, "day_types": entry["hours"], "sample_size": entry["sample_size"]})
+    return jsonify(
+        {
+            "available": True,
+            "day_types": entry["hours"],
+            "sample_size": entry["sample_size"],
+            # ชื่อบริษัทของไซต์นี้ — ใช้แสดงเป็นหัวข้อเล็กๆ เหนือกราฟในหน้า Admin เท่านั้น
+            # (จำเป็นเวลาเปิดดูกราฟของหลายไซต์พร้อมกัน จะได้รู้ว่ากราฟไหนเป็นของใคร) ไม่เคยถูกส่ง
+            # ไปที่อื่นนอกจากหน้า Admin ของเครื่องนี้เอง
+            "company_name": entry.get("company_name") or "",
+        }
+    )
 
 
 @app.route("/api/business-types/<code>/hierarchy", methods=["POST"])

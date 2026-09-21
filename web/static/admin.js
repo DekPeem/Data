@@ -635,7 +635,10 @@ async function toggleSiteCurvePanel(accountNo) {
         panel.innerHTML = `<div class="hint" style="padding:12px 0;">ยังไม่มีกราฟแยกของไซต์นี้ (นำเข้าไว้ก่อนฟีเจอร์นี้จะมี หรือใช้โหมดกรอกเองซึ่งไม่ทราบชื่อบริษัท — นำเข้าใหม่อีกครั้งด้วยโหมดอัตโนมัติเพื่อให้มีกราฟแยก)</div>`;
         return;
       }
-      initDailyCurveSection(panel, curveData);
+      // ใส่ชื่อบริษัท+เลขบัญชีเป็นหัวข้อเล็กๆ เหนือกราฟ — จำเป็นเวลาเปิดดูกราฟของหลายไซต์พร้อมกัน
+      // (เช่น บริษัทเดียวกันมีหลายมิเตอร์) จะได้รู้ว่ากราฟไหนเป็นของไซต์ไหน
+      panel.innerHTML = `<div class="hint" style="font-weight:600;color:#0f1b2d;margin-bottom:6px;">📍 ${curveData.company_name || "(ไม่ทราบชื่อ)"} · บัญชี ${accountNo}</div><div class="site-curve-chart-inner"></div>`;
+      initDailyCurveSection(panel.querySelector(".site-curve-chart-inner"), curveData);
     } catch (err) {
       panel.innerHTML = `<div class="hint" style="color:#d03b3b;">โหลดกราฟไม่สำเร็จ</div>`;
       console.error("โหลดกราฟของไซต์ไม่สำเร็จ", err);

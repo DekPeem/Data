@@ -436,6 +436,9 @@ def test_get_site_curve_returns_that_sites_own_curve(client, monkeypatch, tmp_pa
     assert data["available"] is True
     assert data["sample_size"] == 12
     assert data["day_types"]["all"][9] == pytest.approx(5.0)
+    # ใช้แสดงเป็นหัวข้อเล็กๆ เหนือกราฟในหน้า Admin เวลาเปิดดูหลายไซต์พร้อมกัน (แยกไม่ออกว่ากราฟ
+    # ไหนเป็นของใคร ถ้าไม่มีชื่อกำกับ)
+    assert data["company_name"] == "บริษัท เอ จำกัด"
 
 
 def test_business_type_hierarchy_update_success(client, monkeypatch, tmp_path):
