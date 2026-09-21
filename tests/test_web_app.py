@@ -854,6 +854,61 @@ def test_business_type_lookup_success_suggests_matching_business_type(client, mo
     assert status["result"]["exact_match_index"] == 0
 
 
+def test_business_type_lookup_auto_forecasts_when_match_is_unambiguous(client, monkeypatch):
+    """ถ้าส่ง rate_code มาพร้อมชื่อบริษัท (ในฟอร์มเดียวกัน) และจับคู่ประเภทธุรกิจได้แบบไม่กำกวม
+    (exact match เดียว) ต้องพยากรณ์ให้อัตโนมัติทันทีในผล job เลย (primary_index/forecast) —
+    ผู้ใช้จึงไม่ต้องกดยืนยัน/เลือกประเภทธุรกิจเองอีกขั้นตอนหนึ่งถ้าจับคู่ได้ชัดเจน"""
+
+    from amr_mapping.dbd_lookup import CompanyBusinessInfo
+
+    def fake_lookup(company_name, log=lambda m: None, headless=True):
+        return [
+            CompanyBusinessInfo(
+                registration_no="0105544000157",
+                juristic_name="บริษัท ทดสอบกระดาษ จำกัด",
+                juristic_type="บริษัทจำกัด",
+                status="ยังดำเนินกิจการอยู่",
+                tsic_code="17099",
+                tsic_name_th="การผลิตผลิตภัณฑ์กระดาษอื่นๆ",
+            )
+        ]
+
+    monkeypatch.setattr(app_module, "lookup_business_type_for_company", fake_lookup)
+
+    res = client.post(
+        "/api/business-type-lookup",
+        json={"company_name": "บริษัท ทดสอบกระดาษ จำกัด", "rate_code": "40", "contract_kva": 14900},
+    )
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/business-type-lookup/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    result = status["result"]
+    assert result["primary_index"] == 0
+    assert result["primary_is_ambiguous"] is False
+    assert result["forecast"] is not None
+    assert result["forecast"]["matched_profile"]["business_type_code"] == "34111"
+    assert result["forecast"]["matched_profile"]["rate_code"] == "40"
+
+
+def test_business_type_lookup_start_accepts_optional_forecast_params(client):
+    """/api/business-type-lookup ต้องรับ rate_code/contract_kva/has_solar เสริม (ไม่บังคับ) และ
+    validate contract_kva เป็นตัวเลข — คืน 400 ถ้าไม่ใช่ตัวเลข"""
+
+    res = client.post(
+        "/api/business-type-lookup",
+        json={"company_name": "บริษัท ทดสอบ จำกัด", "contract_kva": "ไม่ใช่ตัวเลข"},
+    )
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+
 def test_business_type_lookup_suggests_approximate_match_when_no_exact_division(client, monkeypatch):
     """DBD คืนรหัส TSIC ที่ division ไม่ตรงกับธุรกิจไหนในระบบเราตรงๆ เลย (division "71" —
     ไม่มีธุรกิจไหนยืนยัน division นี้ไว้ในข้อมูลอ้างอิงจริงตอนนี้) — ต้องยัง fallback ไปแนะนำ

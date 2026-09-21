@@ -123,6 +123,46 @@ def _curve_response(
     }
 
 
+def _estimate_result_to_dict(result, reference) -> dict:
+    """แปลง ForecastResult เป็น dict สำหรับตอบกลับ JSON — โครงสร้างเดียวกับที่เดิมเขียนซ้ำอยู่ 2
+    จุด (/api/forecast/<account_no> และ /api/forecast-adhoc) ดึงมารวมไว้ที่เดียว เพื่อให้จุดที่ 3
+    (พยากรณ์อัตโนมัติหลังค้นหาประเภทธุรกิจใน _run_business_type_lookup_job) เรียกใช้ซ้ำได้โดยไม่
+    ต้อง copy โครงสร้าง JSON มาเขียนใหม่อีกรอบ"""
+
+    business_type = reference.business_types.get(result.matched_profile.business_type_code)
+    rate_schedule = reference.rate_schedules.get(result.matched_profile.rate_code)
+
+    return {
+        "match": {
+            "level": result.match_level.value,
+            "level_label_th": MATCH_LEVEL_LABEL_TH.get(result.match_level, result.match_level.value),
+            "is_exact": result.match_level == MatchLevel.EXACT,
+            "scale_factor": result.scale_factor,
+            "warnings": result.warnings,
+        },
+        "matched_profile": {
+            "business_type_code": result.matched_profile.business_type_code,
+            "business_type_name": business_type.name_th if business_type else None,
+            "rate_code": result.matched_profile.rate_code,
+            "rate_description": rate_schedule.description if rate_schedule else None,
+            "sample_size": result.matched_profile.sample_size,
+            "notes": result.matched_profile.notes,
+            "has_solar": result.matched_profile.has_solar,
+        },
+        "forecast": {
+            "demand_kw": result.demand_kw,
+            "energy_kwh": result.energy_kwh,
+        },
+        "curve": _curve_response(
+            reference,
+            result.matched_profile.business_type_code,
+            result.matched_profile.rate_code,
+            result.scale_factor,
+            has_solar=result.matched_profile.has_solar,
+        ),
+    }
+
+
 @app.route("/")
 def index():
     return app.send_static_file("index.html")
@@ -320,41 +360,7 @@ def api_forecast(account_no: str):
         ), 409
 
     result = estimate_customer_load(customer, reference)
-    business_type = reference.business_types.get(result.matched_profile.business_type_code)
-    rate_schedule = reference.rate_schedules.get(result.matched_profile.rate_code)
-
-    return jsonify(
-        {
-            "customer": _customer_to_dict(customer),
-            "match": {
-                "level": result.match_level.value,
-                "level_label_th": MATCH_LEVEL_LABEL_TH.get(result.match_level, result.match_level.value),
-                "is_exact": result.match_level == MatchLevel.EXACT,
-                "scale_factor": result.scale_factor,
-                "warnings": result.warnings,
-            },
-            "matched_profile": {
-                "business_type_code": result.matched_profile.business_type_code,
-                "business_type_name": business_type.name_th if business_type else None,
-                "rate_code": result.matched_profile.rate_code,
-                "rate_description": rate_schedule.description if rate_schedule else None,
-                "sample_size": result.matched_profile.sample_size,
-                "notes": result.matched_profile.notes,
-                "has_solar": result.matched_profile.has_solar,
-            },
-            "forecast": {
-                "demand_kw": result.demand_kw,
-                "energy_kwh": result.energy_kwh,
-            },
-            "curve": _curve_response(
-                reference,
-                result.matched_profile.business_type_code,
-                result.matched_profile.rate_code,
-                result.scale_factor,
-                has_solar=result.matched_profile.has_solar,
-            ),
-        }
-    )
+    return jsonify({"customer": _customer_to_dict(customer), **_estimate_result_to_dict(result, reference)})
 
 
 @app.route("/new-forecast")
@@ -406,40 +412,7 @@ def api_forecast_adhoc():
     )
 
     result = estimate_customer_load(transient_customer, reference)
-    business_type = reference.business_types.get(result.matched_profile.business_type_code)
-    rate_schedule = reference.rate_schedules.get(result.matched_profile.rate_code)
-
-    return jsonify(
-        {
-            "match": {
-                "level": result.match_level.value,
-                "level_label_th": MATCH_LEVEL_LABEL_TH.get(result.match_level, result.match_level.value),
-                "is_exact": result.match_level == MatchLevel.EXACT,
-                "scale_factor": result.scale_factor,
-                "warnings": result.warnings,
-            },
-            "matched_profile": {
-                "business_type_code": result.matched_profile.business_type_code,
-                "business_type_name": business_type.name_th if business_type else None,
-                "rate_code": result.matched_profile.rate_code,
-                "rate_description": rate_schedule.description if rate_schedule else None,
-                "sample_size": result.matched_profile.sample_size,
-                "notes": result.matched_profile.notes,
-                "has_solar": result.matched_profile.has_solar,
-            },
-            "forecast": {
-                "demand_kw": result.demand_kw,
-                "energy_kwh": result.energy_kwh,
-            },
-            "curve": _curve_response(
-                reference,
-                result.matched_profile.business_type_code,
-                result.matched_profile.rate_code,
-                result.scale_factor,
-                has_solar=result.matched_profile.has_solar,
-            ),
-        }
-    )
+    return jsonify(_estimate_result_to_dict(result, reference))
 
 
 def _run_dataforthai_fallback(company_name: str, log) -> Optional[dict]:
@@ -526,13 +499,23 @@ def _suggest_business_type_for_division(
     )
 
 
-def _run_business_type_lookup_job(job_id: str, company_name: str) -> None:
+def _run_business_type_lookup_job(
+    job_id: str,
+    company_name: str,
+    rate_code: Optional[str] = None,
+    contract_kva: Optional[float] = None,
+    has_solar: Optional[bool] = None,
+) -> None:
     """ค้นหาประเภทธุรกิจ (TSIC) ของบริษัทจากชื่อ ผ่าน DBD DataWarehouse (ดู dbd_lookup.py) —
     รันเป็น background job แบบเดียวกับ AMR import เพราะเปิดเบราว์เซอร์จริงใช้เวลาหลายวินาที
 
     ⚠️ ชื่อบริษัทที่พิมพ์ในหน้านี้ "ถูกส่งออกไปค้นหาที่เว็บ DBD จริง" (ต่างจาก /api/forecast-adhoc
     ที่ไม่ส่งชื่อไปไหนเลย) เพราะไม่มีทางค้นหาบริษัทจากชื่อได้โดยไม่ส่งชื่อไปที่แหล่งข้อมูลนั้น —
     หน้าเว็บต้องแจ้งผู้ใช้ให้ชัดเจนก่อนกดใช้ฟีเจอร์นี้ (ดู index.html)
+
+    rate_code/contract_kva/has_solar (ถ้าผู้ใช้กรอกมาพร้อมชื่อบริษัทในฟอร์มเดียวกัน) ใช้พยากรณ์
+    ต่อให้อัตโนมัติทันทีหลังจับคู่ประเภทธุรกิจได้ (ดูส่วน primary_index ด้านล่าง) — ผู้ใช้จึงได้ผล
+    พยากรณ์ทันทีโดยไม่ต้องกดยืนยัน/เลือกประเภทธุรกิจเองอีกขั้นตอนหนึ่ง ถ้าจับคู่ได้แบบไม่กำกวม
     """
 
     def log(msg: str) -> None:
@@ -574,6 +557,48 @@ def _run_business_type_lookup_job(job_id: str, company_name: str) -> None:
         exact = find_exact_match(results, company_name)
         exact_index = results.index(exact) if exact is not None else None
 
+        # เลือก "บริษัทหลัก" ที่จะใช้พยากรณ์อัตโนมัติทันที: ถ้าเจอชื่อตรงเป๊ะ (exact) ใช้ตัวนั้น
+        # เสมอ — มั่นใจได้ว่าเป็นบริษัทเดียวกับที่พิมพ์มา ถ้าไม่เจอชื่อตรงเป๊ะแต่ค้นหาแล้วได้ผลลัพธ์
+        # แค่รายการเดียว ก็ถือว่าเป็นบริษัทเดียวกันได้อย่างมั่นใจพอเช่นกัน (เช่น พิมพ์ชื่อคลาดเคลื่อน
+        # จากที่ DBD บันทึกไว้เล็กน้อย) ถ้ามีหลายรายการและไม่มีตัวไหนตรงชื่อเป๊ะเลย ถือว่า "กำกวม"
+        # (อาจเป็นคนละบริษัทกับที่ตั้งใจ) — ยังคงพยากรณ์จากตัวแรกให้ดูเป็นตัวอย่างทันที (ผู้ใช้เลือก
+        # flow แบบ auto ทุกอย่างไว้แล้ว) แต่ติดธง primary_is_ambiguous ไว้ให้หน้าเว็บเตือนผู้ใช้ให้
+        # ตรวจสอบ/เลือกจาก candidates เองแทนถ้าผลที่ auto เลือกมาไม่ใช่บริษัทที่ต้องการจริงๆ
+        primary_index: Optional[int] = None
+        primary_is_ambiguous = False
+        if exact_index is not None:
+            primary_index = exact_index
+        elif len(results) == 1:
+            primary_index = 0
+        elif len(results) > 1:
+            primary_index = 0
+            primary_is_ambiguous = True
+
+        # พยากรณ์อัตโนมัติทันทีถ้าเลือกบริษัทหลักได้แบบไม่กำกวม (หรือกำกวมแต่ยังพอมีตัวอย่างให้ดู)
+        # และจับคู่ประเภทธุรกิจได้ (suggested_business_type_code ไม่ใช่ None) — ใช้ rate_code/
+        # contract_kva/has_solar ที่ผู้ใช้กรอกมาพร้อมชื่อบริษัท (ถ้ามี) เหมือน /api/forecast-adhoc
+        # ทุกอย่าง เพียงแต่ไม่ต้องให้ผู้ใช้กดยืนยัน/เลือกประเภทธุรกิจเองอีกรอบ
+        forecast = None
+        if primary_index is not None:
+            suggested_code = candidates[primary_index]["suggested_business_type_code"]
+            if suggested_code:
+                transient_customer = Customer(
+                    account_no="",
+                    name=results[primary_index].juristic_name,
+                    business_type_code=suggested_code,
+                    rate_code=rate_code,
+                    contract_kva=contract_kva,
+                    has_amr=False,
+                    has_solar=has_solar,
+                )
+                try:
+                    forecast_result = estimate_customer_load(transient_customer, reference)
+                    forecast = _estimate_result_to_dict(forecast_result, reference)
+                except Exception as forecast_error:  # noqa: BLE001 — พยากรณ์อัตโนมัติล้มไม่ควรทำให้
+                    # job หลัก (ที่ได้รายชื่อ/ประเภทธุรกิจมาแล้ว) กลายเป็น error ไปด้วย ผู้ใช้ยังเลือก
+                    # ประเภทธุรกิจ/พยากรณ์เองต่อผ่าน /api/forecast-adhoc ได้ตามปกติ
+                    log(f"⚠️ พยากรณ์อัตโนมัติไม่สำเร็จ: {forecast_error}")
+
         with _JOBS_LOCK:
             _JOBS[job_id]["status"] = "success"
             _JOBS[job_id]["result"] = {
@@ -582,6 +607,9 @@ def _run_business_type_lookup_job(job_id: str, company_name: str) -> None:
                 "exact_match_index": exact_index,
                 "blocked": False,
                 "fallback": None,
+                "primary_index": primary_index,
+                "primary_is_ambiguous": primary_is_ambiguous,
+                "forecast": forecast,
             }
     except BlockedByAntiBot as e:
         log(f"🚫 {e}")
@@ -669,11 +697,26 @@ def api_start_business_type_lookup():
     if not company_name:
         return jsonify({"error": "invalid_request", "message": "กรุณาระบุชื่อบริษัท"}), 400
 
+    # พารามิเตอร์พยากรณ์เสริม (ไม่บังคับ) — ถ้าผู้ใช้กรอกมาพร้อมชื่อบริษัทในฟอร์มเดียวกัน จะถูกใช้
+    # พยากรณ์ต่ออัตโนมัติทันทีหลังจับคู่ประเภทธุรกิจได้ (ดู _run_business_type_lookup_job) ไม่กรอก
+    # มาก็ยังพยากรณ์ได้ตามปกติ เพียงแต่ scale_factor จะเป็น 1.0 (ไม่ปรับตาม KVA) และไม่กรองตาม Solar
+    rate_code = (body.get("rate_code") or "").strip() or None
+    has_solar = _parse_tri_state_bool(body.get("has_solar"))
+    contract_kva = body.get("contract_kva")
+    try:
+        contract_kva = float(contract_kva) if contract_kva not in (None, "") else None
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid_request", "message": "KVA ตามสัญญาต้องเป็นตัวเลข"}), 400
+
     job_id = uuid.uuid4().hex
     with _JOBS_LOCK:
         _JOBS[job_id] = {"status": "running", "logs": [], "result": None, "error": None}
 
-    thread = threading.Thread(target=_run_business_type_lookup_job, args=(job_id, company_name), daemon=True)
+    thread = threading.Thread(
+        target=_run_business_type_lookup_job,
+        args=(job_id, company_name, rate_code, contract_kva, has_solar),
+        daemon=True,
+    )
     thread.start()
 
     return jsonify({"job_id": job_id})
