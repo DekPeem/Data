@@ -298,7 +298,10 @@ function renderBizCard(t) {
           ${companies
             .map(
               (c) =>
-                `<button type="button" class="company-dropdown-item company-chip-btn" data-account="${c.account_no}">${c.company_name}${c.account_no ? ` · ${c.account_no}` : ""} 📈</button>`
+                `<button type="button" class="company-dropdown-item company-chip-btn" data-account="${c.account_no}">
+                  <span class="delete-import-log-icon" data-account="${c.account_no}" data-imported-at="${c.imported_at}" title="ลบรายการประวัตินี้ทิ้ง (แค่ประวัติ ไม่กระทบข้อมูลที่ใช้พยากรณ์จริง)" style="float:right;color:#a01818;font-weight:400;padding:0 2px;">✕</span>
+                  ${c.company_name}${c.account_no ? ` · ${c.account_no}` : ""} 📈
+                </button>`
             )
             .join("")}
           <div class="company-dropdown-empty" style="display:none;">ไม่พบบริษัท/ไซต์ที่ตรงกับคำค้นหา</div>
@@ -467,7 +470,15 @@ function renderBusinessTypesSections(allTypes) {
       btn.addEventListener("click", () => deleteLoadProfile(btn.dataset.code, btn.dataset.rate, btn.dataset.solar === "true"));
     });
     businessTypesBySectionEl.querySelectorAll(".company-chip-btn").forEach((btn) => {
-      btn.addEventListener("click", () => toggleSiteCurvePanel(btn.dataset.account));
+      btn.addEventListener("click", (e) => {
+        const delIcon = e.target.closest(".delete-import-log-icon");
+        if (delIcon) {
+          e.stopPropagation();
+          deleteImportLogEntry(delIcon.dataset.account, delIcon.dataset.importedAt);
+          return;
+        }
+        toggleSiteCurvePanel(btn.dataset.account);
+      });
     });
     businessTypesBySectionEl.querySelectorAll(".company-search-input").forEach((input) => {
       input.addEventListener("focus", () => {
@@ -512,6 +523,32 @@ async function deleteLoadProfile(code, rateCode, hasSolar) {
       return;
     }
     loadBusinessTypesTable();
+  } catch (err) {
+    alert("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ");
+    console.error(err);
+  }
+}
+
+// ลบ 1 แถวในประวัติการนำเข้า (import_log_local.csv) ทิ้ง — แค่ความสะอาดของประวัติที่แสดงใน
+// dropdown บริษัท/ไซต์ ไม่กระทบข้อมูลที่ใช้พยากรณ์จริงเลย (ดู deleteLoadProfile สำหรับลบตัวที่ใช้
+// พยากรณ์จริง)
+async function deleteImportLogEntry(accountNo, importedAt) {
+  if (!confirm("ลบรายการประวัตินี้ทิ้งหรือไม่? (แค่ลบประวัติที่แสดงตรงนี้ ไม่กระทบข้อมูลที่ใช้พยากรณ์จริงเลย)")) {
+    return;
+  }
+  try {
+    const res = await fetch("/api/admin/import-log-local", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ imported_at: importedAt, account_no: accountNo }),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      alert(data.message || "ลบไม่สำเร็จ");
+      return;
+    }
+    await loadImportLogLocal();
+    renderBusinessTypesSections(lastBusinessTypes);
   } catch (err) {
     alert("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ");
     console.error(err);

@@ -12,6 +12,7 @@ from amr_mapping.loader import (
     load_pending_amr_local,
     load_reference_data,
     load_site_curves_local,
+    remove_import_log_local_entry,
     remove_pending_amr_local,
     save_business_types,
     save_load_curves,
@@ -315,6 +316,61 @@ def test_load_import_log_local_drops_ragged_extra_columns(tmp_path):
     assert len(entries) == 1
     assert None not in entries[0]
     assert entries[0]["account_no"] == "019900000001"
+
+
+def test_remove_import_log_local_entry_removes_matching_row_only(tmp_path):
+    path = tmp_path / "import_log_local.csv"
+    append_import_log_local(
+        {
+            "imported_at": "2026-09-16T02:41:34+00:00",
+            "business_type_code": "34111",
+            "rate_code": "40",
+            "company_name": "บริษัท ทดสอบสาม จำกัด",
+            "account_no": "019900000001",
+            "has_solar": "false",
+        },
+        path,
+    )
+    append_import_log_local(
+        {
+            "imported_at": "2026-09-17T02:41:34+00:00",
+            "business_type_code": "63201",
+            "rate_code": "50",
+            "company_name": "บริษัท ทดสอบสี่ จำกัด",
+            "account_no": "019900000002",
+            "has_solar": "false",
+        },
+        path,
+    )
+
+    removed = remove_import_log_local_entry("2026-09-16T02:41:34+00:00", "019900000001", path)
+
+    assert removed is True
+    entries = load_import_log_local(path)
+    assert len(entries) == 1
+    assert entries[0]["account_no"] == "019900000002"
+
+
+def test_remove_import_log_local_entry_returns_false_when_not_found(tmp_path):
+    path = tmp_path / "import_log_local.csv"
+    append_import_log_local(
+        {
+            "imported_at": "2026-09-16T02:41:34+00:00",
+            "business_type_code": "34111",
+            "rate_code": "40",
+            "company_name": "บริษัท ทดสอบสาม จำกัด",
+            "account_no": "019900000001",
+            "has_solar": "false",
+        },
+        path,
+    )
+
+    assert remove_import_log_local_entry("not-a-real-timestamp", "019900000001", path) is False
+    assert len(load_import_log_local(path)) == 1
+
+
+def test_remove_import_log_local_entry_returns_false_when_file_missing(tmp_path):
+    assert remove_import_log_local_entry("2026-09-16T02:41:34+00:00", "019900000001", tmp_path / "no_such_file.csv") is False
 
 
 def test_load_site_curves_local_returns_empty_when_file_missing(tmp_path):

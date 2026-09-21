@@ -429,6 +429,26 @@ def load_import_log_local(path: Path) -> List[dict]:
         return [{k: v for k, v in row.items() if k is not None} for row in csv.DictReader(f)]
 
 
+def remove_import_log_local_entry(imported_at: str, account_no: str, path: Path) -> bool:
+    """ลบแถวประวัติการนำเข้า 1 แถวที่ imported_at+account_no ตรงกันทิ้ง — ใช้ตอนนำเข้าผิดบัญชี/
+    ผิดประเภทธุรกิจไปแล้ว อยากให้ประวัติสะอาดขึ้น ไม่กระทบ load_profiles.csv/load_curves.csv เลย
+    เพราะไฟล์นี้เป็นแค่ log ดูประวัติย้อนหลัง ไม่ใช่ตัวที่ใช้พยากรณ์จริง (ดู remove_load_profile/
+    remove_load_curve สำหรับลบตัวที่ใช้พยากรณ์จริง) คืน True ถ้าลบจริง (เจอแถวนั้น), False ถ้าไม่เจอ"""
+
+    if not path.exists():
+        return False
+    rows = load_import_log_local(path)
+    remaining = [r for r in rows if not (r.get("imported_at") == imported_at and r.get("account_no") == account_no)]
+    if len(remaining) == len(rows):
+        return False
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=_IMPORT_LOG_FIELDNAMES)
+        writer.writeheader()
+        for row in remaining:
+            writer.writerow({k: row.get(k, "") for k in _IMPORT_LOG_FIELDNAMES})
+    return True
+
+
 # ── เส้นโค้งรายชั่วโมงของ "แต่ละไซต์/บัญชี" แยกต่างหากจากค่าเฉลี่ยรวมใน load_curves.csv ──
 # ไฟล์นี้มีชื่อบริษัท/เลขบัญชีจริงอยู่ (หลักการเดียวกับ import_log_local.csv) จึงต้องอยู่ใน
 # .gitignore เท่านั้น ห้าม commit เด็ดขาด — ใช้ตอนกดดูกราฟของบริษัท/ไซต์ใดไซต์หนึ่งโดยเฉพาะใน

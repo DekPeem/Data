@@ -376,6 +376,43 @@ def test_import_log_local_returns_newest_first(client, monkeypatch, tmp_path):
     assert data[0]["company_name"] == "บริษัท บี จำกัด"  # ใหม่สุดขึ้นก่อน
 
 
+def test_delete_import_log_local_entry_removes_matching_row(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    (tmp_path / "import_log_local.csv").write_text(
+        "imported_at,business_type_code,rate_code,company_name,account_no\n"
+        "2026-01-01T00:00:00+00:00,34111,40,บริษัท เอ จำกัด,111\n"
+        "2026-02-01T00:00:00+00:00,34120,30,บริษัท บี จำกัด,222\n",
+        encoding="utf-8",
+    )
+
+    res = client.delete(
+        "/api/admin/import-log-local",
+        json={"imported_at": "2026-01-01T00:00:00+00:00", "account_no": "111"},
+    )
+    assert res.status_code == 200
+    assert res.get_json() == {"ok": True}
+
+    remaining = client.get("/api/import-log-local").get_json()
+    assert len(remaining) == 1
+    assert remaining[0]["account_no"] == "222"
+
+
+def test_delete_import_log_local_entry_returns_404_when_not_found(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    res = client.delete(
+        "/api/admin/import-log-local",
+        json={"imported_at": "2026-01-01T00:00:00+00:00", "account_no": "999"},
+    )
+    assert res.status_code == 404
+    assert res.get_json()["error"] == "not_found"
+
+
+def test_delete_import_log_local_entry_requires_both_fields(client):
+    res = client.delete("/api/admin/import-log-local", json={"imported_at": "2026-01-01T00:00:00+00:00"})
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+
 def test_get_site_curve_not_found_returns_no_curve_not_error(client, monkeypatch, tmp_path):
     monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
     # ไม่มีไฟล์ site_curves_local.csv เลย (เช่น ยังไม่เคยนำเข้าแบบ auto มาก่อน)

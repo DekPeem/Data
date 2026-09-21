@@ -47,6 +47,7 @@ from amr_mapping.loader import (
     load_import_log_local,
     load_pending_amr_local,
     load_site_curves_local,
+    remove_import_log_local_entry,
     remove_load_curve,
     remove_load_profile,
     remove_pending_amr_local,
@@ -260,6 +261,25 @@ def api_list_import_log_local():
 
     entries = load_import_log_local(DEFAULT_DATA_DIR / "import_log_local.csv")
     return jsonify(list(reversed(entries)))  # ใหม่ล่าสุดขึ้นก่อน
+
+
+@app.route("/api/admin/import-log-local", methods=["DELETE"])
+def api_delete_import_log_local_entry():
+    """ลบ 1 แถวในประวัติการนำเข้า (import_log_local.csv) ทิ้ง — ใช้ล้างประวัติที่นำเข้าผิดบัญชี/
+    ผิดประเภทธุรกิจไปแล้ว ไฟล์นี้เป็นแค่ log สำหรับดูย้อนหลังเท่านั้น ไม่กระทบ load_profiles.csv/
+    load_curves.csv ที่ใช้พยากรณ์จริงเลย (ถ้าต้องการลบตัวที่ใช้พยากรณ์จริงด้วย ใช้
+    /api/admin/load-profile/<code>/<rate_code> แยกต่างหาก)"""
+
+    body = request.get_json(silent=True) or {}
+    imported_at = (body.get("imported_at") or "").strip()
+    account_no = (body.get("account_no") or "").strip()
+    if not imported_at or not account_no:
+        return jsonify({"error": "invalid_request", "message": "ต้องระบุ imported_at และ account_no"}), 400
+
+    removed = remove_import_log_local_entry(imported_at, account_no, DEFAULT_DATA_DIR / "import_log_local.csv")
+    if not removed:
+        return jsonify({"error": "not_found", "message": "ไม่พบรายการนี้ในประวัติ"}), 404
+    return jsonify({"ok": True})
 
 
 @app.route("/api/admin/site-curve/<account_no>")
