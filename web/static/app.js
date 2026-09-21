@@ -624,6 +624,7 @@ function renderResult(data, identity) {
         <div class="customer-badges">
           ${businessBadge}
           <span class="badge" style="background:rgba(15,23,42,0.05);color:#55647a;">ไม่มี AMR ของตัวเอง</span>
+          <button type="button" id="export-csv-btn" class="day-type-btn" style="white-space:nowrap;">📥 ดาวน์โหลด Excel</button>
         </div>
       </div>
       <div class="divider"></div>
@@ -684,6 +685,58 @@ function renderResult(data, identity) {
 
   initDailyCurveSection(document.getElementById("daily-curve-root"), data.curve);
   renderMatchedCompanies(p.business_type_code, p.rate_code);
+
+  document.getElementById("export-csv-btn").addEventListener("click", () => exportResultToCsv(data, identity));
+}
+
+// สร้างค่าฟิลด์ CSV ให้ปลอดภัย — ครอบด้วย " เสมอ แล้ว escape " ที่อยู่ในค่าเอง (กันข้อมูลที่มี
+// comma/quote/ขึ้นบรรทัดใหม่ปนอยู่ เช่น ชื่อบริษัทที่พิมพ์เอง ทำให้ไฟล์ CSV เพี้ยน)
+function csvField(value) {
+  return `"${String(value ?? "").replace(/"/g, '""')}"`;
+}
+
+// ส่งออกผลพยากรณ์เป็นไฟล์ CSV (เปิดด้วย Excel ได้เลย) — ทำฝั่ง browser ล้วนๆ ไม่ส่งอะไรไป server
+// เพิ่มเติมเลย แม้แต่ตอนอยู่ในโหมด "พยากรณ์แบบไม่บันทึกข้อมูล" ก็ตาม (ชื่อบริษัทที่พิมพ์ไม่เคยถูก
+// ส่งไป server อยู่แล้ว — ดู comment หัวไฟล์ — การสร้าง CSV ในเครื่อง browser เองจึงไม่ทำให้หลักการ
+// นี้เสียไป ต่างจากถ้าให้ server เป็นคนสร้างไฟล์แทนซึ่งต้องส่งชื่อไปก่อน)
+function exportResultToCsv(data, identity) {
+  const m = data.match;
+  const p = data.matched_profile;
+  const f = data.forecast;
+  const solarText = p.has_solar ? "ติดตั้งแล้ว" : "ยังไม่ติดตั้ง";
+
+  const rows = [
+    ["รายการ", "ค่า"],
+    ["ชื่อ/รายการ", identity.name],
+    ["รายละเอียด", identity.subLabel],
+    ["ประเภทธุรกิจที่จับคู่", `${p.business_type_name || p.business_type_code || "-"}`],
+    ["รหัสอัตราที่จับคู่", p.rate_code],
+    ["สถานะ Solar ของโปรไฟล์ที่ใช้อ้างอิง", solarText],
+    ["ระดับการจับคู่", m.level_label_th],
+    ["ตัวคูณปรับสเกลตาม KVA", m.scale_factor.toFixed(2)],
+    ["จำนวนตัวอย่างในโปรไฟล์", p.sample_size ?? "-"],
+    [],
+    ["ช่วงเวลา", "กำลังไฟฟ้าสูงสุด (kW)", "พลังงานไฟฟ้า (kWh/เดือน)"],
+    ["Peak (P)", f.demand_kw.P, f.energy_kwh.P],
+    ["Off-Peak (OP)", f.demand_kw.OP, f.energy_kwh.OP],
+    ["Holiday (H)", f.demand_kw.H, f.energy_kwh.H],
+    [],
+    ["คำเตือน", m.warnings.length ? m.warnings.join(" | ") : "-"],
+    ["วันที่สร้างรายงาน", new Date().toLocaleString("th-TH")],
+  ];
+
+  // ﻿ (UTF-8 BOM) ให้ Excel อ่านภาษาไทยถูกต้อง ไม่งั้นเปิดมาจะเป็นอักษรมั่ว
+  const csvText = "﻿" + rows.map((row) => row.map(csvField).join(",")).join("\r\n");
+  const blob = new Blob([csvText], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const safeName = (identity.name || "ผลพยากรณ์").replace(/[\\/:*?"<>|]/g, "_");
+  a.href = url;
+  a.download = `พยากรณ์ไฟฟ้า_${safeName}_${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 // แสดงว่าโปรไฟล์ที่ใช้พยากรณ์ (business_type_code+rate_code นี้) มาจากการนำเข้า AMR จริงของ
