@@ -757,6 +757,7 @@ function setStatusPill(status) {
     running: { text: "⏳ กำลังทำงาน...", bg: "#eef3fa", color: "#184f95" },
     success: { text: "✅ สำเร็จ", bg: "#e8f7ec", color: "#006300" },
     error: { text: "❌ ไม่สำเร็จ", bg: "#fdecea", color: "#a01818" },
+    pending_rate: { text: "📋 บันทึกไว้รอทราบอัตรา", bg: "#fff8e6", color: "#8a6100" },
   };
   const s = map[status] || map.running;
   jobStatusPill.textContent = s.text;
@@ -814,6 +815,13 @@ async function pollJob(jobId, activeBtn) {
     // ต้องโหลด import log ให้เสร็จก่อน (เติมตัวแปร importLogEntries) แล้วค่อยวาดการ์ดประเภทธุรกิจ
     // ไม่งั้นชื่อบริษัทในการ์ดจะยังว่างเพราะ fetch สองอันแข่งกัน (race condition)
     loadImportLogLocal().then(loadBusinessTypesTable);
+  } else if (data.status === "pending_rate") {
+    jobResult.innerHTML = `
+      <div class="search-hint" style="min-height:auto;">
+        ${data.error || "ไม่ทราบประเภทธุรกิจ/รหัสอัตราของบัญชีนี้"}<br>
+        📋 ระบบบันทึกไฟล์นี้ไว้ในรายการ <a href="/pending-amr" target="_blank" rel="noopener">"รอทราบอัตรา"</a> แล้ว
+        — ไม่ต้องอัปโหลดไฟล์ใหม่ กลับมากรอกประเภทธุรกิจ/รหัสอัตราทีหลังได้เมื่อทราบแล้ว
+      </div>`;
   } else if (data.status === "error") {
     jobResult.innerHTML = `<div class="search-hint" style="min-height:auto;">${data.error || "เกิดข้อผิดพลาด"}</div>`;
   }

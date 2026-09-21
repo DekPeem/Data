@@ -32,3 +32,8 @@ data/reference/site_curves_local.csv
 # ฐานข้อมูล SQLite ที่ดึงมาจาก DBD Open Data (dbd_opendata.py) — ไฟล์ใหญ่/เป็นข้อมูลที่ดึงมาเอง
 # ในเครื่อง (reproducible ได้ด้วยการรันดึงใหม่) ไม่ใช่ source data ของโปรเจกต์ ไม่ควร commit
 data/reference/dbd_juristic_local.db
+
+# รายการ AMR ที่นำเข้าไม่สำเร็จเพราะไม่ทราบประเภทธุรกิจ/รหัสอัตรา (มีชื่อบริษัท/เลขบัญชีจริง)
+# รอกรอกภายหลังในหน้า Admin ส่วน "รอทราบอัตรา" — หลักการเดียวกับ import_log_local.csv
+# ห้าม commit เด็ดขาด
+data/reference/pending_amr_local.csv

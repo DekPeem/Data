@@ -17,7 +17,7 @@ import sys
 import threading
 import uuid
 import zipfile
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 
@@ -43,8 +43,11 @@ from amr_mapping.dbd_opendata import search_juristic_person
 from amr_mapping.keyword_classify import guess_tsic_division
 from amr_mapping.loader import (
     DEFAULT_DATA_DIR,
+    append_pending_amr_local,
     load_import_log_local,
+    load_pending_amr_local,
     load_site_curves_local,
+    remove_pending_amr_local,
     save_business_types,
     upsert_business_type,
 )
@@ -53,6 +56,15 @@ from amr_mapping.models import Customer
 from amr_mapping.wikipedia_lookup import search_wikipedia_company
 
 app = Flask(__name__, static_folder="static", static_url_path="")
+
+# ไฟล์เก็บรายการ AMR ที่นำเข้าไม่สำเร็จเพราะไม่ทราบประเภทธุรกิจ/รหัสอัตรา — local-only เหมือน
+# import_log_local.csv (ดู .gitignore/loader.py)
+PENDING_AMR_LOCAL_PATH = DEFAULT_DATA_DIR / "pending_amr_local.csv"
+
+# ข้อความ error ส่วนที่คงที่จาก import_amr_from_files ตอนไม่รู้ประเภทธุรกิจ/รหัสอัตราของบัญชี —
+# ใช้แยกแยะว่า error นี้ "รอกรอกภายหลังได้" (ควรบันทึกเป็นรายการ pending) กับ error อื่นๆ ที่ควร
+# แจ้งผู้ใช้ตรงๆ (เช่นไฟล์เสียหาย อ่านไม่ได้) ซึ่งบันทึกเป็น pending ไปก็ resolve ไม่ได้อยู่ดี
+_UNKNOWN_BUSINESS_TYPE_OR_RATE_ERROR = "ไม่ทราบประเภทธุรกิจ/รหัสอัตราของบัญชีนี้"
 
 
 def get_reference():
@@ -843,6 +855,11 @@ def methodology_page():
     return app.send_static_file("methodology.html")
 
 
+@app.route("/pending-amr")
+def pending_amr_page():
+    return app.send_static_file("pending_amr.html")
+
+
 def _run_import_job(job_id: str, username: str, password: str, params: dict) -> None:
     def log(msg: str) -> None:
         with _JOBS_LOCK:
@@ -1049,6 +1066,39 @@ def _run_import_file_job(job_id: str, file_paths: List[str], params: dict) -> No
             }
     except Exception as e:  # noqa: BLE001 — ต้อง catch ทุก error เพื่อรายงานสถานะ job ให้ถูกต้อง
         with _JOBS_LOCK:
+            customer_profile = dict(_JOBS[job_id].get("customer_profile") or {})
+        account_no = (customer_profile.get("account_no") or "").strip()
+
+        # ถ้าอ่านเลขบัญชีจากไฟล์ได้ แต่ยังไม่รู้ประเภทธุรกิจ/รหัสอัตรา — บันทึกไว้เป็นรายการ
+        # "รอทราบอัตรา" แทนที่จะทิ้ง error เฉยๆ ไฟล์ AMR ที่แนบไว้ (upload_dir) ยังอยู่ครบ ทำให้
+        # กลับมากรอกประเภทธุรกิจ/รหัสอัตราแล้วนำเข้าใหม่ได้เลยโดยไม่ต้องอัปโหลดไฟล์ซ้ำ (ดูหน้า
+        # "รอทราบอัตรา" /pending-amr)
+        if account_no and _UNKNOWN_BUSINESS_TYPE_OR_RATE_ERROR in str(e):
+            pending_id = uuid.uuid4().hex
+            try:
+                append_pending_amr_local(
+                    {
+                        "pending_id": pending_id,
+                        "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        "account_no": account_no,
+                        "company_name": customer_profile.get("name") or "",
+                        "meter_no": customer_profile.get("meter_no") or "",
+                        "file_paths": "|".join(file_paths),
+                        "contract_kva": "" if params.get("contract_kva") is None else params["contract_kva"],
+                        "has_solar": "true" if params.get("has_solar") else "false",
+                        "source_label": params.get("source_label", ""),
+                    },
+                    PENDING_AMR_LOCAL_PATH,
+                )
+                with _JOBS_LOCK:
+                    _JOBS[job_id]["status"] = "pending_rate"
+                    _JOBS[job_id]["pending_id"] = pending_id
+                    _JOBS[job_id]["error"] = str(e)
+                return
+            except OSError as save_err:
+                log(f"⚠️ บันทึกรายการรอทราบอัตราไม่สำเร็จ: {save_err}")
+
+        with _JOBS_LOCK:
             _JOBS[job_id]["status"] = "error"
             _JOBS[job_id]["error"] = str(e)
 
@@ -1196,6 +1246,104 @@ def api_get_import_status(job_id: str):
             return jsonify({"error": "not_found", "message": "ไม่พบ job นี้"}), 404
         # คืนค่า copy ตื้นๆ พอ (ไม่มี username/password อยู่ใน job dict อยู่แล้ว)
         return jsonify(dict(job))
+
+
+@app.route("/api/admin/pending-amr")
+def api_list_pending_amr():
+    """รายการ AMR ที่นำเข้าไม่สำเร็จเพราะไม่ทราบประเภทธุรกิจ/รหัสอัตรา (รอกรอกภายหลัง) — ไล่จาก
+    รายการล่าสุดไปเก่าสุด"""
+
+    entries = load_pending_amr_local(PENDING_AMR_LOCAL_PATH)
+    entries.sort(key=lambda e: e.get("created_at", ""), reverse=True)
+    return jsonify({"entries": entries})
+
+
+@app.route("/api/admin/pending-amr/<pending_id>", methods=["DELETE"])
+def api_delete_pending_amr(pending_id: str):
+    """ลบรายการรอทราบอัตราทิ้ง (ไม่ต้องการนำเข้าบัญชีนี้แล้ว) — ไฟล์ AMR ที่แนบไว้ตอนนั้นไม่ถูกลบ
+    ตามไปด้วย ปล่อยทิ้งไว้ที่ amr_downloads/uploaded/ เฉยๆ"""
+
+    removed = remove_pending_amr_local(pending_id, PENDING_AMR_LOCAL_PATH)
+    if not removed:
+        return jsonify({"error": "not_found", "message": "ไม่พบรายการนี้ (อาจถูกลบ/resolve ไปแล้ว)"}), 404
+    return jsonify({"ok": True})
+
+
+@app.route("/api/admin/pending-amr/<pending_id>/resolve", methods=["POST"])
+def api_resolve_pending_amr(pending_id: str):
+    """กรอกประเภทธุรกิจ/รหัสอัตราที่เพิ่งทราบ แล้วนำเข้าไฟล์ AMR ที่เก็บไว้ตอนแรกจริงๆ ทันที (ไม่ต้อง
+    อัปโหลดไฟล์ใหม่) — ทำงานแบบ synchronous เพราะไฟล์ถูกเก็บไว้ในเครื่องอยู่แล้ว ไม่ต้องดาวน์โหลด
+    ใหม่ จึงเร็วพอที่จะไม่ต้องใช้ job แบบ background เหมือนโหมดอื่น ถ้าสำเร็จจะลบรายการนี้ออกจาก
+    รายการรอทราบอัตรา"""
+
+    entries = load_pending_amr_local(PENDING_AMR_LOCAL_PATH)
+    entry = next((e for e in entries if e.get("pending_id") == pending_id), None)
+    if entry is None:
+        return jsonify({"error": "not_found", "message": "ไม่พบรายการนี้ (อาจถูกลบ/resolve ไปแล้ว)"}), 404
+
+    body = request.get_json(silent=True) or {}
+    business_type_code = (body.get("business_type_code") or "").strip()
+    rate_code = (body.get("rate_code") or "").strip()
+    if not business_type_code or not rate_code:
+        return jsonify({"error": "invalid_request", "message": "กรุณาเลือกประเภทธุรกิจและกรอกรหัสอัตราให้ครบ"}), 400
+
+    contract_kva_raw = body.get("contract_kva")
+    contract_kva: Optional[float] = None
+    if contract_kva_raw not in (None, ""):
+        try:
+            contract_kva = float(contract_kva_raw)
+        except (TypeError, ValueError):
+            return jsonify({"error": "invalid_request", "message": "KVA ตามสัญญาต้องเป็นตัวเลข"}), 400
+    elif entry.get("contract_kva"):
+        try:
+            contract_kva = float(entry["contract_kva"])
+        except ValueError:
+            contract_kva = None
+
+    has_solar_raw = body.get("has_solar")
+    has_solar = bool(has_solar_raw) if has_solar_raw is not None else (entry.get("has_solar") == "true")
+
+    file_paths = [p for p in (entry.get("file_paths") or "").split("|") if p]
+    missing = [p for p in file_paths if not Path(p).exists()]
+    if not file_paths or missing:
+        return jsonify(
+            {
+                "error": "invalid_request",
+                "message": "ไม่พบไฟล์ AMR ที่เก็บไว้ตอนนำเข้าครั้งแรกแล้ว (อาจถูกลบออกจากเครื่อง) กรุณาแนบไฟล์ใหม่แทนในโหมดนำเข้าปกติ",
+            }
+        ), 400
+
+    logs: List[str] = []
+    try:
+        profile = import_amr_from_files(
+            file_paths=file_paths,
+            business_type_code=business_type_code,
+            rate_code=rate_code,
+            contract_kva=contract_kva,
+            source_label=entry.get("source_label", ""),
+            has_solar=has_solar,
+            log=logs.append,
+        )
+    except Exception as e:  # noqa: BLE001 — รายงาน error กลับไปให้ผู้ใช้แก้ไขแล้วลองใหม่ได้
+        return jsonify({"error": "import_failed", "message": str(e), "logs": logs}), 400
+
+    remove_pending_amr_local(pending_id, PENDING_AMR_LOCAL_PATH)
+
+    return jsonify(
+        {
+            "result": {
+                "business_type_code": profile.business_type_code,
+                "rate_code": profile.rate_code,
+                "demand_kw": profile.demand_kw,
+                "energy_kwh": profile.energy_kwh,
+                "sample_size": profile.sample_size,
+                "contract_kva_ref": profile.contract_kva_ref,
+                "notes": profile.notes,
+                "has_solar": profile.has_solar,
+            },
+            "logs": logs,
+        }
+    )
 
 
 if __name__ == "__main__":

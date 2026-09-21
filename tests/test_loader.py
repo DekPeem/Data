@@ -6,10 +6,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from amr_mapping.loader import (
     _IMPORT_LOG_FIELDNAMES,
     append_import_log_local,
+    append_pending_amr_local,
     append_site_curve_local,
     load_import_log_local,
+    load_pending_amr_local,
     load_reference_data,
     load_site_curves_local,
+    remove_pending_amr_local,
     save_business_types,
     save_load_curves,
     save_load_profiles,
@@ -372,3 +375,97 @@ def test_load_site_curves_local_keeps_separate_accounts_distinct(tmp_path):
     assert len(entries) == 2
     assert entries["SITE-A"]["hours"]["all"][0] == 1.0
     assert entries["SITE-B"]["hours"]["all"][0] == 2.0
+
+
+def test_load_pending_amr_local_returns_empty_when_file_missing(tmp_path):
+    assert load_pending_amr_local(tmp_path / "no_such_file.csv") == []
+
+
+def test_append_pending_amr_local_creates_file_with_header_then_appends(tmp_path):
+    path = tmp_path / "pending_amr_local.csv"
+    append_pending_amr_local(
+        {
+            "pending_id": "abc123",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "account_no": "019900000001",
+            "company_name": "บริษัท ทดสอบ จำกัด",
+            "meter_no": "MT-1",
+            "file_paths": "/tmp/a.xls|/tmp/b.xls",
+            "contract_kva": "1000",
+            "has_solar": "false",
+            "source_label": "",
+        },
+        path,
+    )
+    append_pending_amr_local(
+        {
+            "pending_id": "def456",
+            "created_at": "2026-01-02T00:00:00+00:00",
+            "account_no": "019900000002",
+            "company_name": "บริษัท สอง จำกัด",
+            "meter_no": "",
+            "file_paths": "/tmp/c.xls",
+            "contract_kva": "",
+            "has_solar": "true",
+            "source_label": "",
+        },
+        path,
+    )
+
+    entries = load_pending_amr_local(path)
+    assert len(entries) == 2
+    assert entries[0]["pending_id"] == "abc123"
+    assert entries[0]["file_paths"] == "/tmp/a.xls|/tmp/b.xls"
+    assert entries[1]["pending_id"] == "def456"
+    assert entries[1]["has_solar"] == "true"
+
+
+def test_remove_pending_amr_local_removes_matching_row_only(tmp_path):
+    path = tmp_path / "pending_amr_local.csv"
+    for pending_id in ("abc123", "def456"):
+        append_pending_amr_local(
+            {
+                "pending_id": pending_id,
+                "created_at": "2026-01-01T00:00:00+00:00",
+                "account_no": pending_id,
+                "company_name": "",
+                "meter_no": "",
+                "file_paths": "/tmp/x.xls",
+                "contract_kva": "",
+                "has_solar": "false",
+                "source_label": "",
+            },
+            path,
+        )
+
+    removed = remove_pending_amr_local("abc123", path)
+
+    assert removed is True
+    entries = load_pending_amr_local(path)
+    assert len(entries) == 1
+    assert entries[0]["pending_id"] == "def456"
+
+
+def test_remove_pending_amr_local_returns_false_when_id_not_found(tmp_path):
+    path = tmp_path / "pending_amr_local.csv"
+    append_pending_amr_local(
+        {
+            "pending_id": "abc123",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "account_no": "abc123",
+            "company_name": "",
+            "meter_no": "",
+            "file_paths": "/tmp/x.xls",
+            "contract_kva": "",
+            "has_solar": "false",
+            "source_label": "",
+        },
+        path,
+    )
+
+    assert remove_pending_amr_local("not-found", path) is False
+    assert len(load_pending_amr_local(path)) == 1
+
+
+def test_remove_pending_amr_local_returns_false_when_file_missing(tmp_path):
+    assert remove_pending_amr_local("abc123", tmp_path / "no_such_file.csv") is False

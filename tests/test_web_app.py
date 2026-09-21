@@ -1446,3 +1446,300 @@ def test_start_import_manual_mode_when_only_business_type_given(client, monkeypa
     assert res.status_code == 400
     assert res.get_json()["error"] == "invalid_request"
     assert "rate_code" in res.get_json()["message"]
+
+
+def test_pending_amr_page_serves_html(client):
+    res = client.get("/pending-amr")
+    assert res.status_code == 200
+    assert b"<html" in res.data
+
+
+def test_start_import_file_saves_pending_entry_when_business_type_and_rate_unknown(client, monkeypatch, tmp_path):
+    """โหมดแนบไฟล์: อ่านเลขบัญชีจากไฟล์ได้ แต่หาประเภทธุรกิจ/รหัสอัตราไม่เจอในทะเบียนลูกค้า — แทนที่
+    จะทิ้ง error เฉยๆ ต้องบันทึกไว้เป็นรายการ "รอทราบอัตรา" (pending_amr_local.csv) เพื่อกรอกย้อนหลัง
+    ได้ทีหลังโดยไม่ต้องอัปโหลดไฟล์ใหม่"""
+    import io
+
+    monkeypatch.setattr(app_module, "DEFAULT_DOWNLOAD_DIR", tmp_path / "amr_downloads")
+    pending_path = tmp_path / "pending_amr_local.csv"
+    monkeypatch.setattr(app_module, "PENDING_AMR_LOCAL_PATH", pending_path)
+
+    def fake_import_amr_from_files(**kwargs):
+        kwargs["on_profile"]({"name": "บริษัท ทดสอบ จำกัด", "account_no": "019900000099", "meter_no": "MT-9"})
+        raise RuntimeError(
+            "ไม่ทราบประเภทธุรกิจ/รหัสอัตราของบัญชีนี้ (พบบัญชี 019900000099 ในไฟล์ "
+            "แต่ไม่พบในทะเบียนลูกค้า) — กรุณากรอกประเภทธุรกิจและรหัสอัตราเอง"
+        )
+
+    monkeypatch.setattr(app_module, "import_amr_from_files", fake_import_amr_from_files)
+
+    res = client.post(
+        "/api/admin/import-file",
+        data={"files": (io.BytesIO(b"<html>fake</html>"), "amr.xls")},
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 200
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/import/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "pending_rate"
+    assert status["pending_id"]
+
+    from amr_mapping.loader import load_pending_amr_local
+
+    entries = load_pending_amr_local(pending_path)
+    assert len(entries) == 1
+    assert entries[0]["pending_id"] == status["pending_id"]
+    assert entries[0]["account_no"] == "019900000099"
+    assert entries[0]["company_name"] == "บริษัท ทดสอบ จำกัด"
+    assert entries[0]["meter_no"] == "MT-9"
+    assert len(entries[0]["file_paths"].split("|")) == 1
+
+
+def test_start_import_file_does_not_save_pending_entry_for_unrelated_errors(client, monkeypatch, tmp_path):
+    """error อื่นๆ ที่ไม่ใช่ "ไม่ทราบประเภทธุรกิจ/รหัสอัตรา" (เช่นไฟล์เสียหาย) ต้องรายงาน error ตรงๆ
+    เหมือนเดิม ไม่ใช่ไปบันทึกเป็นรายการรอทราบอัตรา (resolve ไปก็ไม่มีประโยชน์อะไร)"""
+    import io
+
+    monkeypatch.setattr(app_module, "DEFAULT_DOWNLOAD_DIR", tmp_path / "amr_downloads")
+    pending_path = tmp_path / "pending_amr_local.csv"
+    monkeypatch.setattr(app_module, "PENDING_AMR_LOCAL_PATH", pending_path)
+
+    def fake_import_amr_from_files(**kwargs):
+        kwargs["on_profile"]({"name": "", "account_no": "019900000099", "meter_no": ""})
+        raise RuntimeError("ไม่สามารถอ่านข้อมูลจากไฟล์ที่แนบมาได้เลย")
+
+    monkeypatch.setattr(app_module, "import_amr_from_files", fake_import_amr_from_files)
+
+    res = client.post(
+        "/api/admin/import-file",
+        data={"files": (io.BytesIO(b"not real data"), "bad.xls")},
+        content_type="multipart/form-data",
+    )
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/import/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "error"
+    assert not pending_path.exists()
+
+
+def test_start_import_file_no_pending_entry_when_account_no_unknown(client, monkeypatch, tmp_path):
+    """อ่านเลขบัญชีจากไฟล์ไม่ได้เลย (on_profile ไม่ถูกเรียก หรือ account_no ว่าง) — ไม่มีข้อมูลพอจะ
+    ให้ resolve ย้อนหลังได้ จึงต้องรายงาน error ตรงๆ ไม่บันทึกเป็นรายการรอทราบอัตรา"""
+    import io
+
+    monkeypatch.setattr(app_module, "DEFAULT_DOWNLOAD_DIR", tmp_path / "amr_downloads")
+    pending_path = tmp_path / "pending_amr_local.csv"
+    monkeypatch.setattr(app_module, "PENDING_AMR_LOCAL_PATH", pending_path)
+
+    def fake_import_amr_from_files(**kwargs):
+        raise RuntimeError("ไม่ทราบประเภทธุรกิจ/รหัสอัตราของบัญชีนี้ — กรุณากรอกประเภทธุรกิจและรหัสอัตราเอง")
+
+    monkeypatch.setattr(app_module, "import_amr_from_files", fake_import_amr_from_files)
+
+    res = client.post(
+        "/api/admin/import-file",
+        data={"files": (io.BytesIO(b"<html>fake</html>"), "amr.xls")},
+        content_type="multipart/form-data",
+    )
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/import/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "error"
+    assert not pending_path.exists()
+
+
+def test_list_pending_amr_returns_newest_first(client, monkeypatch, tmp_path):
+    from amr_mapping.loader import append_pending_amr_local
+
+    pending_path = tmp_path / "pending_amr_local.csv"
+    monkeypatch.setattr(app_module, "PENDING_AMR_LOCAL_PATH", pending_path)
+
+    append_pending_amr_local(
+        {
+            "pending_id": "old1",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "account_no": "OLD",
+            "company_name": "", "meter_no": "", "file_paths": "/tmp/a.xls",
+            "contract_kva": "", "has_solar": "false", "source_label": "",
+        },
+        pending_path,
+    )
+    append_pending_amr_local(
+        {
+            "pending_id": "new1",
+            "created_at": "2026-02-01T00:00:00+00:00",
+            "account_no": "NEW",
+            "company_name": "", "meter_no": "", "file_paths": "/tmp/b.xls",
+            "contract_kva": "", "has_solar": "false", "source_label": "",
+        },
+        pending_path,
+    )
+
+    res = client.get("/api/admin/pending-amr")
+    assert res.status_code == 200
+    entries = res.get_json()["entries"]
+    assert [e["pending_id"] for e in entries] == ["new1", "old1"]
+
+
+def test_list_pending_amr_empty_when_file_missing(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "PENDING_AMR_LOCAL_PATH", tmp_path / "no_such_file.csv")
+    res = client.get("/api/admin/pending-amr")
+    assert res.status_code == 200
+    assert res.get_json()["entries"] == []
+
+
+def test_delete_pending_amr_removes_entry(client, monkeypatch, tmp_path):
+    from amr_mapping.loader import append_pending_amr_local, load_pending_amr_local
+
+    pending_path = tmp_path / "pending_amr_local.csv"
+    monkeypatch.setattr(app_module, "PENDING_AMR_LOCAL_PATH", pending_path)
+    append_pending_amr_local(
+        {
+            "pending_id": "abc123",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "account_no": "019900000099",
+            "company_name": "", "meter_no": "", "file_paths": "/tmp/a.xls",
+            "contract_kva": "", "has_solar": "false", "source_label": "",
+        },
+        pending_path,
+    )
+
+    res = client.delete("/api/admin/pending-amr/abc123")
+    assert res.status_code == 200
+    assert load_pending_amr_local(pending_path) == []
+
+
+def test_delete_pending_amr_returns_404_when_not_found(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "PENDING_AMR_LOCAL_PATH", tmp_path / "pending_amr_local.csv")
+    res = client.delete("/api/admin/pending-amr/not-found")
+    assert res.status_code == 404
+    assert res.get_json()["error"] == "not_found"
+
+
+def test_resolve_pending_amr_success_reimports_and_removes_entry(client, monkeypatch, tmp_path):
+    from amr_mapping.loader import append_pending_amr_local, load_pending_amr_local
+
+    pending_path = tmp_path / "pending_amr_local.csv"
+    monkeypatch.setattr(app_module, "PENDING_AMR_LOCAL_PATH", pending_path)
+
+    saved_file = tmp_path / "amr_downloads" / "uploaded" / "job1" / "amr.xls"
+    saved_file.parent.mkdir(parents=True)
+    saved_file.write_text("<html>fake</html>", encoding="utf-8")
+
+    append_pending_amr_local(
+        {
+            "pending_id": "abc123",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "account_no": "019900000099",
+            "company_name": "บริษัท ทดสอบ จำกัด",
+            "meter_no": "MT-9",
+            "file_paths": str(saved_file),
+            "contract_kva": "1000",
+            "has_solar": "false",
+            "source_label": "",
+        },
+        pending_path,
+    )
+
+    received = {}
+
+    def fake_import_amr_from_files(**kwargs):
+        received.update(kwargs)
+        from amr_mapping.models import LoadProfile
+
+        return LoadProfile(
+            business_type_code=kwargs["business_type_code"], rate_code=kwargs["rate_code"],
+            billing_method="TOU", demand_kw={"P": 1, "OP": 1, "H": 1},
+            energy_kwh={"P": 1, "OP": 1, "H": 1}, contract_kva_ref=kwargs["contract_kva"],
+            sample_size=1, notes="fake", has_solar=kwargs["has_solar"],
+        )
+
+    monkeypatch.setattr(app_module, "import_amr_from_files", fake_import_amr_from_files)
+
+    res = client.post(
+        "/api/admin/pending-amr/abc123/resolve",
+        json={"business_type_code": "63201", "rate_code": "50", "has_solar": True},
+    )
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["result"]["business_type_code"] == "63201"
+    assert data["result"]["rate_code"] == "50"
+    assert data["result"]["has_solar"] is True
+
+    assert received["file_paths"] == [str(saved_file)]
+    assert received["business_type_code"] == "63201"
+    assert received["rate_code"] == "50"
+    assert received["contract_kva"] == 1000.0  # เก็บค่าเดิมจากตอนบันทึก pending ไว้ (ไม่ได้ระบุมาใหม่)
+
+    assert load_pending_amr_local(pending_path) == []
+
+
+def test_resolve_pending_amr_missing_business_type_or_rate_returns_400(client, monkeypatch, tmp_path):
+    from amr_mapping.loader import append_pending_amr_local
+
+    pending_path = tmp_path / "pending_amr_local.csv"
+    monkeypatch.setattr(app_module, "PENDING_AMR_LOCAL_PATH", pending_path)
+    append_pending_amr_local(
+        {
+            "pending_id": "abc123",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "account_no": "019900000099",
+            "company_name": "", "meter_no": "", "file_paths": "/tmp/a.xls",
+            "contract_kva": "", "has_solar": "false", "source_label": "",
+        },
+        pending_path,
+    )
+
+    res = client.post("/api/admin/pending-amr/abc123/resolve", json={"business_type_code": "63201", "rate_code": ""})
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+
+def test_resolve_pending_amr_returns_404_when_not_found(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "PENDING_AMR_LOCAL_PATH", tmp_path / "pending_amr_local.csv")
+    res = client.post("/api/admin/pending-amr/not-found/resolve", json={"business_type_code": "63201", "rate_code": "50"})
+    assert res.status_code == 404
+
+
+def test_resolve_pending_amr_returns_400_when_saved_files_are_gone(client, monkeypatch, tmp_path):
+    from amr_mapping.loader import append_pending_amr_local
+
+    pending_path = tmp_path / "pending_amr_local.csv"
+    monkeypatch.setattr(app_module, "PENDING_AMR_LOCAL_PATH", pending_path)
+    append_pending_amr_local(
+        {
+            "pending_id": "abc123",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "account_no": "019900000099",
+            "company_name": "", "meter_no": "",
+            "file_paths": str(tmp_path / "amr_downloads" / "uploaded" / "job1" / "gone.xls"),
+            "contract_kva": "", "has_solar": "false", "source_label": "",
+        },
+        pending_path,
+    )
+
+    res = client.post(
+        "/api/admin/pending-amr/abc123/resolve",
+        json={"business_type_code": "63201", "rate_code": "50"},
+    )
+    assert res.status_code == 400
+    assert "ไม่พบไฟล์" in res.get_json()["message"]

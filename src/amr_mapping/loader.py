@@ -486,3 +486,64 @@ def load_site_curves_local(path: Path) -> List[dict]:
             entry["hours"][row["day_type"].strip()] = [_to_float(row.get(f"h{h:02d}", "")) for h in range(24)]
 
     return list(grouped.values())
+
+
+# ── รายการ AMR ที่นำเข้าไม่สำเร็จเพราะไม่ทราบประเภทธุรกิจ/รหัสอัตรา (รอกรอกภายหลัง) ──
+# ไฟล์นี้มีชื่อบริษัท/เลขบัญชีจริงอยู่ (หลักการเดียวกับ import_log_local.csv) จึงต้องอยู่ใน
+# .gitignore เท่านั้น ห้าม commit เด็ดขาด — ใช้ในหน้า Admin ส่วน "รอทราบอัตรา" เพื่อดูว่าเลขบัญชี
+# ไหนยังไม่มีประเภทธุรกิจ/อัตราให้ไปถามเพิ่ม แล้วกลับมากรอกย้อนหลังได้ทีหลัง (ไฟล์ AMR ที่แนบไว้
+# ตอนนำเข้าไม่สำเร็จยังอยู่ใน amr_downloads/uploaded/ เสมอ ไม่ถูกลบทิ้ง เพื่อ resolve ภายหลังได้
+# โดยไม่ต้องอัปโหลดไฟล์ใหม่ — เก็บ path ของไฟล์เหล่านั้นไว้ในคอลัมน์ file_paths คั่นด้วย "|")
+
+_PENDING_AMR_FIELDNAMES = [
+    "pending_id",
+    "created_at",
+    "account_no",
+    "company_name",
+    "meter_no",
+    "file_paths",
+    "contract_kva",
+    "has_solar",
+    "source_label",
+]
+
+
+def append_pending_amr_local(entry: dict, path: Path) -> None:
+    """บันทึก 1 รายการ AMR ที่รอทราบประเภทธุรกิจ/รหัสอัตรา ต่อท้ายไฟล์ pending_amr_local.csv
+    (entry ต้องมี pending_id ที่ผู้เรียกสร้างเอง — ใช้อ้างอิงตอนแก้ไข/ลบภายหลัง)"""
+
+    file_exists = path.exists()
+    with path.open("a", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=_PENDING_AMR_FIELDNAMES)
+        if not file_exists:
+            writer.writeheader()
+        writer.writerow({k: entry.get(k, "") for k in _PENDING_AMR_FIELDNAMES})
+
+
+def load_pending_amr_local(path: Path) -> List[dict]:
+    """อ่านรายการ AMR ที่รอทราบประเภทธุรกิจ/รหัสอัตราทั้งหมด (ไฟล์นี้ไม่บังคับต้องมี — คืน list
+    ว่างถ้ายังไม่เคยมีการนำเข้าไม่สำเร็จแบบนี้เลย)"""
+
+    if not path.exists():
+        return []
+    with path.open(encoding="utf-8-sig", newline="") as f:
+        return [{k: v for k, v in row.items() if k is not None} for row in csv.DictReader(f)]
+
+
+def remove_pending_amr_local(pending_id: str, path: Path) -> bool:
+    """ลบรายการที่ pending_id ตรงกันออกจากไฟล์ (ใช้ตอน resolve สำเร็จแล้ว หรือผู้ใช้กดลบทิ้งเอง)
+    คืน True ถ้าลบจริง (เจอ id นั้น), False ถ้าไม่เจอ — เขียนไฟล์ใหม่ทั้งไฟล์โดยไม่มีแถวนั้น
+    (ไฟล์นี้เล็กมาก ไม่ต้องกังวลเรื่องประสิทธิภาพการ rewrite ทั้งไฟล์)"""
+
+    if not path.exists():
+        return False
+    rows = load_pending_amr_local(path)
+    remaining = [r for r in rows if r.get("pending_id") != pending_id]
+    if len(remaining) == len(rows):
+        return False
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=_PENDING_AMR_FIELDNAMES)
+        writer.writeheader()
+        for row in remaining:
+            writer.writerow({k: row.get(k, "") for k in _PENDING_AMR_FIELDNAMES})
+    return True

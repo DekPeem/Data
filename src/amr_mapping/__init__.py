@@ -31,6 +31,9 @@ from .loader import (
     load_import_log_local,
     append_site_curve_local,
     load_site_curves_local,
+    append_pending_amr_local,
+    load_pending_amr_local,
+    remove_pending_amr_local,
 )
 from .mapping import find_load_profile, find_load_curve, estimate_customer_load
 
@@ -56,6 +59,9 @@ __all__ = [
     "load_import_log_local",
     "append_site_curve_local",
     "load_site_curves_local",
+    "append_pending_amr_local",
+    "load_pending_amr_local",
+    "remove_pending_amr_local",
     "find_load_profile",
     "find_load_curve",
     "estimate_customer_load",

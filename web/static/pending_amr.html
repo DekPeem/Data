@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>รอทราบอัตรา — No AMR</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .form-field { display: flex; flex-direction: column; gap: 6px; }
+    .form-field label { font-size: 12.5px; font-weight: 600; color: #55647a; }
+    .form-field input, .form-field select {
+      height: 40px; border-radius: 10px; border: 1px solid rgba(15,23,42,0.14);
+      padding: 0 12px; font-size: 13.5px; font-family: inherit; background: #fff; color: #0f1b2d;
+    }
+    .warn-box {
+      background: #fff7e6; border: 1px solid rgba(250, 178, 25, 0.4); border-radius: 10px;
+      padding: 14px 18px; font-size: 13px; color: #7a5a00; line-height: 1.6;
+    }
+    .pending-list { display: flex; flex-direction: column; gap: 14px; }
+    .pending-card {
+      border: 1px solid rgba(15,23,42,0.08); border-radius: 12px; padding: 18px 20px;
+      display: flex; flex-direction: column; gap: 14px; background: #fff;
+    }
+    .pending-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+    .pending-name { font-size: 15.5px; font-weight: 700; color: #0f1b2d; }
+    .pending-sub { font-size: 12.5px; color: #8996ab; margin-top: 2px; }
+    .pending-form-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .pending-actions { display: flex; gap: 10px; justify-content: flex-end; flex-wrap: wrap; }
+    .btn-primary {
+      background: #2a78d6; color: #fff; border: none; border-radius: 10px; padding: 0 18px;
+      height: 40px; font-size: 13.5px; font-weight: 600; font-family: inherit; cursor: pointer;
+    }
+    .btn-primary:hover { background: #184f95; }
+    .btn-primary:disabled { opacity: 0.6; cursor: default; }
+    .btn-outline-danger {
+      background: #fff; color: #a01818; border: 1px solid rgba(160,24,24,0.35); border-radius: 10px;
+      padding: 0 16px; height: 40px; font-size: 13.5px; font-weight: 600; font-family: inherit; cursor: pointer;
+    }
+    .btn-outline-danger:hover { background: #fdecea; }
+    .pending-hint { font-size: 12.5px; color: #d03b3b; min-height: 16px; }
+    .pending-empty { padding: 40px 20px; text-align: center; color: #8996ab; font-size: 13.5px; }
+  </style>
+</head>
+<body>
+  <div class="root">
+
+    <header class="header">
+      <div class="header-brand">
+        <div class="logo-mark">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>
+        </div>
+        <div class="header-titles">
+          <div class="header-title">รายการรอทราบอัตรา</div>
+          <div class="header-subtitle">บัญชีที่นำเข้าไฟล์ AMR แล้ว แต่ยังไม่ทราบประเภทธุรกิจ/รหัสอัตรา — แก้ไขย้อนหลังได้เมื่อทราบแล้ว</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:16px;align-items:center;">
+        <a href="/admin" style="font-size:13px;color:#2a78d6;text-decoration:none;">← กลับหน้านำเข้า AMR</a>
+      </div>
+    </header>
+
+    <main class="body-wrap">
+
+      <div class="warn-box">
+        ⚠️ หน้านี้แสดง <b>เลขบัญชี/ชื่อผู้ใช้ไฟจริง</b> ที่อ่านได้จากไฟล์ AMR ที่เคยแนบไว้ — ใช้ดูใน
+        เครื่องนี้เท่านั้น (ไม่ถูกบันทึกเข้า repo) เพื่อให้รู้ว่าบัญชีไหนยังขาดข้อมูลประเภทธุรกิจ/
+        รหัสอัตรา จะได้ไปสอบถามเพิ่มแล้วกลับมากรอกทีหลังได้ โดยไม่ต้องอัปโหลดไฟล์ซ้ำ
+      </div>
+
+      <div id="pending-list" class="pending-list"></div>
+
+    </main>
+  </div>
+
+  <script src="pending_amr.js"></script>
+</body>
+</html>
