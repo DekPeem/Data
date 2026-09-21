@@ -219,6 +219,7 @@ def import_amr_from_files(
     data_dir: Optional[Path] = None,
     on_profile: Optional[Callable[[dict], None]] = None,
     log: ProgressCallback = _noop,
+    site_label: str = "",
 ) -> LoadProfile:
     """เหมือน import_amr_for_business ทุกอย่าง ยกเว้นไม่ต้อง login/ดาวน์โหลดจากเว็บ PEA เลย —
     ใช้ตอนมีไฟล์ "รายงานข้อมูลกิโลวัตต์ชั่วโมงแบบช่วงเวลา" (รูปแบบเดียวกับที่
@@ -238,6 +239,12 @@ def import_amr_from_files(
 
     ถ้าอ่านเจอเลขบัญชี/ชื่อบริษัทจากไฟล์ จะบันทึกประวัติ + กราฟแยกของไซต์นี้ไว้ในเครื่องเองด้วย
     (import_log_local.csv/site_curves_local.csv — ไฟล์ local-only เหมือนโหมดอัตโนมัติจากเว็บ)
+
+    site_label (ไม่บังคับ): ต่อท้ายชื่อบริษัทที่อ่านได้จากไฟล์เป็น "ชื่อบริษัท (site_label)" ก่อน
+    บันทึกลงไฟล์ local-only ด้านบน — ใช้แยกแยะกรณีบริษัทเดียวกันมีหลายมิเตอร์/หลายไซต์ (เช่น
+    คลังสินค้าคนละแห่ง) ที่ใช้ชื่อผู้ใช้ไฟตัวเดียวกันในไฟล์ export ทุกไฟล์ ไม่กระทบ notes/
+    source_label ที่ไปอยู่ใน load_profiles.csv/load_curves.csv (คนละคอลัมน์กัน — คอลัมน์นั้น
+    commit เข้า repo ได้ ห้ามมีข้อมูลระบุตัวตน)
     """
 
     data_dir = Path(data_dir) if data_dir else DEFAULT_DATA_DIR
@@ -251,6 +258,8 @@ def import_amr_from_files(
 
     account_no = (header_info.get("บัญชีผู้ใช้ไฟ") or "").strip()
     company_name = (header_info.get("ชื่อผู้ใช้ไฟ") or "").strip()
+    if site_label.strip() and company_name:
+        company_name = f"{company_name} ({site_label.strip()})"
     if account_no:
         log(f"📋 พบข้อมูลในไฟล์: บัญชี {account_no}" + (f" ({company_name})" if company_name else ""))
 

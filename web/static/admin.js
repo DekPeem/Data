@@ -391,18 +391,9 @@ function toggleBizTypeCard(code, btn) {
   }
 }
 
-const openSections = new Set();
-
-function toggleSectionPanel(key) {
-  const panel = document.getElementById(`section-panel-${key}`);
-  if (openSections.has(key)) {
-    openSections.delete(key);
-    panel.classList.remove("open");
-  } else {
-    openSections.add(key);
-    panel.classList.add("open");
-  }
-}
+// Section (TSIC) ที่เลือกดูอยู่ตอนนี้ในหน้า "หมวดหมู่ธุรกิจทั้งหมดในระบบ" — เลือกได้ทีละ 1 อันจาก
+// dropdown เดียว (เดิมเป็นลิสต์ปุ่มกางออก/หุบเข้าทีละอัน ยาวเกินไปเวลามีหลาย Section)
+let selectedSectionKey = null;
 
 // รายการประเภทธุรกิจล่าสุดที่ fetch มา (เก็บไว้ใช้กรองใหม่ตอนติ๊ก/ถอดติ๊ก checkbox โดยไม่ต้อง
 // ยิง request ไปเซิร์ฟเวอร์ซ้ำ)
@@ -439,27 +430,33 @@ function renderBusinessTypesSections(allTypes) {
       .sort();
     if (groups.UNVERIFIED) keys.push("UNVERIFIED");
 
-    businessTypesBySectionEl.innerHTML = keys
+    if (!keys.includes(selectedSectionKey)) selectedSectionKey = null;
+
+    const sectionOptionsHtml = keys
       .map((key) => {
         const g = groups[key];
         const label = key === "UNVERIFIED" ? "ยังไม่ตรวจสอบ TSIC" : `${g.section_code} · ${g.section_name_th}`;
-        const isOpen = openSections.has(key);
-        return `
-          <div class="section-block">
-            <button type="button" class="section-pill-btn" data-section="${key}">
-              <span>${label}</span>
-              <span class="section-count">${g.types.length} ประเภทธุรกิจ</span>
-            </button>
-            <div class="section-panel${isOpen ? " open" : ""}" id="section-panel-${key}">
-              ${renderSectionBody(g.types)}
-            </div>
-          </div>`;
+        return `<option value="${key}"${key === selectedSectionKey ? " selected" : ""}>${label} (${g.types.length} ประเภทธุรกิจ)</option>`;
       })
       .join("");
 
-    businessTypesBySectionEl.querySelectorAll(".section-pill-btn").forEach((btn) => {
-      btn.addEventListener("click", () => toggleSectionPanel(btn.dataset.section));
+    businessTypesBySectionEl.innerHTML = `
+      <div class="form-field" style="max-width:520px;">
+        <label for="section-picker">เลือก Section (TSIC) เพื่อดูประเภทธุรกิจในกลุ่มนั้น</label>
+        <select id="section-picker">
+          <option value="">-- เลือก Section --</option>
+          ${sectionOptionsHtml}
+        </select>
+      </div>
+      <div id="section-picker-body" style="margin-top:14px;">
+        ${selectedSectionKey ? renderSectionBody(groups[selectedSectionKey].types) : ""}
+      </div>`;
+
+    document.getElementById("section-picker").addEventListener("change", (e) => {
+      selectedSectionKey = e.target.value || null;
+      renderBusinessTypesSections(lastBusinessTypes);
     });
+
     businessTypesBySectionEl.querySelectorAll(".verify-toggle-btn").forEach((btn) => {
       btn.addEventListener("click", () => toggleVerifyPanel(btn.dataset.code));
     });
@@ -979,6 +976,7 @@ async function startFileImport() {
   const rate_code = document.getElementById("f-file-rate-code").value.trim();
   const contract_kva = document.getElementById("f-file-kva").value;
   const source_label = document.getElementById("f-file-source-label").value.trim();
+  const site_label = document.getElementById("f-file-site-label").value.trim();
   const has_solar = document.getElementById("f-file-has-solar").checked;
 
   if (!files || files.length === 0) {
@@ -994,6 +992,7 @@ async function startFileImport() {
   if (rate_code) formData.append("rate_code", rate_code);
   if (contract_kva) formData.append("contract_kva", contract_kva);
   formData.append("source_label", source_label);
+  formData.append("site_label", site_label);
   formData.append("has_solar", has_solar ? "true" : "false");
 
   submitFileBtn.disabled = true;

@@ -792,6 +792,49 @@ def test_start_import_file_success(client, monkeypatch, tmp_path):
     assert contents == {"<html>เดือนที่ 1</html>", "<html>เดือนที่ 2</html>"}
 
 
+def test_start_import_file_passes_site_label_through(client, monkeypatch, tmp_path):
+    """site_label (ไม่บังคับ — ใช้แยกกรณีบริษัทเดียวกันมีหลายมิเตอร์) ต้องถูกส่งต่อไปให้
+    import_amr_from_files ด้วย"""
+    import io
+
+    monkeypatch.setattr(app_module, "DEFAULT_DOWNLOAD_DIR", tmp_path / "amr_downloads")
+
+    received = {}
+
+    def fake_import_amr_from_files(**kwargs):
+        received["site_label"] = kwargs["site_label"]
+        from amr_mapping.models import LoadProfile
+
+        return LoadProfile(
+            business_type_code=kwargs["business_type_code"], rate_code=kwargs["rate_code"],
+            billing_method="TOU", demand_kw={"P": 1, "OP": 1, "H": 1},
+            energy_kwh={"P": 1, "OP": 1, "H": 1}, sample_size=1, notes="fake", has_solar=False,
+        )
+
+    monkeypatch.setattr(app_module, "import_amr_from_files", fake_import_amr_from_files)
+
+    res = client.post(
+        "/api/admin/import-file",
+        data={
+            "files": (io.BytesIO(b"<html>fake</html>"), "amr.xls"),
+            "business_type_code": "63201",
+            "rate_code": "50",
+            "site_label": "YMLC4",
+        },
+        content_type="multipart/form-data",
+    )
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/import/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    assert received["site_label"] == "YMLC4"
+
 
 def test_start_import_file_error_from_import_surfaces_in_job_status(client, monkeypatch, tmp_path):
     import io
@@ -1791,6 +1834,52 @@ def test_resolve_pending_amr_success_reimports_and_removes_entry(client, monkeyp
     assert received["contract_kva"] == 1000.0  # เก็บค่าเดิมจากตอนบันทึก pending ไว้ (ไม่ได้ระบุมาใหม่)
 
     assert load_pending_amr_local(pending_path) == []
+
+
+def test_resolve_pending_amr_passes_site_label_through(client, monkeypatch, tmp_path):
+    """site_label (ไม่บังคับ — ใช้แยกกรณีบริษัทเดียวกันมีหลายมิเตอร์) ต้องถูกส่งต่อไปให้
+    import_amr_from_files ด้วย"""
+    from amr_mapping.loader import append_pending_amr_local
+
+    pending_path = tmp_path / "pending_amr_local.csv"
+    monkeypatch.setattr(app_module, "PENDING_AMR_LOCAL_PATH", pending_path)
+
+    saved_file = tmp_path / "amr_downloads" / "uploaded" / "job1" / "amr.xls"
+    saved_file.parent.mkdir(parents=True)
+    saved_file.write_text("<html>fake</html>", encoding="utf-8")
+
+    append_pending_amr_local(
+        {
+            "pending_id": "abc123",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "account_no": "019900000099",
+            "company_name": "บริษัท ทดสอบ จำกัด",
+            "meter_no": "", "file_paths": str(saved_file),
+            "contract_kva": "", "has_solar": "false", "source_label": "",
+        },
+        pending_path,
+    )
+
+    received = {}
+
+    def fake_import_amr_from_files(**kwargs):
+        received.update(kwargs)
+        from amr_mapping.models import LoadProfile
+
+        return LoadProfile(
+            business_type_code=kwargs["business_type_code"], rate_code=kwargs["rate_code"],
+            billing_method="TOU", demand_kw={"P": 1, "OP": 1, "H": 1},
+            energy_kwh={"P": 1, "OP": 1, "H": 1}, sample_size=1, notes="fake", has_solar=kwargs["has_solar"],
+        )
+
+    monkeypatch.setattr(app_module, "import_amr_from_files", fake_import_amr_from_files)
+
+    res = client.post(
+        "/api/admin/pending-amr/abc123/resolve",
+        json={"business_type_code": "63201", "rate_code": "50", "site_label": "YMLC4"},
+    )
+    assert res.status_code == 200
+    assert received["site_label"] == "YMLC4"
 
 
 def test_resolve_pending_amr_with_rate_code_unknown_uses_sentinel(client, monkeypatch, tmp_path):

@@ -389,6 +389,42 @@ def test_import_amr_from_files_calls_on_profile_callback(data_dir, tmp_path):
     assert received["meter_no"] == "7654321"
 
 
+def test_import_amr_from_files_appends_site_label_to_company_name(data_dir, tmp_path):
+    """site_label (ไม่บังคับ) ใช้แยกกรณีบริษัทเดียวกันมีหลายมิเตอร์/หลายไซต์ที่ใช้ชื่อผู้ใช้ไฟ
+    เดียวกันในไฟล์ export ทุกไฟล์ — ต้องต่อท้ายชื่อบริษัทเป็น "ชื่อบริษัท (site_label)" ทั้งใน
+    on_profile callback และ import_log_local.csv"""
+    _write_registered_customer(data_dir, account_no="0199000000")
+    file_paths = _write_synthetic_files_with_header(
+        tmp_path / "attached", account_no="0199000000", company_name="บริษัท ทดสอบ จำกัด"
+    )
+
+    received = {}
+    amr_import.import_amr_from_files(
+        file_paths=file_paths, data_dir=data_dir, on_profile=received.update, site_label="YMLC4"
+    )
+
+    assert received["name"] == "บริษัท ทดสอบ จำกัด (YMLC4)"
+
+    from amr_mapping.loader import load_import_log_local
+
+    entries = load_import_log_local(data_dir / "import_log_local.csv")
+    assert entries[0]["company_name"] == "บริษัท ทดสอบ จำกัด (YMLC4)"
+
+
+def test_import_amr_from_files_ignores_site_label_when_company_name_unknown(data_dir, tmp_path):
+    """ไม่มีชื่อบริษัทให้ต่อท้ายเลย (อ่านจากไฟล์ไม่ได้) — site_label ต้องไม่ทำให้ได้ค่าประหลาดๆ
+    แบบ " (YMLC4)" ลอยๆ ไม่มีอะไรนำหน้า"""
+    _write_registered_customer(data_dir, account_no="0199000000")
+    file_paths = _write_synthetic_files_with_header(tmp_path / "attached", account_no="0199000000", company_name="")
+
+    received = {}
+    amr_import.import_amr_from_files(
+        file_paths=file_paths, data_dir=data_dir, on_profile=received.update, site_label="YMLC4"
+    )
+
+    assert received["name"] == ""
+
+
 def test_import_amr_from_files_uses_tariff_from_file_as_billing_method(data_dir, tmp_path):
     _write_registered_customer(data_dir, account_no="0199000000")
     file_paths = _write_synthetic_files_with_header(tmp_path / "attached", account_no="0199000000", tariff="NORMAL")

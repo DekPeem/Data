@@ -1098,6 +1098,7 @@ def _run_import_file_job(job_id: str, file_paths: List[str], params: dict) -> No
             has_solar=params.get("has_solar", False),
             on_profile=on_profile,
             log=log,
+            site_label=params.get("site_label", ""),
         )
         with _JOBS_LOCK:
             _JOBS[job_id]["status"] = "success"
@@ -1239,6 +1240,7 @@ def api_start_import_file():
     rate_code = (request.form.get("rate_code") or "").strip()
     contract_kva_raw = (request.form.get("contract_kva") or "").strip()
     source_label = (request.form.get("source_label") or "").strip()
+    site_label = (request.form.get("site_label") or "").strip()
     has_solar = (request.form.get("has_solar") or "").strip().lower() in ("1", "true", "yes", "on")
 
     if not files:
@@ -1276,6 +1278,7 @@ def api_start_import_file():
         "rate_code": rate_code,
         "contract_kva": contract_kva,
         "source_label": source_label,
+        "site_label": site_label,
         "has_solar": has_solar,
     }
 
@@ -1365,6 +1368,8 @@ def api_resolve_pending_amr(pending_id: str):
             }
         ), 400
 
+    site_label = (body.get("site_label") or "").strip()
+
     logs: List[str] = []
     try:
         profile = import_amr_from_files(
@@ -1375,6 +1380,7 @@ def api_resolve_pending_amr(pending_id: str):
             source_label=entry.get("source_label", ""),
             has_solar=has_solar,
             log=logs.append,
+            site_label=site_label,
         )
     except Exception as e:  # noqa: BLE001 — รายงาน error กลับไปให้ผู้ใช้แก้ไขแล้วลองใหม่ได้
         return jsonify({"error": "import_failed", "message": str(e), "logs": logs}), 400

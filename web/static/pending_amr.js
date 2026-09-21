@@ -72,6 +72,10 @@ function renderPendingCard(entry) {
           <input type="checkbox" class="p-has-solar" ${entry.has_solar === "true" ? "checked" : ""}> ติด Solar
         </label>
       </div>
+      <div class="form-field" style="grid-column: 1 / -1;">
+        <label>ป้ายกำกับไซต์ (ไม่บังคับ — ใช้แยกกรณีบริษัทเดียวกันมีหลายมิเตอร์ เช่น YMLC4)</label>
+        <input class="p-site-label" type="text" placeholder="เช่น YMLC4">
+      </div>
     </div>
     <div class="pending-hint"></div>
     <div class="pending-actions">
@@ -101,6 +105,7 @@ function renderPendingCard(entry) {
     const rate_code_unknown = rateUnknownCheckbox.checked;
     const kvaRaw = wrap.querySelector(".p-kva").value;
     const has_solar = wrap.querySelector(".p-has-solar").checked;
+    const site_label = wrap.querySelector(".p-site-label").value.trim();
 
     if (!business_type_code || (!rate_code && !rate_code_unknown)) {
       hintEl.textContent = 'กรุณาเลือกประเภทธุรกิจและกรอกรหัสอัตราให้ครบ (หรือติ๊ก "ไม่ทราบรหัสอัตรา")';
@@ -118,6 +123,7 @@ function renderPendingCard(entry) {
           rate_code_unknown,
           contract_kva: kvaRaw ? Number(kvaRaw) : null,
           has_solar,
+          site_label,
         }),
       });
       const data = await res.json();
