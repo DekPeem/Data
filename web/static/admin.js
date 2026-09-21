@@ -314,7 +314,11 @@ function renderBizCard(t) {
     ? t.profiles
         .map((p) => {
           const solarLabel = p.has_solar ? " · ☀️ ติด Solar" : "";
-          return `<button type="button" class="day-type-btn curve-toggle-btn" data-code="${t.code}" data-rate="${p.rate_code}" data-solar="${p.has_solar}">📈 ดูกราฟ · อัตรา ${p.rate_code}${solarLabel} (${p.sample_size} ตัวอย่าง)</button>`;
+          return `
+            <span style="display:inline-flex;align-items:center;gap:4px;">
+              <button type="button" class="day-type-btn curve-toggle-btn" data-code="${t.code}" data-rate="${p.rate_code}" data-solar="${p.has_solar}">📈 ดูกราฟ · อัตรา ${p.rate_code}${solarLabel} (${p.sample_size} ตัวอย่าง)</button>
+              <button type="button" class="delete-profile-btn" data-code="${t.code}" data-rate="${p.rate_code}" data-solar="${p.has_solar}" title="ลบโปรไฟล์นี้ทิ้ง (เช่นนำเข้าผิดบัญชี/ผิดประเภทธุรกิจไป)" style="border:1px solid rgba(160,24,24,0.35);background:#fff;color:#a01818;border-radius:8px;width:26px;height:26px;cursor:pointer;font-size:13px;line-height:1;">✕</button>
+            </span>`;
         })
         .join("")
     : `<span class="hint">ยังไม่มีโปรไฟล์อ้างอิง</span>`;
@@ -459,6 +463,9 @@ function renderBusinessTypesSections(allTypes) {
     businessTypesBySectionEl.querySelectorAll(".curve-toggle-btn").forEach((btn) => {
       btn.addEventListener("click", () => toggleCurvePanel(btn.dataset.code, btn.dataset.rate, btn.dataset.solar === "true"));
     });
+    businessTypesBySectionEl.querySelectorAll(".delete-profile-btn").forEach((btn) => {
+      btn.addEventListener("click", () => deleteLoadProfile(btn.dataset.code, btn.dataset.rate, btn.dataset.solar === "true"));
+    });
     businessTypesBySectionEl.querySelectorAll(".company-chip-btn").forEach((btn) => {
       btn.addEventListener("click", () => toggleSiteCurvePanel(btn.dataset.account));
     });
@@ -486,6 +493,30 @@ function renderBusinessTypesSections(allTypes) {
 }
 
 businessTypesRefreshBtn.addEventListener("click", loadBusinessTypesTable);
+
+// ลบโปรไฟล์+เส้นโค้งอ้างอิงของคู่ประเภทธุรกิจ+อัตราหนึ่งคู่ทิ้ง — ใช้ตอนนำเข้าผิดบัญชี/ผิดประเภท
+// ธุรกิจไปแล้ว (เช่นเลือกประเภทธุรกิจผิดตอน resolve รายการรอทราบอัตรา) ไฟล์ AMR ดิบเดิมไม่ได้ถูก
+// ลบไปด้วย ยังนำเข้าใหม่ให้ถูกต้องได้ทีหลัง
+async function deleteLoadProfile(code, rateCode, hasSolar) {
+  if (!confirm(`ลบโปรไฟล์ + เส้นโค้งของ "${code}" อัตรา "${rateCode}"${hasSolar ? " (ติด Solar)" : ""} ทิ้งจริงหรือไม่?\n\n(ข้อมูล AMR ดิบที่เคยนำเข้ายังอยู่ครบ นำเข้าใหม่ให้ถูกต้องได้ทีหลัง)`)) {
+    return;
+  }
+  try {
+    const res = await fetch(
+      `/api/admin/load-profile/${encodeURIComponent(code)}/${encodeURIComponent(rateCode)}?has_solar=${hasSolar}`,
+      { method: "DELETE" }
+    );
+    if (!res.ok) {
+      const data = await res.json();
+      alert(data.message || "ลบไม่สำเร็จ");
+      return;
+    }
+    loadBusinessTypesTable();
+  } catch (err) {
+    alert("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ");
+    console.error(err);
+  }
+}
 
 // ── กราฟการใช้ไฟจาก AMR จริงของแต่ละคู่ประเภทธุรกิจ+อัตรา (ข้อมูลดิบ ไม่สเกล — ยังไม่ใช่การ
 //    พยากรณ์ แค่ดูว่าประเภทธุรกิจนี้มีรูปแบบการใช้ไฟแบบไหน) ──

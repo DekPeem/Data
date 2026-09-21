@@ -225,6 +225,16 @@ def upsert_load_curve(curves: List[LoadCurve], new_curve: LoadCurve) -> List[Loa
     return result
 
 
+def remove_load_curve(curves: List[LoadCurve], business_type_code: str, rate_code: str, has_solar: bool) -> tuple:
+    """ลบเส้นโค้งที่มี key (business_type_code, rate_code, has_solar) ตรงกันทิ้ง — ใช้ตอนนำเข้า
+    ผิดบัญชี/ผิดประเภทธุรกิจไปแล้ว (คืน list ใหม่ ไม่แก้ของเดิม) คืน (list ใหม่, True) ถ้าลบจริง
+    (เจอ key นั้น), (list เดิม, False) ถ้าไม่เจอเลย"""
+
+    target = (business_type_code, rate_code, has_solar)
+    result = [c for c in curves if c.key() != target]
+    return result, len(result) != len(curves)
+
+
 def _load_customers(path: Path) -> List[Customer]:
     """โหลดทะเบียนผู้ใช้ไฟจากไฟล์ CSV หนึ่งไฟล์ (customers.csv หรือ customers_local.csv)
 
@@ -308,6 +318,16 @@ def upsert_load_profile(profiles: List[LoadProfile], new_profile: LoadProfile) -
     result = [p for p in profiles if p.key() != new_profile.key()]
     result.append(new_profile)
     return result
+
+
+def remove_load_profile(profiles: List[LoadProfile], business_type_code: str, rate_code: str, has_solar: bool) -> tuple:
+    """ลบโปรไฟล์ที่มี key (business_type_code, rate_code, has_solar) ตรงกันทิ้ง — ใช้คู่กับ
+    remove_load_curve เสมอ (โปรไฟล์เดียวกันมักมีทั้งสองไฟล์) คืน (list ใหม่, True) ถ้าลบจริง
+    (เจอ key นั้น), (list เดิม, False) ถ้าไม่เจอเลย"""
+
+    target = (business_type_code, rate_code, has_solar)
+    result = [p for p in profiles if p.key() != target]
+    return result, len(result) != len(profiles)
 
 
 @dataclass

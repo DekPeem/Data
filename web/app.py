@@ -47,8 +47,12 @@ from amr_mapping.loader import (
     load_import_log_local,
     load_pending_amr_local,
     load_site_curves_local,
+    remove_load_curve,
+    remove_load_profile,
     remove_pending_amr_local,
     save_business_types,
+    save_load_curves,
+    save_load_profiles,
     upsert_business_type,
 )
 from amr_mapping.mapping import UNKNOWN_RATE_CODE, MatchLevel, find_load_curve
@@ -316,6 +320,29 @@ def api_admin_curve(code: str, rate_code: str):
     reference = get_reference()
     has_solar = _parse_tri_state_bool(request.args.get("has_solar"))
     return jsonify(_curve_response(reference, code, rate_code, scale_factor=1.0, has_solar=has_solar))
+
+
+@app.route("/api/admin/load-profile/<code>/<rate_code>", methods=["DELETE"])
+def api_delete_load_profile(code: str, rate_code: str):
+    """ลบโปรไฟล์ + เส้นโค้งอ้างอิงของคู่ (business_type_code, rate_code, has_solar) ทิ้งจาก
+    load_profiles.csv/load_curves.csv — ใช้ตอนนำเข้าผิดบัญชี/ผิดประเภทธุรกิจไปแล้ว (เช่นเลือก
+    ประเภทธุรกิจผิดตอน resolve รายการรอทราบอัตรา) ต้องการล้างข้อมูลที่ผิดออกก่อน ไฟล์ AMR ดิบที่
+    เคยนำเข้าไม่ได้ถูกลบไปด้วย (ยังอยู่ใน amr_downloads/) นำเข้าใหม่ให้ถูกต้องได้โดยไม่ต้องอัปโหลด
+    ไฟล์ซ้ำถ้ายังหา path เดิมเจอ
+
+    ?has_solar=true|false (ไม่บังคับ) ระบุว่าจะลบคู่ที่ติด/ไม่ติด Solar — ไม่ใส่เลยถือว่าไม่ติด Solar
+    (พฤติกรรมเดิมเหมือน /api/admin/curve)"""
+
+    has_solar = bool(_parse_tri_state_bool(request.args.get("has_solar")))
+    reference = get_reference()
+    updated_profiles, profile_removed = remove_load_profile(reference.load_profiles, code, rate_code, has_solar)
+    updated_curves, curve_removed = remove_load_curve(reference.load_curves, code, rate_code, has_solar)
+    if not profile_removed and not curve_removed:
+        return jsonify({"error": "not_found", "message": "ไม่พบโปรไฟล์/เส้นโค้งของคู่ประเภทธุรกิจ+อัตรานี้"}), 404
+
+    save_load_profiles(updated_profiles, DEFAULT_DATA_DIR / "load_profiles.csv")
+    save_load_curves(updated_curves, DEFAULT_DATA_DIR / "load_curves.csv")
+    return jsonify({"ok": True})
 
 
 @app.route("/api/rate-schedules")

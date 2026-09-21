@@ -231,6 +231,69 @@ def test_admin_curve_selects_by_has_solar_query_param(client, monkeypatch):
     assert res_unspecified.get_json()["day_types"]["all"][0] == 10.0
 
 
+def test_delete_load_profile_removes_matching_profile_and_curve(client, monkeypatch, tmp_path):
+    """ลบโปรไฟล์+เส้นโค้งของคู่ (business_type_code, rate_code, has_solar) หนึ่งคู่ — ใช้ตอนนำเข้า
+    ผิดบัญชี/ผิดประเภทธุรกิจไปแล้ว ต้องไม่กระทบคู่อื่นที่ไม่เกี่ยวข้องเลย"""
+    from amr_mapping.loader import _load_load_curves, _load_load_profiles
+    from amr_mapping.models import LoadCurve, LoadProfile
+
+    original = app_module.load_reference_data()
+    kept_profile = LoadProfile(
+        business_type_code="63201", rate_code="50", billing_method="TOU",
+        demand_kw={"P": 1, "OP": 1, "H": 1}, energy_kwh={"P": 1, "OP": 1, "H": 1}, sample_size=1,
+    )
+    target_profile = LoadProfile(
+        business_type_code="32909", rate_code="UNKNOWN", billing_method="TOU",
+        demand_kw={"P": 2, "OP": 2, "H": 2}, energy_kwh={"P": 2, "OP": 2, "H": 2}, sample_size=1,
+    )
+    kept_curve = LoadCurve(business_type_code="63201", rate_code="50", hours={"all": [1.0] * 24}, sample_size=1)
+    target_curve = LoadCurve(business_type_code="32909", rate_code="UNKNOWN", hours={"all": [2.0] * 24}, sample_size=1)
+    patched = replace(original, load_profiles=[kept_profile, target_profile], load_curves=[kept_curve, target_curve])
+    monkeypatch.setattr(app_module, "get_reference", lambda: patched)
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+
+    res = client.delete("/api/admin/load-profile/32909/UNKNOWN")
+    assert res.status_code == 200
+    assert res.get_json() == {"ok": True}
+
+    remaining_profiles = _load_load_profiles(tmp_path / "load_profiles.csv")
+    assert [p.key() for p in remaining_profiles] == [("63201", "50", False)]
+
+    remaining_curves = _load_load_curves(tmp_path / "load_curves.csv")
+    assert [c.key() for c in remaining_curves] == [("63201", "50", False)]
+
+
+def test_delete_load_profile_respects_has_solar_query_param(client, monkeypatch, tmp_path):
+    from amr_mapping.loader import _load_load_profiles
+    from amr_mapping.models import LoadProfile
+
+    original = app_module.load_reference_data()
+    non_solar = LoadProfile(
+        business_type_code="63201", rate_code="50", billing_method="TOU",
+        demand_kw={"P": 1, "OP": 1, "H": 1}, energy_kwh={"P": 1, "OP": 1, "H": 1}, sample_size=1, has_solar=False,
+    )
+    solar = LoadProfile(
+        business_type_code="63201", rate_code="50", billing_method="TOU",
+        demand_kw={"P": 1, "OP": 1, "H": 1}, energy_kwh={"P": 1, "OP": 1, "H": 1}, sample_size=1, has_solar=True,
+    )
+    patched = replace(original, load_profiles=[non_solar, solar], load_curves=[])
+    monkeypatch.setattr(app_module, "get_reference", lambda: patched)
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+
+    res = client.delete("/api/admin/load-profile/63201/50?has_solar=true")
+    assert res.status_code == 200
+
+    remaining = _load_load_profiles(tmp_path / "load_profiles.csv")
+    assert [p.key() for p in remaining] == [("63201", "50", False)]
+
+
+def test_delete_load_profile_returns_404_when_not_found(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    res = client.delete("/api/admin/load-profile/NOPE/999")
+    assert res.status_code == 404
+    assert res.get_json()["error"] == "not_found"
+
+
 def test_forecast_adhoc_missing_both_fields(client):
     res = client.post("/api/forecast-adhoc", json={})
     assert res.status_code == 400
