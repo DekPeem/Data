@@ -725,6 +725,143 @@ def test_start_import_file_error_from_import_surfaces_in_job_status(client, monk
     assert "ไม่สามารถอ่านข้อมูล" in status["error"]
 
 
+def test_start_import_file_extracts_amr_files_from_zip(client, monkeypatch, tmp_path):
+    """แนบไฟล์ .zip ที่รวมไฟล์ AMR หลายไฟล์ไว้ — ต้องแตกไฟล์ออกมาแล้วส่งไป import_amr_from_files
+    เหมือนแนบไฟล์ .xls/.html ตรงๆ ทุกอย่าง (ผู้ใช้ไม่ต้องแตกไฟล์เองก่อนแนบ)"""
+    import io
+    import zipfile
+
+    monkeypatch.setattr(app_module, "DEFAULT_DOWNLOAD_DIR", tmp_path / "amr_downloads")
+
+    received = {}
+
+    def fake_import_amr_from_files(**kwargs):
+        received["file_paths"] = kwargs["file_paths"]
+        from amr_mapping.models import LoadProfile
+
+        return LoadProfile(
+            business_type_code="63201", rate_code="50", billing_method="TOU",
+            demand_kw={"P": 1, "OP": 1, "H": 1}, energy_kwh={"P": 1, "OP": 1, "H": 1},
+            contract_kva_ref=None, sample_size=2, notes="fake",
+        )
+
+    monkeypatch.setattr(app_module, "import_amr_from_files", fake_import_amr_from_files)
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zf:
+        zf.writestr("2026-07/amr_2026_07.xls", "<html>เดือนที่ 1</html>")
+        zf.writestr("2026-08/amr_2026_08.xls", "<html>เดือนที่ 2</html>")
+        zf.writestr("__MACOSX/._amr_2026_07.xls", "junk")  # ไฟล์ระบบที่ macOS แถมมาเวลาซิป — ต้องข้าม
+        zf.writestr("readme.txt", "not an AMR file")  # นามสกุลไม่รองรับ — ต้องข้ามเหมือนกัน
+    zip_buffer.seek(0)
+
+    res = client.post(
+        "/api/admin/import-file",
+        data={"files": (zip_buffer, "amr_bundle.zip")},
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 200
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/import/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    assert len(received["file_paths"]) == 2  # แค่ 2 ไฟล์ .xls จริง ไม่รวม __MACOSX/readme.txt
+    contents = {Path(p).read_text(encoding="utf-8") for p in received["file_paths"]}
+    assert contents == {"<html>เดือนที่ 1</html>", "<html>เดือนที่ 2</html>"}
+
+
+def test_start_import_file_neutralizes_zip_slip_path_traversal(client, monkeypatch, tmp_path):
+    """ไฟล์ในซิปที่มีชื่อพยายาม path traversal ออกนอกโฟลเดอร์ upload (เช่น "../../evil.xls")
+    ต้องถูกตัด path ย่อยทิ้งแล้วเขียนอยู่ใต้ upload_dir เท่านั้น ไม่มีทางหลุดออกไปเขียนไฟล์นอก
+    โฟลเดอร์ที่ตั้งใจไว้ได้เลย (zip slip vulnerability)"""
+    import io
+    import zipfile
+
+    download_dir = tmp_path / "amr_downloads"
+    monkeypatch.setattr(app_module, "DEFAULT_DOWNLOAD_DIR", download_dir)
+
+    received = {}
+
+    def fake_import_amr_from_files(**kwargs):
+        received["file_paths"] = kwargs["file_paths"]
+        from amr_mapping.models import LoadProfile
+
+        return LoadProfile(
+            business_type_code="63201", rate_code="50", billing_method="TOU",
+            demand_kw={"P": 1, "OP": 1, "H": 1}, energy_kwh={"P": 1, "OP": 1, "H": 1},
+            contract_kva_ref=None, sample_size=1, notes="fake",
+        )
+
+    monkeypatch.setattr(app_module, "import_amr_from_files", fake_import_amr_from_files)
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zf:
+        zf.writestr("../../../../tmp/evil.xls", "<html>ไม่ควรหลุดออกไปนอก upload_dir</html>")
+    zip_buffer.seek(0)
+
+    res = client.post(
+        "/api/admin/import-file",
+        data={"files": (zip_buffer, "traversal.zip")},
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 200
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/import/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    assert len(received["file_paths"]) == 1
+    extracted_path = Path(received["file_paths"][0]).resolve()
+    # ไฟล์ที่แตกออกมาต้องอยู่ใต้ download_dir เท่านั้น (ตัด "../" ทิ้งหมดแล้ว) ไม่ใช่ /tmp/evil.xls
+    assert download_dir.resolve() in extracted_path.parents
+    assert extracted_path.name != "evil.xls" or extracted_path.parent != Path("/tmp")
+
+
+def test_start_import_file_rejects_corrupt_zip(client, monkeypatch, tmp_path):
+    import io
+
+    monkeypatch.setattr(app_module, "DEFAULT_DOWNLOAD_DIR", tmp_path / "amr_downloads")
+
+    res = client.post(
+        "/api/admin/import-file",
+        data={"files": (io.BytesIO(b"not actually a zip file"), "broken.zip")},
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+
+def test_start_import_file_rejects_zip_with_no_amr_files_inside(client, monkeypatch, tmp_path):
+    import io
+    import zipfile
+
+    monkeypatch.setattr(app_module, "DEFAULT_DOWNLOAD_DIR", tmp_path / "amr_downloads")
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zf:
+        zf.writestr("readme.txt", "not an AMR file")
+    zip_buffer.seek(0)
+
+    res = client.post(
+        "/api/admin/import-file",
+        data={"files": (zip_buffer, "empty_of_amr.zip")},
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+
 def test_start_import_auto_mode_when_business_type_and_rate_omitted(client, monkeypatch):
     """ไม่กรอกประเภทธุรกิจ/อัตรา -> ต้องเรียก import_amr_auto (ตรวจจับอัตโนมัติ) แทน
     import_amr_for_business และไม่ต้องมี accounts ก็ยังผ่าน validation ได้"""

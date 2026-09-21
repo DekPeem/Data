@@ -16,6 +16,7 @@ import os
 import sys
 import threading
 import uuid
+import zipfile
 from datetime import date, datetime
 from pathlib import Path
 from typing import List, Optional
@@ -1052,6 +1053,79 @@ def _run_import_file_job(job_id: str, file_paths: List[str], params: dict) -> No
             _JOBS[job_id]["error"] = str(e)
 
 
+# นามสกุลไฟล์ AMR ที่รองรับจริง (รูปแบบเดียวกับที่ pea_ingest.parse_interval_report อ่านได้) — ใช้
+# กรองทั้งตอนรับไฟล์แนบตรงๆ และตอนแตกไฟล์ .zip (ข้อ _save_uploaded_amr_files ด้านล่าง) เพื่อข้าม
+# ไฟล์แถม/ไฟล์ระบบที่มักติดมาใน .zip (เช่น __MACOSX/, .DS_Store, Thumbs.db) แทนที่จะพยายามอ่านแล้ว
+# error ทีหลัง
+_AMR_FILE_EXTENSIONS = (".xls", ".xlsx", ".html", ".htm")
+
+# กันไฟล์ .zip ที่แนบมาใหญ่เกินจริงหลังแตกไฟล์ (zip bomb) — รายงาน AMR จริงไม่ควรใหญ่ขนาดนี้เลย
+# แม้จะแนบมาหลายสิบเดือนรวมกันก็ตาม ตัวเลขนี้เผื่อไว้กว้างๆ พอสมควร
+_MAX_ZIP_EXTRACTED_BYTES = 300 * 1024 * 1024  # 300 MB
+_MAX_ZIP_MEMBERS = 1000
+
+
+def _save_uploaded_amr_files(files, upload_dir: Path) -> List[str]:
+    """บันทึกไฟล์ที่แนบมาทุกไฟล์ลง upload_dir — ถ้าเป็นไฟล์ .zip จะแตกไฟล์ข้างในออกมาแทน (เผื่อ
+    ผู้ใช้รวมไฟล์ AMR หลายเดือน/หลายบัญชีเป็น .zip เดียวมาแนบ ไม่ต้องแตกเองก่อน) คืน path ของไฟล์
+    AMR จริงทั้งหมดที่พร้อมส่งให้ import_amr_from_files (ข้ามไฟล์ที่ไม่ใช่นามสกุลที่รองรับ/ไฟล์ระบบ
+    ที่ติดมาใน zip เช่น __MACOSX, .DS_Store โดยอัตโนมัติ)
+
+    ป้องกัน zip slip (path traversal ผ่านชื่อไฟล์ในซิปที่มี "../" ปนอยู่) ด้วยการ resolve path แล้ว
+    เช็คว่ายังอยู่ใต้ upload_dir เสมอ ก่อนเขียนไฟล์จริง และจำกัดขนาด/จำนวนไฟล์หลังแตกกัน zip bomb"""
+
+    file_paths: List[str] = []
+    for f in files:
+        filename = secure_filename(f.filename or "") or f"upload_{len(file_paths) + 1}"
+
+        if filename.lower().endswith(".zip"):
+            zip_path = upload_dir / f"_upload_{len(file_paths)}.zip"
+            f.save(zip_path)
+            try:
+                with zipfile.ZipFile(zip_path) as zf:
+                    members = [m for m in zf.infolist() if not m.is_dir()]
+                    if len(members) > _MAX_ZIP_MEMBERS:
+                        raise ValueError(f"ไฟล์ {filename} มีไฟล์ข้างในเยอะเกินไป ({len(members)} ไฟล์)")
+                    total_size = sum(m.file_size for m in members)
+                    if total_size > _MAX_ZIP_EXTRACTED_BYTES:
+                        raise ValueError(f"ไฟล์ {filename} ขนาดหลังแตกไฟล์ใหญ่เกินไป")
+
+                    extracted_count = 0
+                    for i, member in enumerate(members):
+                        member_name = Path(member.filename).name  # ตัด path ย่อยทิ้ง กัน zip slip
+                        # ข้ามไฟล์ระบบที่โปรแกรมซิปมักแถมมาเอง (macOS: __MACOSX/, ไฟล์ resource
+                        # fork ที่ขึ้นต้นด้วย "._"; ไฟล์ซ่อนทั่วไปที่ขึ้นต้นด้วย ".") ไม่ใช่ไฟล์ AMR จริง
+                        if not member_name or member_name.startswith("."):
+                            continue
+                        if "__MACOSX" in Path(member.filename).parts:
+                            continue
+                        if not member_name.lower().endswith(_AMR_FILE_EXTENSIONS):
+                            continue
+                        safe_name = secure_filename(member_name) or f"zip_entry_{i}"
+                        dest = (upload_dir / safe_name).resolve()
+                        if upload_dir.resolve() not in dest.parents and dest != upload_dir.resolve():
+                            continue  # ป้องกันไว้อีกชั้น แม้ตัด path ย่อยไปแล้วก็ตาม
+                        # กันชื่อซ้ำ (ไฟล์ชื่อเดียวกันจากคนละโฟลเดอร์ย่อยในซิป) ด้วยเลขนำหน้า
+                        if dest.exists():
+                            dest = upload_dir / f"{i}_{safe_name}"
+                        with zf.open(member) as src, open(dest, "wb") as out:
+                            out.write(src.read())
+                        file_paths.append(str(dest))
+                        extracted_count += 1
+            except zipfile.BadZipFile:
+                raise ValueError(f"ไฟล์ {filename} ไม่ใช่ไฟล์ .zip ที่ถูกต้อง หรือไฟล์เสียหาย")
+            finally:
+                zip_path.unlink(missing_ok=True)
+            continue
+
+        dest = upload_dir / filename
+        f.save(dest)
+        if filename.lower().endswith(_AMR_FILE_EXTENSIONS):
+            file_paths.append(str(dest))
+
+    return file_paths
+
+
 @app.route("/api/admin/import-file", methods=["POST"])
 def api_start_import_file():
     """เริ่ม job นำเข้า AMR จากไฟล์ที่แนบมาโดยตรง (ไม่ต้อง login เว็บ PEA เลย) — ใช้เมื่อมีไฟล์
@@ -1087,12 +1161,15 @@ def api_start_import_file():
     # ด้วย secure_filename เสมอเพราะชื่อไฟล์มาจากผู้ใช้ (กัน path traversal)
     upload_dir = DEFAULT_DOWNLOAD_DIR / "uploaded" / job_id
     upload_dir.mkdir(parents=True, exist_ok=True)
-    file_paths = []
-    for f in files:
-        filename = secure_filename(f.filename or "") or f"upload_{len(file_paths) + 1}"
-        dest = upload_dir / filename
-        f.save(dest)
-        file_paths.append(str(dest))
+    try:
+        file_paths = _save_uploaded_amr_files(files, upload_dir)
+    except ValueError as e:
+        return jsonify({"error": "invalid_request", "message": str(e)}), 400
+
+    if not file_paths:
+        return jsonify(
+            {"error": "invalid_request", "message": "ไม่พบไฟล์ AMR ที่รองรับ (.xls/.xlsx/.html/.htm) ในไฟล์ที่แนบมาเลย"}
+        ), 400
 
     with _JOBS_LOCK:
         _JOBS[job_id] = {"status": "running", "logs": [], "result": None, "error": None, "customer_profile": None}
