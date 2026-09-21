@@ -260,10 +260,14 @@ function filterBizTypeDropdown(input) {
   filterComboboxDropdown(input, ".biz-type-combobox", ".biz-type-dropdown-item", ".biz-type-dropdown-empty");
 }
 
+function filterSectionDropdown(input) {
+  filterComboboxDropdown(input, ".section-combobox", ".section-dropdown-item", ".section-dropdown-empty");
+}
+
 // ปิด dropdown ที่เปิดค้างไว้เมื่อคลิกข้างนอกกล่องค้นหา (ผูกครั้งเดียวตอนโหลดสคริปต์ ไม่ใช่ทุกครั้ง
 // ที่ render การ์ดใหม่ เพราะ element การ์ดถูกสร้างใหม่ทุกครั้งอยู่แล้วแต่ document ตัวเดียวกันเสมอ)
 document.addEventListener("click", (e) => {
-  document.querySelectorAll(".company-combobox.open, .biz-type-combobox.open").forEach((box) => {
+  document.querySelectorAll(".company-combobox.open, .biz-type-combobox.open, .section-combobox.open").forEach((box) => {
     if (!box.contains(e.target)) box.classList.remove("open");
   });
 });
@@ -432,29 +436,46 @@ function renderBusinessTypesSections(allTypes) {
 
     if (!keys.includes(selectedSectionKey)) selectedSectionKey = null;
 
-    const sectionOptionsHtml = keys
-      .map((key) => {
-        const g = groups[key];
-        const label = key === "UNVERIFIED" ? "ยังไม่ตรวจสอบ TSIC" : `${g.section_code} · ${g.section_name_th}`;
-        return `<option value="${key}"${key === selectedSectionKey ? " selected" : ""}>${label} (${g.types.length} ประเภทธุรกิจ)</option>`;
-      })
-      .join("");
+    const sectionLabel = (key) => {
+      const g = groups[key];
+      return key === "UNVERIFIED" ? "ยังไม่ตรวจสอบ TSIC" : `${g.section_code} · ${g.section_name_th}`;
+    };
 
+    // กล่องค้นหาแบบกำหนดเอง (ไม่ใช่ <select> ของเบราว์เซอร์) เพราะ <select> เปิดลิสต์ขึ้นบน/ลง
+    // ล่างเองอัตโนมัติตามพื้นที่ว่างบนจอ ควบคุมทิศทางไม่ได้เลย — แบบนี้เขียนเอง เปิดลงล่างเสมอ
+    // (รูปแบบเดียวกับกล่องค้นหาประเภทธุรกิจ/บริษัท-ไซต์ที่มีอยู่แล้วในหน้านี้)
     businessTypesBySectionEl.innerHTML = `
-      <div class="form-field" style="max-width:520px;">
-        <label for="section-picker">เลือก Section (TSIC) เพื่อดูประเภทธุรกิจในกลุ่มนั้น</label>
-        <select id="section-picker">
-          <option value="">-- เลือก Section --</option>
-          ${sectionOptionsHtml}
-        </select>
+      <div class="form-field">
+        <label>เลือก Section (TSIC) เพื่อดูประเภทธุรกิจในกลุ่มนั้น</label>
+        ${selectedSectionKey ? `<div class="hint" style="margin-bottom:2px;">กำลังดูอยู่: <b>${sectionLabel(selectedSectionKey)}</b> (${groups[selectedSectionKey].types.length} ประเภทธุรกิจ)</div>` : ""}
+        <div class="section-combobox">
+          <input type="text" class="section-search-input" placeholder="🔍 พิมพ์เพื่อค้นหา Section (${keys.length} รายการ)..." autocomplete="off">
+          <div class="section-dropdown">
+            ${keys
+              .map(
+                (key) =>
+                  `<button type="button" class="section-dropdown-item${key === selectedSectionKey ? " active" : ""}" data-section="${key}">${sectionLabel(key)} (${groups[key].types.length} ประเภทธุรกิจ)</button>`
+              )
+              .join("")}
+            <div class="section-dropdown-empty" style="display:none;">ไม่พบ Section ที่ตรงกับคำค้นหา</div>
+          </div>
+        </div>
       </div>
       <div id="section-picker-body" style="margin-top:14px;">
         ${selectedSectionKey ? renderSectionBody(groups[selectedSectionKey].types) : ""}
       </div>`;
 
-    document.getElementById("section-picker").addEventListener("change", (e) => {
-      selectedSectionKey = e.target.value || null;
-      renderBusinessTypesSections(lastBusinessTypes);
+    const sectionInput = businessTypesBySectionEl.querySelector(".section-search-input");
+    sectionInput.addEventListener("focus", () => {
+      sectionInput.closest(".section-combobox").classList.add("open");
+      filterSectionDropdown(sectionInput);
+    });
+    sectionInput.addEventListener("input", () => filterSectionDropdown(sectionInput));
+    businessTypesBySectionEl.querySelectorAll(".section-dropdown-item").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        selectedSectionKey = btn.dataset.section;
+        renderBusinessTypesSections(lastBusinessTypes);
+      });
     });
 
     businessTypesBySectionEl.querySelectorAll(".verify-toggle-btn").forEach((btn) => {

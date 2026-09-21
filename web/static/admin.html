@@ -60,31 +60,33 @@
       display: inline-block; margin-left: 8px; font-size: 11.5px; font-weight: 600; color: #55647a;
       background: #f0f2f6; border-radius: 999px; padding: 2px 9px;
     }
-    .company-combobox, .biz-type-combobox { position: relative; }
-    .company-search-input, .biz-type-search-input {
+    .company-combobox, .biz-type-combobox, .section-combobox { position: relative; }
+    .company-search-input, .biz-type-search-input, .section-search-input {
       width: 100%; box-sizing: border-box; padding: 7px 12px; border: 1px solid #dbe1ea;
       border-radius: 8px; font-size: 13px; font-family: inherit; background: #f8fafc;
     }
-    .company-search-input:focus, .biz-type-search-input:focus {
+    .company-search-input:focus, .biz-type-search-input:focus, .section-search-input:focus {
       outline: none; border-color: #3b82f6; background: #fff;
       box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
     }
-    .company-dropdown, .biz-type-dropdown {
+    .company-dropdown, .biz-type-dropdown, .section-dropdown {
       display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0;
       background: #fff; border: 1px solid #dbe1ea; border-radius: 10px;
       box-shadow: 0 10px 24px rgba(15,23,42,0.1); max-height: 216px; overflow-y: auto;
       z-index: 30; padding: 4px;
     }
-    .company-combobox.open .company-dropdown, .biz-type-combobox.open .biz-type-dropdown { display: block; }
-    .company-dropdown-item, .biz-type-dropdown-item {
+    .company-combobox.open .company-dropdown, .biz-type-combobox.open .biz-type-dropdown,
+    .section-combobox.open .section-dropdown { display: block; }
+    .company-dropdown-item, .biz-type-dropdown-item, .section-dropdown-item {
       display: block; width: 100%; text-align: left; border: none; background: none;
       cursor: pointer; font-family: inherit; font-size: 12.5px; font-weight: 600;
       color: #184f95; padding: 7px 10px; border-radius: 6px;
     }
-    .company-dropdown-item:hover, .biz-type-dropdown-item:hover { background: #eef3fa; }
-    .company-dropdown-item.active, .biz-type-dropdown-item.active { background: #dbeafe; color: #0b3d91; }
-    .company-dropdown-empty, .biz-type-dropdown-empty { padding: 8px 10px; font-size: 12.5px; color: #8996ab; }
+    .company-dropdown-item:hover, .biz-type-dropdown-item:hover, .section-dropdown-item:hover { background: #eef3fa; }
+    .company-dropdown-item.active, .biz-type-dropdown-item.active, .section-dropdown-item.active { background: #dbeafe; color: #0b3d91; }
+    .company-dropdown-empty, .biz-type-dropdown-empty, .section-dropdown-empty { padding: 8px 10px; font-size: 12.5px; color: #8996ab; }
     .biz-type-combobox { margin-bottom: 4px; }
+    .section-combobox { max-width: 520px; margin-bottom: 4px; }
     .biz-card-wrap { display: flex; flex-direction: column; }
     .biz-profiles { display: flex; flex-wrap: wrap; gap: 8px; }
   </style>
