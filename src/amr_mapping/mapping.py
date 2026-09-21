@@ -33,6 +33,12 @@ from .models import BusinessType, Customer, ForecastResult, LoadCurve, LoadProfi
 DEFAULT_BUSINESS_CODE = "DEFAULT"
 DEFAULT_RATE_CODE = "DEFAULT"
 
+# ค่า rate_code พิเศษสำหรับตอนนำเข้า AMR จริงที่รู้ประเภทธุรกิจแต่ "ตั้งใจไม่ทราบ" รหัสอัตรา
+# (ต่างจาก DEFAULT_RATE_CODE ซึ่งหมายถึง "ไม่มีข้อมูลอะไรเลย ใช้ค่ากลางสุดท้าย") — โปรไฟล์ที่
+# บันทึกด้วยค่านี้ยังมีประโยชน์ที่ชั้น BUSINESS_ONLY (จับคู่แค่ประเภทธุรกิจ ไม่สนอัตรา — ดู
+# find_load_profile) แต่จะไม่มีวันถูกจับคู่เป็น EXACT ให้ใครเลย เพราะไม่มีอัตราจริงให้ตรงกัน
+UNKNOWN_RATE_CODE = "UNKNOWN"
+
 
 def _pick_by_solar(candidates: List[LoadProfile], has_solar: Optional[bool]) -> tuple:
     """เลือกโปรไฟล์ที่เหมาะกับสถานะ Solar ที่สุดจากรายการที่ตรงธุรกิจ+อัตราแล้ว (candidates

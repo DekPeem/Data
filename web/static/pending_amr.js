@@ -58,6 +58,9 @@ function renderPendingCard(entry) {
       <div class="form-field">
         <label>รหัสอัตรา</label>
         <input class="p-rate-code" type="text" placeholder="เช่น 50">
+        <label style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:500;color:#55647a;margin-top:2px;">
+          <input type="checkbox" class="p-rate-unknown"> ไม่ทราบรหัสอัตรา
+        </label>
       </div>
       <div class="form-field">
         <label>KVA ตามสัญญา</label>
@@ -80,16 +83,27 @@ function renderPendingCard(entry) {
   const hintEl = wrap.querySelector(".pending-hint");
   const resolveBtn = wrap.querySelector(".p-resolve-btn");
   const deleteBtn = wrap.querySelector(".p-delete-btn");
+  const rateCodeInput = wrap.querySelector(".p-rate-code");
+  const rateUnknownCheckbox = wrap.querySelector(".p-rate-unknown");
+
+  // ติ๊ก "ไม่ทราบรหัสอัตรา" แล้ว ไม่ต้องกรอกช่องรหัสอัตราอีก (ปิดไว้กันสับสนว่าต้องกรอกไหม) —
+  // จะบันทึกด้วยรหัสอัตรา sentinel พิเศษแทน ยังเอาไปใช้จับคู่ระดับ "ประเภทธุรกิจ" ได้อยู่
+  // (ดู UNKNOWN_RATE_CODE ใน web/app.py) แค่ไม่มีวันตรงเป๊ะ (EXACT) ให้ใครได้อีก
+  rateUnknownCheckbox.addEventListener("change", () => {
+    rateCodeInput.disabled = rateUnknownCheckbox.checked;
+    if (rateUnknownCheckbox.checked) rateCodeInput.value = "";
+  });
 
   resolveBtn.addEventListener("click", async () => {
     hintEl.textContent = "";
     const business_type_code = wrap.querySelector(".p-business-type").value;
-    const rate_code = wrap.querySelector(".p-rate-code").value.trim();
+    const rate_code = rateCodeInput.value.trim();
+    const rate_code_unknown = rateUnknownCheckbox.checked;
     const kvaRaw = wrap.querySelector(".p-kva").value;
     const has_solar = wrap.querySelector(".p-has-solar").checked;
 
-    if (!business_type_code || !rate_code) {
-      hintEl.textContent = "กรุณาเลือกประเภทธุรกิจและกรอกรหัสอัตราให้ครบ";
+    if (!business_type_code || (!rate_code && !rate_code_unknown)) {
+      hintEl.textContent = 'กรุณาเลือกประเภทธุรกิจและกรอกรหัสอัตราให้ครบ (หรือติ๊ก "ไม่ทราบรหัสอัตรา")';
       return;
     }
 
@@ -101,6 +115,7 @@ function renderPendingCard(entry) {
         body: JSON.stringify({
           business_type_code,
           rate_code,
+          rate_code_unknown,
           contract_kva: kvaRaw ? Number(kvaRaw) : null,
           has_solar,
         }),
@@ -112,10 +127,11 @@ function renderPendingCard(entry) {
         return;
       }
       const r = data.result;
+      const rateLabel = r.rate_code === "UNKNOWN" ? "ไม่ทราบ (ใช้ได้แค่ระดับประเภทธุรกิจ)" : r.rate_code;
       wrap.innerHTML = `
         <div class="pending-name">✅ นำเข้าสำเร็จ: ${name}</div>
         <div class="pending-sub">
-          บันทึกแล้วสำหรับ ${r.business_type_code} / อัตรา ${r.rate_code}
+          บันทึกแล้วสำหรับ ${r.business_type_code} / อัตรา ${rateLabel}
           ${r.has_solar ? " · ☀️ ติด Solar" : ""} (เฉลี่ยจาก ${r.sample_size} ไฟล์)
         </div>`;
       setTimeout(() => wrap.remove(), 1600);

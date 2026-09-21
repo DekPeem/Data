@@ -35,7 +35,7 @@ from .loader import (
     load_pending_amr_local,
     remove_pending_amr_local,
 )
-from .mapping import find_load_profile, find_load_curve, estimate_customer_load
+from .mapping import find_load_profile, find_load_curve, estimate_customer_load, UNKNOWN_RATE_CODE
 
 __all__ = [
     "BusinessType",
@@ -65,4 +65,5 @@ __all__ = [
     "find_load_profile",
     "find_load_curve",
     "estimate_customer_load",
+    "UNKNOWN_RATE_CODE",
 ]

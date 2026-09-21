@@ -51,7 +51,7 @@ from amr_mapping.loader import (
     save_business_types,
     upsert_business_type,
 )
-from amr_mapping.mapping import MatchLevel, find_load_curve
+from amr_mapping.mapping import UNKNOWN_RATE_CODE, MatchLevel, find_load_curve
 from amr_mapping.models import Customer
 from amr_mapping.wikipedia_lookup import search_wikipedia_company
 
@@ -1284,8 +1284,13 @@ def api_resolve_pending_amr(pending_id: str):
     body = request.get_json(silent=True) or {}
     business_type_code = (body.get("business_type_code") or "").strip()
     rate_code = (body.get("rate_code") or "").strip()
+    # เลือก "ไม่ทราบรหัสอัตรา" มา — ใช้ค่า sentinel แทนแทนที่จะบังคับกรอกจริง ยังใช้ประโยชน์ได้
+    # ที่ชั้นจับคู่ระดับ "ประเภทธุรกิจ" (BUSINESS_ONLY) แม้จะไม่มีวันเป็น EXACT ก็ตาม (ดู
+    # mapping.UNKNOWN_RATE_CODE) — ดีกว่าปล่อยค้างไว้ในลิสต์รอทราบอัตราตลอดไปเฉยๆ
+    if bool(body.get("rate_code_unknown")):
+        rate_code = UNKNOWN_RATE_CODE
     if not business_type_code or not rate_code:
-        return jsonify({"error": "invalid_request", "message": "กรุณาเลือกประเภทธุรกิจและกรอกรหัสอัตราให้ครบ"}), 400
+        return jsonify({"error": "invalid_request", "message": "กรุณาเลือกประเภทธุรกิจและกรอกรหัสอัตราให้ครบ (หรือติ๊ก \"ไม่ทราบรหัสอัตรา\")"}), 400
 
     contract_kva_raw = body.get("contract_kva")
     contract_kva: Optional[float] = None

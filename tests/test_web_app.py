@@ -1693,6 +1693,85 @@ def test_resolve_pending_amr_success_reimports_and_removes_entry(client, monkeyp
     assert load_pending_amr_local(pending_path) == []
 
 
+def test_resolve_pending_amr_with_rate_code_unknown_uses_sentinel(client, monkeypatch, tmp_path):
+    """ติ๊ก "ไม่ทราบรหัสอัตรา" มา (rate_code_unknown=True) — ต้องนำเข้าได้โดยไม่ต้องกรอกรหัสอัตรา
+    จริง ใช้ค่า sentinel UNKNOWN_RATE_CODE แทน (ยังใช้ประโยชน์ได้ที่ชั้น BUSINESS_ONLY)"""
+    from amr_mapping import UNKNOWN_RATE_CODE
+    from amr_mapping.loader import append_pending_amr_local, load_pending_amr_local
+
+    pending_path = tmp_path / "pending_amr_local.csv"
+    monkeypatch.setattr(app_module, "PENDING_AMR_LOCAL_PATH", pending_path)
+
+    saved_file = tmp_path / "amr_downloads" / "uploaded" / "job1" / "amr.xls"
+    saved_file.parent.mkdir(parents=True)
+    saved_file.write_text("<html>fake</html>", encoding="utf-8")
+
+    append_pending_amr_local(
+        {
+            "pending_id": "abc123",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "account_no": "019900000099",
+            "company_name": "บริษัท ทดสอบ จำกัด",
+            "meter_no": "",
+            "file_paths": str(saved_file),
+            "contract_kva": "",
+            "has_solar": "false",
+            "source_label": "",
+        },
+        pending_path,
+    )
+
+    received = {}
+
+    def fake_import_amr_from_files(**kwargs):
+        received.update(kwargs)
+        from amr_mapping.models import LoadProfile
+
+        return LoadProfile(
+            business_type_code=kwargs["business_type_code"], rate_code=kwargs["rate_code"],
+            billing_method="TOU", demand_kw={"P": 1, "OP": 1, "H": 1},
+            energy_kwh={"P": 1, "OP": 1, "H": 1}, contract_kva_ref=kwargs["contract_kva"],
+            sample_size=1, notes="fake", has_solar=kwargs["has_solar"],
+        )
+
+    monkeypatch.setattr(app_module, "import_amr_from_files", fake_import_amr_from_files)
+
+    # ส่ง rate_code เป็นค่าว่างมาด้วย (เหมือนช่องถูกปิดไว้ฝั่ง UI) — rate_code_unknown ต้องชนะเสมอ
+    res = client.post(
+        "/api/admin/pending-amr/abc123/resolve",
+        json={"business_type_code": "63201", "rate_code": "", "rate_code_unknown": True},
+    )
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["result"]["rate_code"] == UNKNOWN_RATE_CODE
+    assert received["rate_code"] == UNKNOWN_RATE_CODE
+    assert load_pending_amr_local(pending_path) == []
+
+
+def test_resolve_pending_amr_rate_code_unknown_still_requires_business_type(client, monkeypatch, tmp_path):
+    from amr_mapping.loader import append_pending_amr_local
+
+    pending_path = tmp_path / "pending_amr_local.csv"
+    monkeypatch.setattr(app_module, "PENDING_AMR_LOCAL_PATH", pending_path)
+    append_pending_amr_local(
+        {
+            "pending_id": "abc123",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "account_no": "019900000099",
+            "company_name": "", "meter_no": "", "file_paths": "/tmp/a.xls",
+            "contract_kva": "", "has_solar": "false", "source_label": "",
+        },
+        pending_path,
+    )
+
+    res = client.post(
+        "/api/admin/pending-amr/abc123/resolve",
+        json={"business_type_code": "", "rate_code_unknown": True},
+    )
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+
 def test_resolve_pending_amr_missing_business_type_or_rate_returns_400(client, monkeypatch, tmp_path):
     from amr_mapping.loader import append_pending_amr_local
 
