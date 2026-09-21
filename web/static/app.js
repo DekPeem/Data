@@ -395,7 +395,31 @@ async function pollBusinessTypeLookupJob(jobId) {
       }
     }
 
-    lookupStatus.innerHTML = html + renderSearchLogDetails(data.logs, false);
+    // ข้อความรายละเอียดทั้งหมด (เหตุผลที่โดนบล็อก, dataforthai.com, DBD Open Data, Wikipedia) ยาว
+    // และรกหน้าจอถ้าโชว์เต็มทุกครั้ง — ทั้งที่ส่วนใหญ่ (พอรู้ว่า DBD บล็อกแล้ว) ไม่ต้องอ่านซ้ำทุกครั้ง
+    // จึงพับเก็บไว้ใน <details> แทน เหลือแค่ "สรุปผลลัพธ์" บรรทัดเดียวด้านบนเสมอ — กางออกอัตโนมัติ
+    // เฉพาะตอนที่ยังต้องให้ผู้ใช้เลือกอะไรบางอย่างเอง (มีปุ่ม "เลือกอันนี้" ให้กด) เท่านั้น
+    const hasPendingChoice = Boolean(dbdOpendataButtonsHtml) || Boolean(rankedCandidatesButtonsHtml);
+    const autoApplied =
+      (dbd_opendata_exact_match_index !== null && dbd_opendata_exact_match_index !== undefined) ||
+      (wikipedia_result && wikipedia_result.suggested_business_type_code);
+
+    let headline;
+    if (hasPendingChoice) {
+      headline = `<div class="lookup-status-text">⚠️ เว็บ DBD DataWarehouse บล็อกการเข้าถึงอัตโนมัติ — เลือกประเภทธุรกิจที่ใกล้เคียงที่สุดจากตัวเลือกด้านล่าง</div>`;
+    } else if (autoApplied) {
+      headline = `<div class="lookup-status-text" style="color:#0ca30c;">✅ เว็บ DBD DataWarehouse บล็อก แต่หาข้อมูลจากแหล่งอื่นได้ — ตั้งประเภทธุรกิจ + พยากรณ์ให้อัตโนมัติแล้วด้านล่าง</div>`;
+    } else {
+      headline = `<div class="lookup-status-text">🚫 เว็บ DBD DataWarehouse บล็อก และหาข้อมูลจากแหล่งอื่นไม่สำเร็จ — กรุณาเลือกประเภทธุรกิจเองด้านบน</div>`;
+    }
+
+    lookupStatus.innerHTML =
+      headline +
+      `<details ${hasPendingChoice ? "open" : ""} style="margin-top:6px;">
+        <summary style="cursor:pointer;font-size:12.5px;color:#8996ab;">ดูรายละเอียดการค้นหา (DBD DataWarehouse / dataforthai.com / DBD Open Data / Wikipedia)</summary>
+        <div style="margin-top:8px;">${html}</div>
+      </details>` +
+      renderSearchLogDetails(data.logs, false);
     if (dbdOpendataButtonsHtml) {
       lookupStatus.querySelectorAll(".lookup-pick-btn[data-dbdidx]").forEach((btn) => {
         btn.addEventListener("click", () => applyBusinessTypeSuggestion(dbd_opendata_matches[Number(btn.dataset.dbdidx)]));
