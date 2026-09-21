@@ -13,6 +13,7 @@ from amr_mapping.clustering import (
     describe_shape,
     kmeans,
     nearest_business_type_by_tsic,
+    rank_business_types_by_tsic,
     section_for_division,
 )
 from amr_mapping.loader import ReferenceData
@@ -230,6 +231,68 @@ def test_nearest_business_type_by_tsic_derives_section_from_division_when_not_gi
     assert match.match_basis == "same_section"
 
 
+def test_rank_business_types_by_tsic_ranks_same_section_by_division_distance():
+    bt_near = BusinessType(code="NEAR", name_th="Division ใกล้", category="auto", section_code="C", division_code="18")
+    bt_far = BusinessType(code="FAR", name_th="Division ไกล", category="auto", section_code="C", division_code="33")
+    reference = _make_reference(
+        business_types=[bt_near, bt_far],
+        load_profiles=[
+            LoadProfile("NEAR", "50", "TOU", {"P": 1, "OP": 1, "H": 1}, {"P": 1, "OP": 1, "H": 1}),
+            LoadProfile("FAR", "50", "TOU", {"P": 1, "OP": 1, "H": 1}, {"P": 1, "OP": 1, "H": 1}),
+        ],
+        load_curves=[],
+    )
+
+    ranked = rank_business_types_by_tsic("C", "17", reference, limit=3)
+
+    assert [m.business_type_code for m in ranked] == ["NEAR", "FAR"]
+    assert all(m.match_basis == "same_section" for m in ranked)
+
+
+def test_rank_business_types_by_tsic_respects_limit():
+    bts = [
+        BusinessType(code=f"BT{i}", name_th=f"ธุรกิจ {i}", category="auto", section_code="C", division_code=str(18 + i))
+        for i in range(5)
+    ]
+    reference = _make_reference(
+        business_types=bts,
+        load_profiles=[
+            LoadProfile(f"BT{i}", "50", "TOU", {"P": 1, "OP": 1, "H": 1}, {"P": 1, "OP": 1, "H": 1}) for i in range(5)
+        ],
+        load_curves=[],
+    )
+
+    ranked = rank_business_types_by_tsic("C", "17", reference, limit=2)
+
+    assert len(ranked) == 2
+
+
+def test_rank_business_types_by_tsic_fills_remaining_with_cluster_representatives():
+    # ไม่มีธุรกิจ section เดียวกันเลย (section "Z" ไม่มีอยู่จริง) — ต้องเติมด้วยตัวแทนแต่ละ cluster
+    bt_a = BusinessType(code="A", name_th="ธุรกิจ A", category="auto", section_code="G", division_code="47")
+    bt_b = BusinessType(code="B", name_th="ธุรกิจ B", category="auto", section_code="I", division_code="55")
+    reference = _make_reference(
+        business_types=[bt_a, bt_b],
+        load_profiles=[
+            LoadProfile("A", "50", "TOU", {"P": 1, "OP": 1, "H": 1}, {"P": 1, "OP": 1, "H": 1}, sample_size=5),
+            LoadProfile("B", "50", "TOU", {"P": 1, "OP": 1, "H": 1}, {"P": 1, "OP": 1, "H": 1}, sample_size=3),
+        ],
+        load_curves=[LoadCurve("A", "50", _flat_hours(5.0)), LoadCurve("B", "50", _flat_hours(9.0))],
+    )
+    clusters = cluster_business_types(reference, k=2)
+
+    ranked = rank_business_types_by_tsic("Z", "00", reference, clusters=clusters, limit=3)
+
+    assert len(ranked) == 2
+    assert {m.business_type_code for m in ranked} == {"A", "B"}
+    assert all(m.match_basis == "common_usage_pattern" for m in ranked)
+
+
+def test_rank_business_types_by_tsic_returns_empty_when_nothing_available():
+    reference = _make_reference(business_types=[], load_profiles=[], load_curves=[])
+    assert rank_business_types_by_tsic("C", "17", reference, clusters=[]) == []
+
+
 # ── เทสต์ integration กับข้อมูลจริงใน data/reference/ (ยืนยันว่าใช้งานกับข้อมูลจริงได้ ไม่ error) ──
 
 
@@ -251,3 +314,11 @@ def test_nearest_business_type_by_tsic_runs_against_real_reference_data(referenc
     # section/division ที่ไม่น่าจะมีธุรกิจไหนตรงเป๊ะในข้อมูลจริงตอนนี้เลย (U = องค์การระหว่างประเทศ)
     match = nearest_business_type_by_tsic("U", "99", reference, clusters=clusters)
     assert match is None or match.business_type_code in reference.business_types
+
+
+def test_rank_business_types_by_tsic_runs_against_real_reference_data(reference):
+    clusters = cluster_business_types(reference)
+    ranked = rank_business_types_by_tsic("U", "99", reference, clusters=clusters, limit=3)
+    assert len(ranked) <= 3
+    assert all(m.business_type_code in reference.business_types for m in ranked)
+    assert len(ranked) == len({m.business_type_code for m in ranked})  # ไม่มีซ้ำ

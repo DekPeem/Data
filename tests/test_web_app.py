@@ -1055,6 +1055,14 @@ def test_business_type_lookup_includes_wikipedia_result_when_found(client, monke
     result = status["result"]
     assert result["wikipedia_result"]["title"] == "ซีพี ออลล์"
     assert result["wikipedia_result"]["summary"] == "ซีพี ออลล์ เป็นบริษัทค้าปลีก..."
+    # "ค้าปลีก" เจอ แต่ไม่มีธุรกิจค้าปลีกที่มีโปรไฟล์จริงตรงในระบบทดสอบ -> เป็นแค่การประมาณการ
+    # (is_approximate) จึงต้อง "ไม่" auto-apply แบบเงียบๆ (suggested_business_type_code เป็น None)
+    # และต้องมีรายการอันดับให้เลือกเองแทน
+    assert result["wikipedia_result"]["guessed_keyword"] == "ค้าปลีก"
+    assert result["wikipedia_result"]["suggested_is_approximate"] is True
+    assert result["wikipedia_result"]["suggested_business_type_code"] is None
+    assert len(result["wikipedia_result"]["ranked_candidates"]) >= 1
+    assert result["wikipedia_result"]["ranked_candidates"][0]["business_type_code"]
 
 
 def test_business_type_lookup_guesses_business_type_from_wikipedia_keyword(client, monkeypatch):
@@ -1096,6 +1104,8 @@ def test_business_type_lookup_guesses_business_type_from_wikipedia_keyword(clien
     assert wp_result["guessed_keyword"] == "โรงแรม"
     assert wp_result["suggested_business_type_code"] == "63201"
     assert wp_result["suggested_is_approximate"] is False
+    # มั่นใจพอ (ไม่ใช่แค่ประมาณการ) -> ไม่ต้องมีรายการอันดับให้เลือก auto-apply ไปเลยพอ
+    assert "ranked_candidates" not in wp_result
 
 
 def test_business_type_lookup_includes_local_dbd_opendata_matches_when_available(client, monkeypatch):

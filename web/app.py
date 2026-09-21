@@ -32,7 +32,7 @@ from amr_mapping.amr_import import (
     import_amr_for_business,
     import_amr_from_files,
 )
-from amr_mapping.clustering import cluster_business_types, nearest_business_type_by_tsic
+from amr_mapping.clustering import cluster_business_types, nearest_business_type_by_tsic, rank_business_types_by_tsic
 from amr_mapping.dataforthai_lookup import lookup_business_category, suggest_companies_with_fallback
 from amr_mapping.dataforthai_lookup import setup_driver as setup_dataforthai_driver
 from amr_mapping.dbd_lookup import BlockedByAntiBot, find_exact_match, lookup_business_type_for_company
@@ -677,10 +677,32 @@ def _run_business_type_lookup_job(
                         guessed_division_code, division_to_business, reference, clusters
                     )
                     wikipedia_result["guessed_keyword"] = guessed_keyword
-                    wikipedia_result["suggested_business_type_code"] = suggested_code
                     wikipedia_result["suggested_business_type_name"] = suggested_name
                     wikipedia_result["suggested_is_approximate"] = is_approximate
                     wikipedia_result["suggested_explanation"] = explanation
+
+                    if is_approximate:
+                        # ไม่มั่นใจพอ (แค่เดาแบบประมาณการ) — ไม่ตั้งค่า/พยากรณ์ให้อัตโนมัติแบบเงียบๆ
+                        # (เคยเจอเคสจริงที่เดาไปโดนธุรกิจคนละแบบเลย เช่น ค้าปลีกไปจับกับการผลิต
+                        # กระดาษ) ให้แสดงรายการอันดับ 1/2/3 ที่ใกล้เคียงที่สุดแทน ให้ผู้ใช้เลือกเอง
+                        suggested_code = None
+                        ranked = rank_business_types_by_tsic(
+                            None, guessed_division_code, reference, clusters=clusters, limit=3
+                        )
+                        wikipedia_result["ranked_candidates"] = [
+                            {
+                                "business_type_code": m.business_type_code,
+                                "business_type_name": (
+                                    reference.business_types[m.business_type_code].name_th
+                                    if m.business_type_code in reference.business_types
+                                    else m.business_type_code
+                                ),
+                                "match_basis": m.match_basis,
+                                "explanation": m.explanation_th,
+                            }
+                            for m in ranked
+                        ]
+                    wikipedia_result["suggested_business_type_code"] = suggested_code
         except Exception as wikipedia_error:  # noqa: BLE001 — ฟรี/เสริมเฉยๆ ล้มแล้วไม่ควรทำให้ job พัง
             log(f"⚠️ ค้นจาก Wikipedia ไม่สำเร็จ: {wikipedia_error}")
 

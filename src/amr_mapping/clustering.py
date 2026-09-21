@@ -302,4 +302,110 @@ def nearest_business_type_by_tsic(
                 ),
             )
 
+
+def rank_business_types_by_tsic(
+    target_section_code: Optional[str],
+    target_division_code: Optional[str],
+    reference: ReferenceData,
+    clusters: Optional[List[BusinessTypeCluster]] = None,
+    limit: int = 3,
+) -> List[NearestBusinessTypeMatch]:
+    """เหมือน nearest_business_type_by_tsic แต่คืน "รายการอันดับ" สูงสุด limit รายการ แทนที่จะ
+    คืนแค่ตัวที่ดีที่สุดตัวเดียว — ใช้ตอนความมั่นใจในการเดาต่ำ (เช่น เดาจากคำสำคัญในข้อความอิสระ
+    ไม่ใช่รหัส TSIC จริง) ซึ่งไม่ควร auto-apply ให้ผู้ใช้แบบเงียบๆ ควรให้ผู้ใช้เห็นตัวเลือกไม่กี่
+    อันดับแรกแล้วเลือกเองแทน (กันเดาผิดแบบไม่รู้ตัว — ดู web/app.py จุดที่ใช้กับผล Wikipedia)
+
+    ลำดับความสำคัญเหมือน nearest_business_type_by_tsic: (1) อยู่ TSIC section เดียวกัน เรียงตาม
+    division ที่ใกล้เคียงที่สุดก่อน (2) เติมที่เหลือด้วยตัวแทนของแต่ละกลุ่มรูปแบบการใช้ไฟ (cluster)
+    เรียงจากกลุ่มที่มีสมาชิกเยอะสุด (พบบ่อยสุด) ก่อน — เอาแค่ตัวแทนที่ดีที่สุด 1 ตัวต่อ 1 cluster
+    กันไม่ให้ธุรกิจที่รูปแบบการใช้ไฟคล้ายกันโผล่ซ้ำกันในลิสต์"""
+
+    if target_section_code is None:
+        target_section_code = section_for_division(target_division_code)
+
+    business_types = reference.business_types
+    profiled_codes = {p.business_type_code for p in reference.load_profiles} - {"DEFAULT"}
+
+    def bt_of(code: str) -> Optional[BusinessType]:
+        return business_types.get(code)
+
+    ranked: List[NearestBusinessTypeMatch] = []
+    seen_codes: set = set()
+
+    if target_section_code:
+        same_section: List[tuple] = []
+        for code in profiled_codes:
+            bt = bt_of(code)
+            if bt and bt.section_code == target_section_code:
+                same_section.append((code, bt))
+        if target_division_code and target_division_code.isdigit():
+            target_div = int(target_division_code)
+
+            def division_distance(item: tuple) -> float:
+                _, bt = item
+                if bt.division_code and bt.division_code.isdigit():
+                    return abs(int(bt.division_code) - target_div)
+                return math.inf
+
+            same_section.sort(key=division_distance)
+        for code, bt in same_section:
+            if code in seen_codes:
+                continue
+            seen_codes.add(code)
+            ranked.append(
+                NearestBusinessTypeMatch(
+                    business_type_code=code,
+                    match_basis="same_section",
+                    explanation_th=(
+                        f'อยู่ TSIC section {target_section_code} เดียวกัน (division ที่เดาไว้คือ '
+                        f'{target_division_code or "?"}) จึงใช้รูปแบบการใช้ไฟของ "{bt.name_th}" แทนแบบประมาณการ'
+                    ),
+                )
+            )
+            if len(ranked) >= limit:
+                return ranked
+
+    if clusters:
+        counts: Dict[int, int] = {}
+        for c in clusters:
+            counts[c.cluster_id] = counts.get(c.cluster_id, 0) + 1
+
+        def sample_size_of(c: BusinessTypeCluster) -> int:
+            profile = next(
+                (
+                    p
+                    for p in reference.load_profiles
+                    if p.business_type_code == c.business_type_code and p.rate_code == c.rate_code
+                ),
+                None,
+            )
+            return profile.sample_size if profile else 0
+
+        for cluster_id in sorted(counts, key=lambda cid: -counts[cid]):
+            members = sorted(
+                [c for c in clusters if c.cluster_id == cluster_id], key=sample_size_of, reverse=True
+            )
+            for m in members:
+                if m.business_type_code in seen_codes:
+                    continue
+                seen_codes.add(m.business_type_code)
+                bt = bt_of(m.business_type_code)
+                name = bt.name_th if bt else m.business_type_code
+                ranked.append(
+                    NearestBusinessTypeMatch(
+                        business_type_code=m.business_type_code,
+                        match_basis="common_usage_pattern",
+                        explanation_th=(
+                            f'ไม่พบธุรกิจที่ตรง TSIC section {target_section_code or "?"} เป๊ะ จึงใช้รูปแบบ'
+                            f'การใช้ไฟของ "{name}" ({m.shape_label}) เป็นตัวแทนกลุ่มที่พบบ่อย — เป็นค่าประมาณ'
+                            "การคร่าวๆ เท่านั้น"
+                        ),
+                    )
+                )
+                break  # เอาแค่ตัวแทนที่ดีที่สุดของแต่ละ cluster พอ ไม่ให้ธุรกิจรูปแบบใกล้กันซ้ำในลิสต์
+            if len(ranked) >= limit:
+                return ranked
+
+    return ranked
+
     return None

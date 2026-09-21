@@ -289,7 +289,7 @@ async function pollBusinessTypeLookupJob(jobId) {
   lookupBtn.disabled = false;
 
   if (data.status === "error") {
-    lookupStatus.innerHTML = `<div class="lookup-status-text" style="color:#d03b3b;">ค้นหาไม่สำเร็จ: ${data.error || "เกิดข้อผิดพลาด"} (ต้องรันเว็บนี้ในเครื่องที่มี Google Chrome ติดตั้งอยู่)</div>${renderSearchLogDetails(data.logs, true)}`;
+    lookupStatus.innerHTML = `<div class="lookup-status-text" style="color:#d03b3b;">ค้นหาไม่สำเร็จ: ${data.error || "เกิดข้อผิดพลาด"} (ต้องรันเว็บนี้ในเครื่องที่มี Google Chrome ติดตั้งอยู่)</div>${renderSearchLogDetails(data.logs, false)}`;
     return;
   }
 
@@ -354,6 +354,7 @@ async function pollBusinessTypeLookupJob(jobId) {
     // Wikipedia (ฟรี ไม่มีค่าใช้จ่าย) — ช่วยเฉพาะบริษัทใหญ่/มีชื่อเสียงที่มักไม่อยู่ในฐานข้อมูล
     // DBD Open Data ด้านบนพอดี (เพราะเป็นบริษัทเก่า) — เป็นข้อความอิสระประกอบการตัดสินใจเท่านั้น
     // ไม่ใช่รหัส TSIC จึงเลือกประเภทธุรกิจให้อัตโนมัติไม่ได้
+    let rankedCandidatesButtonsHtml = "";
     if (wikipedia_result) {
       // เนื้อหามาจาก Wikipedia (ใครก็แก้ไขได้) — escape ก่อนใส่ลง innerHTML เหมือน log details
       const wpTitle = wikipedia_result.title.replace(/</g, "&lt;");
@@ -367,21 +368,58 @@ async function pollBusinessTypeLookupJob(jobId) {
       const dbdOpendataAlreadyApplied =
         dbd_opendata_exact_match_index !== null && dbd_opendata_exact_match_index !== undefined;
       if (!dbdOpendataAlreadyApplied) {
-        html += buildKeywordGuessMessage(wikipedia_result);
+        if (wikipedia_result.suggested_business_type_code) {
+          // มั่นใจพอ (ตรง TSIC division เป๊ะ) — auto-apply ไปเลยเหมือนเดิม
+          html += buildKeywordGuessMessage(wikipedia_result);
+        } else if (wikipedia_result.ranked_candidates && wikipedia_result.ranked_candidates.length) {
+          // แค่เดาแบบประมาณการ (ไม่มั่นใจพอ) — ไม่ auto-apply ให้เงียบๆ อีกต่อไป (เคยเจอเดาผิด
+          // แบบไม่รู้ตัว เช่น ค้าปลีกไปจับกับการผลิตกระดาษ) โชว์เป็นรายการอันดับ 1/2/3 ให้เลือกเองแทน
+          html += `<div class="lookup-status-text" style="margin-top:4px;">🔤 เดาจากคำว่า "${wikipedia_result.guessed_keyword}" ได้ไม่มั่นใจพอที่จะเลือกให้เอง — นี่คือธุรกิจที่ใกล้เคียงที่สุด ${wikipedia_result.ranked_candidates.length} อันดับ เลือกอันที่ใช่เอง:</div>`;
+          rankedCandidatesButtonsHtml = `
+            <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px;">
+              ${wikipedia_result.ranked_candidates
+                .map(
+                  (c, i) => `
+                <div class="lookup-candidate">
+                  <div>
+                    <div class="lookup-candidate-name">อันดับ ${i + 1}: ${c.business_type_name}</div>
+                    <div class="lookup-candidate-meta">${c.explanation}</div>
+                  </div>
+                  <button type="button" class="lookup-pick-btn" data-rankidx="${i}">เลือกอันนี้</button>
+                </div>`
+                )
+                .join("")}
+            </div>`;
+          html += rankedCandidatesButtonsHtml;
+        }
       }
     }
 
-    lookupStatus.innerHTML = html + renderSearchLogDetails(data.logs, true);
+    lookupStatus.innerHTML = html + renderSearchLogDetails(data.logs, false);
     if (dbdOpendataButtonsHtml) {
       lookupStatus.querySelectorAll(".lookup-pick-btn[data-dbdidx]").forEach((btn) => {
         btn.addEventListener("click", () => applyBusinessTypeSuggestion(dbd_opendata_matches[Number(btn.dataset.dbdidx)]));
+      });
+    }
+    if (rankedCandidatesButtonsHtml) {
+      lookupStatus.querySelectorAll(".lookup-pick-btn[data-rankidx]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const candidate = wikipedia_result.ranked_candidates[Number(btn.dataset.rankidx)];
+          const autoForecasted = applyBusinessTypeToForm(candidate.business_type_code);
+          const note = autoForecasted ? " — พยากรณ์ให้อัตโนมัติแล้วด้านล่าง" : "";
+          const msg = document.createElement("div");
+          msg.className = "lookup-status-text";
+          msg.style.marginTop = "8px";
+          msg.textContent = `✅ ตั้งประเภทธุรกิจเป็น "${candidate.business_type_name}" แล้ว${note}`;
+          lookupStatus.appendChild(msg);
+        });
       });
     }
     return;
   }
 
   if (!candidates.length) {
-    lookupStatus.innerHTML = `<div class="lookup-status-text">ไม่พบบริษัทนี้ใน DBD DataWarehouse — กรุณาเลือกประเภทธุรกิจเองด้านบน</div>${renderSearchLogDetails(data.logs, true)}`;
+    lookupStatus.innerHTML = `<div class="lookup-status-text">ไม่พบบริษัทนี้ใน DBD DataWarehouse — กรุณาเลือกประเภทธุรกิจเองด้านบน</div>${renderSearchLogDetails(data.logs, false)}`;
   } else if (exact_match_index !== null && exact_match_index !== undefined) {
     applyBusinessTypeSuggestion(candidates[exact_match_index]);
   } else if (candidates.length === 1) {
