@@ -1057,6 +1057,47 @@ def test_business_type_lookup_includes_wikipedia_result_when_found(client, monke
     assert result["wikipedia_result"]["summary"] == "ซีพี ออลล์ เป็นบริษัทค้าปลีก..."
 
 
+def test_business_type_lookup_guesses_business_type_from_wikipedia_keyword(client, monkeypatch):
+    """ถ้าข้อความสรุปจาก Wikipedia มีคำสำคัญที่รู้จัก (ดู keyword_classify.py) เช่น "โรงแรม" ต้อง
+    เดาประเภทธุรกิจให้ (พร้อมบอกคำที่ใช้เดาชัดเจน — ไม่ใช่รหัส TSIC จริง) เพื่อให้พิมพ์ชื่อบริษัท
+    ครั้งเดียวแล้วได้ผลพยากรณ์เลยแม้ตอน DBD DataWarehouse บล็อกอยู่"""
+
+    from amr_mapping.dbd_lookup import BlockedByAntiBot
+    from amr_mapping.wikipedia_lookup import WikipediaCompanyInfo
+
+    def fake_lookup(company_name, log=lambda m: None, headless=True):
+        raise BlockedByAntiBot("Incapsula incident ID: 222")
+
+    monkeypatch.setattr(app_module, "lookup_business_type_for_company", fake_lookup)
+    monkeypatch.setattr(app_module, "setup_dataforthai_driver", lambda headless=True: (_ for _ in ()).throw(Exception("no chrome")))
+    monkeypatch.setattr(app_module, "suggest_companies_with_fallback", lambda *a, **k: [])
+    monkeypatch.setattr(
+        app_module,
+        "search_wikipedia_company",
+        lambda company_name, log=lambda m: None: WikipediaCompanyInfo(
+            title="บริษัท ทดสอบ จำกัด",
+            summary="บริษัท ทดสอบ จำกัด เป็นเจ้าของโรงแรมหลายแห่งในประเทศไทย",
+            url="https://th.wikipedia.org/wiki/ทดสอบ",
+        ),
+    )
+
+    res = client.post("/api/business-type-lookup", json={"company_name": "บริษัท ทดสอบ จำกัด"})
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/business-type-lookup/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    wp_result = status["result"]["wikipedia_result"]
+    assert wp_result["guessed_keyword"] == "โรงแรม"
+    assert wp_result["suggested_business_type_code"] == "63201"
+    assert wp_result["suggested_is_approximate"] is False
+
+
 def test_business_type_lookup_includes_local_dbd_opendata_matches_when_available(client, monkeypatch):
     """ถ้าเคยดึงฐานข้อมูล DBD Open Data มาเก็บในเครื่องไว้แล้ว (ดู dbd_opendata.py) ตอน DBD
     DataWarehouse บล็อก ต้องลองค้นจากฐานข้อมูลนี้ด้วย (ค้นออฟไลน์ เร็วกว่า) แล้วใส่ผลลัพธ์กลับมา"""

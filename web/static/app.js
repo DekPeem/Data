@@ -185,14 +185,12 @@ businessTypeSelect.addEventListener("change", () => {
 const lookupBtn = document.getElementById("lookup-business-type-btn");
 const lookupStatus = document.getElementById("business-type-lookup-status");
 
-// สร้างข้อความแจ้งผล + ตั้งค่า dropdown/พยากรณ์ให้อัตโนมัติ (side effect) — แยกออกมาจาก
-// applyBusinessTypeSuggestion เพื่อให้จุดอื่น (เช่น ผลจากฐานข้อมูล DBD Open Data ตอน DBD
-// DataWarehouse บล็อก) เอาข้อความนี้ไปต่อท้าย html อื่นได้ แทนที่จะเขียนทับ lookupStatus ทั้งหมด
-function buildBusinessTypeSuggestionMessage(candidate) {
-  if (!candidate.suggested_business_type_code) {
-    return `<div class="lookup-status-text">พบข้อมูล TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} แต่ยังไม่มีโปรไฟล์อ้างอิงของหมวดนี้ในระบบ กรุณาเลือกประเภทธุรกิจที่ใกล้เคียงเองด้านบน</div>`;
-  }
-  businessTypeSelect.value = candidate.suggested_business_type_code;
+// ตั้งค่า dropdown ประเภทธุรกิจ + พยากรณ์ให้อัตโนมัติถ้ามีรหัสอัตรา default อยู่แล้ว (side effect
+// ล้วนๆ ไม่คืนข้อความ) — แยกออกมาให้ทั้ง buildBusinessTypeSuggestionMessage (แนะนำจาก TSIC จริง)
+// และ buildKeywordGuessMessage (เดาจากคำสำคัญใน Wikipedia) เรียกใช้ร่วมกันได้ คืนค่า true ถ้า
+// พยากรณ์ให้อัตโนมัติจริง (มีรหัสอัตรา default ให้ใช้)
+function applyBusinessTypeToForm(businessTypeCode) {
+  businessTypeSelect.value = businessTypeCode;
   updateRateCodeOptions();
 
   const autoForecasted = Boolean(rateCodeSelect.value);
@@ -201,6 +199,17 @@ function buildBusinessTypeSuggestionMessage(candidate) {
       resultArea.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   }
+  return autoForecasted;
+}
+
+// สร้างข้อความแจ้งผล + ตั้งค่า dropdown/พยากรณ์ให้อัตโนมัติ (side effect) — แยกออกมาจาก
+// applyBusinessTypeSuggestion เพื่อให้จุดอื่น (เช่น ผลจากฐานข้อมูล DBD Open Data ตอน DBD
+// DataWarehouse บล็อก) เอาข้อความนี้ไปต่อท้าย html อื่นได้ แทนที่จะเขียนทับ lookupStatus ทั้งหมด
+function buildBusinessTypeSuggestionMessage(candidate) {
+  if (!candidate.suggested_business_type_code) {
+    return `<div class="lookup-status-text">พบข้อมูล TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} แต่ยังไม่มีโปรไฟล์อ้างอิงของหมวดนี้ในระบบ กรุณาเลือกประเภทธุรกิจที่ใกล้เคียงเองด้านบน</div>`;
+  }
+  const autoForecasted = applyBusinessTypeToForm(candidate.suggested_business_type_code);
   const autoForecastNote = autoForecasted
     ? ` — พยากรณ์ให้อัตโนมัติแล้วด้านล่าง (ปรับรหัสอัตรา/KVA/Solar แล้วกดพยากรณ์ซ้ำได้ถ้าค่าเริ่มต้นไม่ตรง)`
     : "";
@@ -209,6 +218,24 @@ function buildBusinessTypeSuggestionMessage(candidate) {
     return `<div class="lookup-status-text">⚠️ ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} — ไม่มีธุรกิจนี้ตรงๆ ในระบบ จึงตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" แทนแบบประมาณการ (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)${autoForecastNote}<br><span style="color:#8996ab;">${candidate.suggested_explanation}</span></div>`;
   }
   return `<div class="lookup-status-text">✅ ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} → ตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" ให้อัตโนมัติแล้ว (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)${autoForecastNote}</div>`;
+}
+
+// สร้างข้อความแจ้งผลของการเดาจากคำสำคัญใน Wikipedia (ดู keyword_classify.py ฝั่ง backend) — ต่าง
+// จาก buildBusinessTypeSuggestionMessage ตรงที่นี่ "ไม่ใช่รหัส TSIC จริง" แค่เจอคำสำคัญตรงตัวใน
+// ข้อความอิสระ จึงต้องบอกให้ชัดเจนกว่าว่าเป็นการเดา ไม่ใช่ข้อมูลทางการ ป้องกันผู้ใช้เข้าใจผิดว่า
+// แม่นยำเท่าผลจาก DBD
+function buildKeywordGuessMessage(wikipediaResult) {
+  if (!wikipediaResult.suggested_business_type_code) {
+    return "";
+  }
+  const autoForecasted = applyBusinessTypeToForm(wikipediaResult.suggested_business_type_code);
+  const autoForecastNote = autoForecasted
+    ? ` — พยากรณ์ให้อัตโนมัติแล้วด้านล่าง (ปรับรหัสอัตรา/KVA/Solar แล้วกดพยากรณ์ซ้ำได้ถ้าค่าเริ่มต้นไม่ตรง)`
+    : "";
+  const approxNote = wikipediaResult.suggested_is_approximate
+    ? `<br><span style="color:#8996ab;">${wikipediaResult.suggested_explanation}</span>`
+    : "";
+  return `<div class="lookup-status-text" style="margin-top:4px;">🔤 เดาประเภทธุรกิจจากคำว่า "${wikipediaResult.guessed_keyword}" ที่พบในข้อความ Wikipedia (ไม่ใช่รหัส TSIC ทางการ เดาแบบจับคำสำคัญตรงตัวเท่านั้น) → ตั้งประเภทธุรกิจเป็น "${wikipediaResult.suggested_business_type_name}" ให้ชั่วคราว${autoForecastNote} — ตรวจสอบ/เปลี่ยนเองได้ด้านบนเสมอ${approxNote}</div>`;
 }
 
 function applyBusinessTypeSuggestion(candidate) {
@@ -333,6 +360,15 @@ async function pollBusinessTypeLookupJob(jobId) {
       const wpSummary = wikipedia_result.summary.replace(/</g, "&lt;");
       html += `<div class="lookup-status-text" style="margin-top:8px;">📖 พบข้อมูลจาก <a href="${wikipedia_result.url}" target="_blank" rel="noopener">Wikipedia: ${wpTitle}</a> (ใช้ประกอบการตัดสินใจเท่านั้น ไม่ใช่แหล่งข้อมูลทางการ):</div>`;
       html += `<div class="lookup-status-text" style="margin-top:4px;color:#8996ab;">${wpSummary}</div>`;
+
+      // ถ้าฐานข้อมูล DBD Open Data เจอชื่อตรงเป๊ะไปแล้วด้านบน (ข้อมูลทางการ น่าเชื่อถือกว่า) จะไม่
+      // เอาการเดาจากคำสำคัญใน Wikipedia (แม่นยำน้อยกว่ามาก) มาตั้งค่า/พยากรณ์ทับอีกรอบ — กันสับสน
+      // ว่าใช้ผลจากไหนกันแน่ และกันพยากรณ์ซ้ำสองรอบโดยไม่จำเป็น
+      const dbdOpendataAlreadyApplied =
+        dbd_opendata_exact_match_index !== null && dbd_opendata_exact_match_index !== undefined;
+      if (!dbdOpendataAlreadyApplied) {
+        html += buildKeywordGuessMessage(wikipedia_result);
+      }
     }
 
     lookupStatus.innerHTML = html + renderSearchLogDetails(data.logs, true);

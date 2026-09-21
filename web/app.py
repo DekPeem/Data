@@ -39,6 +39,7 @@ from amr_mapping.dbd_lookup import BlockedByAntiBot, find_exact_match, lookup_bu
 from amr_mapping.dbd_opendata import fetch_all as fetch_dbd_opendata
 from amr_mapping.dbd_opendata import is_db_available as dbd_opendata_is_available
 from amr_mapping.dbd_opendata import search_juristic_person
+from amr_mapping.keyword_classify import guess_tsic_division
 from amr_mapping.loader import (
     DEFAULT_DATA_DIR,
     load_import_log_local,
@@ -664,6 +665,22 @@ def _run_business_type_lookup_job(
             wp = search_wikipedia_company(company_name, log=log)
             if wp:
                 wikipedia_result = {"title": wp.title, "summary": wp.summary, "url": wp.url}
+
+                # ลองเดาประเภทธุรกิจจากคำสำคัญในข้อความ Wikipedia (ดู keyword_classify.py) —
+                # ไม่ใช่รหัส TSIC จริง แค่จับคำตรงตัว จึงต้องบอกผู้ใช้ชัดเจนเสมอว่าเป็นการเดา
+                # (ดู guessed_keyword) ไม่ใช่ข้อมูลทางการเหมือนผลจาก DBD DataWarehouse/Open Data
+                guess = guess_tsic_division(f"{wp.title} {wp.summary}")
+                if guess:
+                    guessed_division_code, guessed_keyword = guess
+                    log(f"🔤 เดาประเภทธุรกิจจากคำว่า '{guessed_keyword}' ในข้อความ Wikipedia")
+                    suggested_code, suggested_name, is_approximate, explanation = _suggest_business_type_for_division(
+                        guessed_division_code, division_to_business, reference, clusters
+                    )
+                    wikipedia_result["guessed_keyword"] = guessed_keyword
+                    wikipedia_result["suggested_business_type_code"] = suggested_code
+                    wikipedia_result["suggested_business_type_name"] = suggested_name
+                    wikipedia_result["suggested_is_approximate"] = is_approximate
+                    wikipedia_result["suggested_explanation"] = explanation
         except Exception as wikipedia_error:  # noqa: BLE001 — ฟรี/เสริมเฉยๆ ล้มแล้วไม่ควรทำให้ job พัง
             log(f"⚠️ ค้นจาก Wikipedia ไม่สำเร็จ: {wikipedia_error}")
 
