@@ -202,12 +202,28 @@ function applyBusinessTypeToForm(businessTypeCode) {
   return autoForecasted;
 }
 
+// แสดงรายละเอียดดิบจากฐานข้อมูล DBD Open Data ที่ backend ส่งมาให้อยู่แล้ว (reg_date/capital/
+// ที่อยู่) แต่ก่อนหน้านี้หน้าเว็บยังไม่เคยเอามาโชว์เลย (มีแค่ชื่อ+TSIC) — ไม่พยายาม parse/แปลง
+// รูปแบบวันที่หรือตัวเลขใดๆ เอง (ไม่รู้ format ที่แน่นอนจากไฟล์ DBD ต้นทาง) แสดงค่าดิบตรงๆ ตามที่
+// backend ส่งมาให้ปลอดภัยกว่า คืนสตริงว่างถ้าไม่มีข้อมูลอะไรให้แสดงเลย
+function formatDbdOpendataDetails(m) {
+  const rows = [];
+  if (m.reg_date) rows.push(`จดทะเบียนเมื่อ ${m.reg_date}`);
+  if (m.capital) rows.push(`ทุนจดทะเบียน ${m.capital} บาท`);
+  const location = [m.district, m.province].filter(Boolean).join(" ");
+  if (location) rows.push(`ที่ตั้ง ${location}`);
+  if (!rows.length) return "";
+  return `<div style="color:#8996ab;">${rows.join(" · ")}</div>`;
+}
+
 // สร้างข้อความแจ้งผล + ตั้งค่า dropdown/พยากรณ์ให้อัตโนมัติ (side effect) — แยกออกมาจาก
 // applyBusinessTypeSuggestion เพื่อให้จุดอื่น (เช่น ผลจากฐานข้อมูล DBD Open Data ตอน DBD
 // DataWarehouse บล็อก) เอาข้อความนี้ไปต่อท้าย html อื่นได้ แทนที่จะเขียนทับ lookupStatus ทั้งหมด
 function buildBusinessTypeSuggestionMessage(candidate) {
+  const details = formatDbdOpendataDetails(candidate);
+
   if (!candidate.suggested_business_type_code) {
-    return `<div class="lookup-status-text">พบข้อมูล TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} แต่ยังไม่มีโปรไฟล์อ้างอิงของหมวดนี้ในระบบ กรุณาเลือกประเภทธุรกิจที่ใกล้เคียงเองด้านบน</div>`;
+    return `<div class="lookup-status-text">พบข้อมูล TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} แต่ยังไม่มีโปรไฟล์อ้างอิงของหมวดนี้ในระบบ กรุณาเลือกประเภทธุรกิจที่ใกล้เคียงเองด้านบน${details}</div>`;
   }
   const autoForecasted = applyBusinessTypeToForm(candidate.suggested_business_type_code);
   const autoForecastNote = autoForecasted
@@ -215,9 +231,9 @@ function buildBusinessTypeSuggestionMessage(candidate) {
     : "";
 
   if (candidate.suggested_is_approximate) {
-    return `<div class="lookup-status-text">⚠️ ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} — ไม่มีธุรกิจนี้ตรงๆ ในระบบ จึงตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" แทนแบบประมาณการ (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)${autoForecastNote}<br><span style="color:#8996ab;">${candidate.suggested_explanation}</span></div>`;
+    return `<div class="lookup-status-text">⚠️ ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} — ไม่มีธุรกิจนี้ตรงๆ ในระบบ จึงตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" แทนแบบประมาณการ (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)${autoForecastNote}<br><span style="color:#8996ab;">${candidate.suggested_explanation}</span>${details}</div>`;
   }
-  return `<div class="lookup-status-text">✅ ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} → ตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" ให้อัตโนมัติแล้ว (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)${autoForecastNote}</div>`;
+  return `<div class="lookup-status-text">✅ ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} → ตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" ให้อัตโนมัติแล้ว (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)${autoForecastNote}${details}</div>`;
 }
 
 // สร้างข้อความแจ้งผลของการเดาจากคำสำคัญใน Wikipedia (ดู keyword_classify.py ฝั่ง backend) — ต่าง
@@ -336,6 +352,7 @@ async function pollBusinessTypeLookupJob(jobId) {
                   <div>
                     <div class="lookup-candidate-name">${m.name}${m.status === "dissolution" ? " (เลิกกิจการ)" : ""}</div>
                     <div class="lookup-candidate-meta">${m.tsic_code ? `TSIC ${m.tsic_code} - ${m.tsic_name_th || ""}` : "ไม่มีข้อมูลวัตถุประสงค์ในทะเบียน"}</div>
+                    <div class="lookup-candidate-meta">${formatDbdOpendataDetails(m)}</div>
                   </div>
                   <button type="button" class="lookup-pick-btn" data-dbdidx="${i}">เลือกอันนี้</button>
                 </div>`
