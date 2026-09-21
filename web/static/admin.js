@@ -668,13 +668,12 @@ function renderVerifyPanel(code) {
         จะเดาให้เองจากโครงสร้าง TSIC (แก้ไขเองได้เสมอถ้าไม่ตรง):
       </div>
       <div class="verify-row-fields">
-        <div class="form-field">
-          <label>Section code</label>
-          <input id="verify-section-code-${code}" type="text" maxlength="1">
-        </div>
-        <div class="form-field">
-          <label>ชื่อ Section (TH)</label>
-          <input id="verify-section-name-${code}" type="text">
+        <div class="form-field" style="grid-column: span 2;">
+          <label>Section (TSIC)</label>
+          <select id="verify-section-select-${code}">
+            <option value="">-- ยังไม่ระบุ --</option>
+            ${TSIC_SECTIONS.map((s) => `<option value="${s.code}">${s.code} · ${s.name_th} (Division ${s.from}-${s.to})</option>`).join("")}
+          </select>
         </div>
         <div class="form-field">
           <label>Division code</label>
@@ -692,8 +691,8 @@ function renderVerifyPanel(code) {
     </div>`;
 
   panel.querySelector(".verify-search-btn").addEventListener("click", () => runVerifyLookup(code));
-  document.getElementById(`verify-section-code-${code}`).addEventListener("input", () => {
-    document.getElementById(`verify-section-code-${code}`).dataset.userEdited = "1";
+  document.getElementById(`verify-section-select-${code}`).addEventListener("change", () => {
+    document.getElementById(`verify-section-select-${code}`).dataset.userEdited = "1";
   });
   document.getElementById(`verify-division-code-${code}`).addEventListener("input", () => {
     autofillSectionFromDivision(code);
@@ -702,15 +701,14 @@ function renderVerifyPanel(code) {
 }
 
 // เดา Section ให้อัตโนมัติทุกครั้งที่ Division code เปลี่ยน (ทั้งตอนพิมพ์เองหรือเติมจากผลค้นหา) —
-// เว้นแต่ผู้ใช้เคยแก้ Section code เองมาก่อนแล้ว (ไม่อยากไปทับค่าที่แก้ไว้ตั้งใจ)
+// เว้นแต่ผู้ใช้เคยเลือก Section เองมาก่อนแล้ว (ไม่อยากไปทับค่าที่เลือกไว้ตั้งใจ)
 function autofillSectionFromDivision(code) {
-  const sectionCodeInput = document.getElementById(`verify-section-code-${code}`);
-  if (sectionCodeInput.dataset.userEdited) return;
+  const sectionSelect = document.getElementById(`verify-section-select-${code}`);
+  if (sectionSelect.dataset.userEdited) return;
 
   const divisionCode = document.getElementById(`verify-division-code-${code}`).value.trim();
   const section = sectionForDivision(divisionCode);
-  sectionCodeInput.value = section ? section.code : "";
-  document.getElementById(`verify-section-name-${code}`).value = section ? section.name_th : "";
+  sectionSelect.value = section ? section.code : "";
 }
 
 async function runVerifyLookup(code) {
@@ -794,8 +792,9 @@ function applyCandidateToFields(code, candidate) {
 
 async function saveHierarchy(code) {
   const saveStatus = document.getElementById(`verify-save-status-${code}`);
-  const section_code = document.getElementById(`verify-section-code-${code}`).value.trim();
-  const section_name_th = document.getElementById(`verify-section-name-${code}`).value.trim();
+  const section_code = document.getElementById(`verify-section-select-${code}`).value.trim();
+  const selectedSection = TSIC_SECTIONS.find((s) => s.code === section_code);
+  const section_name_th = selectedSection ? selectedSection.name_th : "";
   const division_code = document.getElementById(`verify-division-code-${code}`).value.trim();
   const division_name_th = document.getElementById(`verify-division-name-${code}`).value.trim();
 
