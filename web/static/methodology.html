@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>วิธีการคิด/โมเดลที่ใช้ — No AMR</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .manual-toc { display: flex; flex-direction: column; gap: 6px; }
+    .manual-toc a { font-size: 13.5px; color: #2a78d6; text-decoration: none; }
+    .manual-toc a:hover { text-decoration: underline; }
+    .manual-section { padding: 28px; display: flex; flex-direction: column; gap: 12px; scroll-margin-top: 16px; }
+    .manual-section h2 { font-size: 15px; font-weight: 700; margin: 0; }
+    .manual-section p { font-size: 13.5px; line-height: 1.7; color: #2a3548; margin: 0; }
+    .manual-section code {
+      background: rgba(15,23,42,0.06); border-radius: 4px; padding: 1px 6px; font-size: 12.5px;
+      font-family: 'Consolas', 'Courier New', monospace;
+    }
+    .back-to-top { font-size: 12.5px; color: #8996ab; text-decoration: none; align-self: flex-start; }
+    .back-to-top:hover { text-decoration: underline; }
+    .tier-table { border-collapse: collapse; width: 100%; font-size: 13px; }
+    .tier-table th, .tier-table td { border: 1px solid rgba(15,23,42,0.1); padding: 8px 10px; text-align: left; vertical-align: top; }
+    .tier-table th { background: #f7f9fc; font-weight: 700; }
+    .tier-badge {
+      display: inline-block; font-weight: 700; padding: 2px 8px; border-radius: 999px; font-size: 12px;
+    }
+    .step-list { display: flex; flex-direction: column; gap: 10px; margin: 0; padding-left: 20px; }
+    .step-list li { font-size: 13.5px; line-height: 1.7; color: #2a3548; }
+  </style>
+</head>
+<body>
+  <div class="root">
+
+    <header class="header">
+      <div class="header-brand">
+        <div class="logo-mark">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>
+        </div>
+        <div class="header-titles">
+          <div class="header-title">วิธีการคิดและโมเดลที่ใช้ในโปรเจกต์</div>
+          <div class="header-subtitle">อธิบายตรรกะการพยากรณ์ + ขั้นตอนการใช้งานระบบทั้งหมด</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:16px;align-items:center;">
+        <a target="_blank" rel="noopener" href="/manual" style="font-size:13px;color:#2a78d6;text-decoration:none;">📖 คู่มือการใช้งาน</a>
+        <a href="/" style="font-size:13px;color:#2a78d6;text-decoration:none;">← กลับหน้าแรก</a>
+      </div>
+    </header>
+
+    <main class="body-wrap">
+
+      <div id="top" class="card" style="padding: 28px; display: flex; flex-direction: column; gap: 10px;">
+        <div style="font-size: 15px; font-weight: 700;">สารบัญ</div>
+        <div class="manual-toc">
+          <a href="#overview">1. ปัญหาที่ระบบนี้แก้ / แนวคิดหลัก</a>
+          <a href="#match-levels">2. ตรรกะจับคู่โปรไฟล์ — 6 ระดับความแม่นยำ</a>
+          <a href="#kva-scaling">3. การปรับสเกลตามขนาดสัญญา (KVA)</a>
+          <a href="#models-used">4. "โมเดล" ที่ใช้จริงในระบบ</a>
+          <a href="#why-not-ml">5. ทำไมยังไม่ใช้ Machine Learning เต็มรูปแบบ</a>
+          <a href="#lookup-chain">6. ห่วงโซ่การค้นหาประเภทธุรกิจอัตโนมัติ (5 ชั้น)</a>
+          <a href="#usage-steps">7. ขั้นตอนการใช้งานทีละขั้น</a>
+        </div>
+      </div>
+
+      <div id="overview" class="card manual-section">
+        <h2>1. ปัญหาที่ระบบนี้แก้ / แนวคิดหลัก</h2>
+        <p>
+          ผู้ใช้ไฟบางรายยังไม่มีมิเตอร์ AMR (มิเตอร์อัตโนมัติที่วัดค่าไฟรายช่วงเวลาได้จริง) —
+          กฟภ. จึงไม่มีข้อมูล "รูปแบบการใช้ไฟจริง" ของรายนั้นเลย ระบบนี้จึง <b>ประมาณการ</b>
+          โปรไฟล์การใช้ไฟ 3 ช่วง (Peak / Off-Peak / Holiday) ให้แทน โดยอ้างอิงจาก
+          <b>ค่าเฉลี่ยการใช้ไฟจริงของผู้ใช้ไฟรายอื่นที่ประกอบธุรกิจ+ใช้อัตราเดียวกัน</b>
+          (ข้อมูลที่นำเข้าจาก AMR จริงของบัญชีอื่นที่มีมิเตอร์อยู่แล้ว) แนวคิดคือ
+          <b>"ธุรกิจประเภทเดียวกัน มักมีรูปแบบการใช้ไฟฟ้าคล้ายกัน"</b> — ยิ่งมีข้อมูลจริงสะสมมาก
+          ยิ่งพยากรณ์แม่นขึ้นเรื่อยๆ โดยไม่ต้องรอให้ทุกรายติดตั้ง AMR ก่อน
+        </p>
+        <a class="back-to-top" href="#top">↑ กลับไปสารบัญ</a>
+      </div>
+
+      <div id="match-levels" class="card manual-section">
+        <h2>2. ตรรกะจับคู่โปรไฟล์ — 6 ระดับความแม่นยำ</h2>
+        <p>
+          เวลาพยากรณ์ ระบบจะหาโปรไฟล์อ้างอิงที่ "ใกล้เคียงที่สุดเท่าที่มีข้อมูลจริงรองรับ" ตาม
+          ลำดับนี้เสมอ (แม่นสุดก่อน ตกลงมาทีละขั้นถ้าไม่มีข้อมูล) — ผลลัพธ์ทุกครั้งจะบอกด้วยว่า
+          จับคู่ได้ระดับไหน ไม่มีการปิดบังว่าเป็นค่าประมาณการ:
+        </p>
+        <table class="tier-table">
+          <tr><th>ระดับ</th><th>เงื่อนไข</th><th>ความหมาย</th></tr>
+          <tr>
+            <td><span class="tier-badge" style="background:#e8f7ec;color:#0ca30c;">EXACT</span></td>
+            <td>ตรงประเภทธุรกิจ + อัตรา + สถานะ Solar (ถ้าทราบ)</td>
+            <td>แม่นยำที่สุด — มีข้อมูลจริงของคู่นี้เป๊ะๆ</td>
+          </tr>
+          <tr>
+            <td><span class="tier-badge" style="background:#fff7e6;color:#a5670b;">SOLAR_MISMATCH</span></td>
+            <td>ตรงธุรกิจ+อัตรา แต่ไม่มีโปรไฟล์ของสถานะ Solar ที่ตรงกัน</td>
+            <td>ยังดีกว่าตกไปธุรกิจอื่น — แค่สถานะ Solar ไม่ตรง</td>
+          </tr>
+          <tr>
+            <td><span class="tier-badge" style="background:#eef3fa;color:#184f95;">BUSINESS_ONLY</span></td>
+            <td>ตรงประเภทธุรกิจ แต่ไม่ตรง/ไม่ทราบอัตรา</td>
+            <td>ใช้รูปแบบการใช้ไฟของธุรกิจเดียวกัน อัตราต่างออกไป</td>
+          </tr>
+          <tr>
+            <td><span class="tier-badge" style="background:#eef3fa;color:#184f95;">DIVISION_ONLY</span></td>
+            <td>ไม่มีข้อมูลธุรกิจนี้ตรงๆ แต่มีธุรกิจอื่นใน TSIC division เดียวกัน</td>
+            <td>ยังอยู่กลุ่มอุตสาหกรรมเดียวกัน (ต้องรู้ TSIC division ของทั้งสองฝั่ง)</td>
+          </tr>
+          <tr>
+            <td><span class="tier-badge" style="background:#fff7e6;color:#a5670b;">RATE_ONLY</span></td>
+            <td>ไม่ทราบ/ไม่ตรงธุรกิจ แต่ตรงประเภทอัตรา</td>
+            <td>ประมาณการหยาบจากอัตราเดียวกันเท่านั้น</td>
+          </tr>
+          <tr>
+            <td><span class="tier-badge" style="background:rgba(15,23,42,0.08);color:#55647a;">DEFAULT</span></td>
+            <td>ไม่พบข้อมูลที่ตรงกันเลย</td>
+            <td>ใช้ค่ากลางของระบบ (ประมาณการหยาบที่สุด)</td>
+          </tr>
+        </table>
+        <p>
+          โค้ดจริงอยู่ที่ <code>src/amr_mapping/mapping.py</code> ฟังก์ชัน
+          <code>find_load_profile()</code> — สถานะ Solar (<code>has_solar</code>) มีผลแค่ชั้น
+          EXACT เท่านั้น ชั้นที่ประมาณการอยู่แล้วไม่กรอง Solar ซ้อนเพิ่ม เพราะความแม่นยำต่ำอยู่
+          แล้วการกรองซ้อนจะยิ่งลดตัวเลือกโดยไม่ได้ช่วยอะไร
+        </p>
+        <a class="back-to-top" href="#top">↑ กลับไปสารบัญ</a>
+      </div>
+
+      <div id="kva-scaling" class="card manual-section">
+        <h2>3. การปรับสเกลตามขนาดสัญญา (KVA)</h2>
+        <p>
+          จับคู่โปรไฟล์ได้แล้ว (ข้อ 2) ยังไม่จบ — ค่าเฉลี่ยดิบที่ได้มาอาจมาจากธุรกิจขนาดเล็ก/ใหญ่
+          กว่าลูกค้ารายที่กำลังพยากรณ์ จึง<b>ปรับสเกล</b>ตามอัตราส่วน KVA ตามสัญญาของลูกค้า เทียบ
+          กับ KVA เฉลี่ยของกลุ่มอ้างอิง (<code>contract_kva_ref</code>):
+        </p>
+        <ul class="step-list">
+          <li><b>ทราบ KVA ทั้งคู่</b> → <code>scale_factor = contract_kva ลูกค้า ÷ contract_kva_ref ของโปรไฟล์</code> คูณเข้ากับค่า Demand/Energy ทุกช่วงเวลา</li>
+          <li><b>ลูกค้าทราบ KVA แต่โปรไฟล์ไม่มี KVA อ้างอิง</b> → ใช้ scale_factor = 1.0 (ไม่ปรับ) พร้อมคำเตือน</li>
+          <li><b>ไม่ทราบ KVA ของลูกค้าเลย</b> → ใช้ scale_factor = 1.0 เช่นกัน พร้อมคำเตือน (ปกติมากในโหมดพยากรณ์แบบไม่บันทึกข้อมูล เพราะ KVA เป็นช่องไม่บังคับกรอก)</li>
+        </ul>
+        <p>โค้ดจริงอยู่ที่ <code>estimate_customer_load()</code> ในไฟล์เดียวกัน</p>
+        <a class="back-to-top" href="#top">↑ กลับไปสารบัญ</a>
+      </div>
+
+      <div id="models-used" class="card manual-section">
+        <h2>4. "โมเดล" ที่ใช้จริงในระบบ</h2>
+        <p>
+          <b>4.1 ค่าเฉลี่ยกลุ่ม (group averaging)</b> — โมเดลหลักของระบบทั้งหมด ไม่ซับซ้อน
+          ตรงไปตรงมา และเหมาะกับขนาดข้อมูลปัจจุบัน (แต่ละกลุ่มธุรกิจ+อัตรามีตัวอย่างจริงแค่หลัก
+          สิบ) — โปร่งใส อธิบายได้ทุกตัวเลข ไม่มี "กล่องดำ" ให้สงสัย
+        </p>
+        <p>
+          <b>4.2 k-means clustering</b> (<code>src/amr_mapping/clustering.py</code>) — ใช้ตอน
+          ไม่มีธุรกิจที่ตรงกับ TSIC division เป๊ะเลย จัดกลุ่มธุรกิจที่มีข้อมูลจริงตาม "รูปแบบการ
+          ใช้ไฟ" (shape vector — สัดส่วนการใช้ไฟแต่ละชั่วโมงจาก 24 ชม. ให้ผลรวมเป็น 1.0 เพื่อเทียบ
+          รูปแบบได้โดยไม่ติดเรื่องขนาดธุรกิจ) แล้วเสนอตัวแทนของกลุ่มที่พบบ่อยที่สุดเป็นค่าประมาณ
+          การขั้นสุดท้ายก่อนตกไปที่ DEFAULT — เขียนเองแบบง่าย (farthest-first init + Lloyd's
+          algorithm) ไม่ใช้ไลบรารีหนักอย่าง scikit-learn เพราะข้อมูลมีน้อยและไม่คุ้มเพิ่ม
+          dependency ใหญ่ขนาดนั้น
+        </p>
+        <p>
+          <b>4.3 การจับคู่ TSIC (<code>nearest_business_type_by_tsic</code> /
+          <code>rank_business_types_by_tsic</code>)</b> — เวลาค้นหาประเภทธุรกิจจากชื่อบริษัทได้
+          รหัส TSIC มา แต่ในระบบยังไม่มีธุรกิจที่ตรง division เป๊ะ จะหาธุรกิจอื่นที่อยู่ TSIC
+          section เดียวกันก่อน (เรียงตาม division ใกล้เคียงสุด) ถ้าไม่มีเลยค่อย fallback ไปใช้
+          ตัวแทนกลุ่ม k-means (ข้อ 4.2) — ฟังก์ชัน "rank_" คืนได้หลายอันดับ (1/2/3) ให้ผู้ใช้เลือก
+          เองแทนการ auto-apply แบบมั่นใจเกินจริงตัวเดียว
+        </p>
+        <p>
+          <b>4.4 การจับคำสำคัญ (keyword matching)</b> (<code>src/amr_mapping/keyword_classify.py</code>)
+          — ใช้ตอนมีแค่ข้อความอิสระ (เช่น สรุปจาก Wikipedia) ไม่มีรหัส TSIC มาด้วยเลย สแกนหาคำ
+          ที่รู้จัก (เช่น "โรงแรม", "ร้านสะดวกซื้อ") แล้วแปลงเป็น TSIC division คร่าวๆ — เป็นการ
+          จับคู่คำตรงตัวธรรมดา <b>ไม่ใช่ AI/NLP</b> ใดๆ ทั้งสิ้น จึงต้องบอกผู้ใช้ชัดเจนเสมอว่าเป็น
+          การเดา ไม่ใช่ข้อมูลทางการ
+        </p>
+        <a class="back-to-top" href="#top">↑ กลับไปสารบัญ</a>
+      </div>
+
+      <div id="why-not-ml" class="card manual-section">
+        <h2>5. ทำไมยังไม่ใช้ Machine Learning เต็มรูปแบบ</h2>
+        <p>
+          เคยพิจารณาแล้วว่าจะใช้โมเดล ML (regression/neural network) พยากรณ์ตัวเลข kW/kWh
+          โดยตรงแทนค่าเฉลี่ยกลุ่ม แต่<b>ข้อมูลจริงตอนนี้ยังน้อยเกินไป</b> — แต่ละประเภทธุรกิจมี
+          ตัวอย่างจริงแค่หลักสิบ (บางกลุ่ม 11-14 ตัวอย่าง) ซึ่งน้อยกว่าที่โมเดล ML ทั่วไปต้องการ
+          มากเพื่อเรียนรู้ได้แม่นจริงโดยไม่ "จำข้อมูลผิดๆ" (overfit) — ยิ่งโมเดลซับซ้อนขึ้นเท่าไหร่
+          ยิ่งต้องการข้อมูลมากขึ้นเท่านั้น ด้วยขนาดข้อมูลปัจจุบัน ค่าเฉลี่ยกลุ่มธรรมดา (ข้อ 4.1)
+          เป็นตัวประมาณการที่เหมาะสมและน่าเชื่อถือกว่า
+        </p>
+        <p>
+          แผนในอนาคต: เมื่อมีข้อมูล AMR จริงสะสมมากพอ (หลักร้อยตัวอย่างขึ้นไปต่อประเภทธุรกิจ)
+          ค่อยพิจารณาโมเดล regression ที่คำนึงถึงหลายปัจจัยพร้อมกัน (ธุรกิจ, ฤดูกาล, KVA ฯลฯ) —
+          ไม่ใช่ตอนนี้
+        </p>
+        <a class="back-to-top" href="#top">↑ กลับไปสารบัญ</a>
+      </div>
+
+      <div id="lookup-chain" class="card manual-section">
+        <h2>6. ห่วงโซ่การค้นหาประเภทธุรกิจอัตโนมัติ (5 ชั้น)</h2>
+        <p>
+          ปุ่ม "ค้นหาประเภทธุรกิจอัตโนมัติ" พิมพ์แค่ชื่อบริษัทแล้วให้ระบบหา TSIC/ประเภทธุรกิจให้
+          เอง — ลองหลายแหล่งข้อมูลตามลำดับ เพราะแต่ละแหล่งมีข้อจำกัดต่างกัน:
+        </p>
+        <ol class="step-list">
+          <li><b>DBD DataWarehouse</b> (เว็บทางการของกรมพัฒนาธุรกิจการค้า) — แม่นยำสุด (รหัส TSIC จริง) แต่<b>มักโดนระบบป้องกันบอท (Incapsula) บล็อก</b> ไม่ใช่ว่าไม่พบบริษัทนี้จริงๆ</li>
+          <li><b>dataforthai.com</b> (เว็บบุคคลที่สาม) — ถ้า DBD บล็อก ลองเว็บนี้แทน ได้แค่ "หมวดธุรกิจ" เป็นข้อความอิสระ ไม่ใช่รหัส TSIC</li>
+          <li><b>ฐานข้อมูล DBD Open Data ในเครื่อง</b> — ข้อมูลเปิดของ DBD เอง (ไม่มีระบบกันบอท) ดึงมาเก็บไว้ล่วงหน้าผ่านหน้า Admin แต่ครอบคลุมเฉพาะบริษัทที่ "ตั้งใหม่/เลิกกิจการ" ตั้งแต่ปี 2020 เท่านั้น ไม่ใช่ทะเบียนเต็ม — มีรหัสวัตถุประสงค์ (คล้าย TSIC) ติดมาด้วย จึงจับคู่ประเภทธุรกิจอัตโนมัติได้แม่นถ้าเจอชื่อตรงเป๊ะ</li>
+          <li><b>Wikipedia</b> (ฟรี ไม่มีค่าใช้จ่าย) — ช่วยเฉพาะบริษัทใหญ่/มีชื่อเสียงที่มักไม่อยู่ในข้อ 3 พอดี (เพราะเป็นบริษัทเก่า) ใช้การจับคำสำคัญ (ข้อ 4.4) เดาประเภทธุรกิจจากข้อความสรุป</li>
+          <li><b>เลือกเอง</b> — ถ้าทุกแหล่งหาไม่เจอ/ไม่มั่นใจพอ ระบบจะแสดงตัวเลือกที่ใกล้เคียงที่สุด (สูงสุด 3 อันดับ) ให้เลือกเอง แทนการเดาแบบเงียบๆ ที่อาจผิดได้</li>
+        </ol>
+        <p>
+          ทุกชั้นที่เป็นการ "เดา" (ไม่ใช่รหัส TSIC จริงจากข้อ 1/3) จะถูกทำเครื่องหมายชัดเจนว่าเป็น
+          ค่าประมาณการเสมอ ไม่เนียนว่าเป็นข้อมูลยืนยันแล้ว — และระบบ<b>จะไม่พยายามเลี่ยง/ข้าม
+          ระบบป้องกันบอทของเว็บใดๆ เด็ดขาด</b> ถ้าโดนบล็อกจะแจ้งตรงๆ แล้วลองแหล่งถัดไปแทน
+        </p>
+        <a class="back-to-top" href="#top">↑ กลับไปสารบัญ</a>
+      </div>
+
+      <div id="usage-steps" class="card manual-section">
+        <h2>7. ขั้นตอนการใช้งานทีละขั้น</h2>
+        <p><b>โหมด "พยากรณ์แบบไม่บันทึกข้อมูล" (หน้าแรก)</b></p>
+        <ol class="step-list">
+          <li>พิมพ์ชื่อบริษัท (ไม่บังคับ ใช้แสดงผลเท่านั้น ไม่ส่งไปที่ไหน)</li>
+          <li>กด "🔍 ค้นหาประเภทธุรกิจอัตโนมัติ" (ไม่บังคับ) — ถ้าจับคู่ได้แบบมั่นใจ จะตั้งประเภทธุรกิจ + พยากรณ์ให้ทันที</li>
+          <li>ถ้าไม่มั่นใจพอ ระบบจะให้เลือกจากตัวเลือกอันดับ 1/2/3 หรือพี่เลือกประเภทธุรกิจ/รหัสอัตราเองจาก dropdown ก็ได้เสมอ</li>
+          <li>กรอก KVA ตามสัญญา/สถานะ Solar เพิ่มเติมได้ (ไม่บังคับ) แล้วกด "พยากรณ์" (หรือปล่อยให้ระบบพยากรณ์อัตโนมัติหลังเลือกประเภทธุรกิจ)</li>
+          <li>ดูผล แล้วกด "📥 ดาวน์โหลด Excel" เพื่อเก็บ/ส่งรายงานได้</li>
+        </ol>
+        <p><b>โหมด "ค้นหาในทะเบียนลูกค้า" (หน้าแรก)</b></p>
+        <ol class="step-list">
+          <li>พิมพ์เลขบัญชีผู้ใช้ไฟที่เคยลงทะเบียนไว้แล้ว (customers.csv/customers_local.csv)</li>
+          <li>กด "ค้นหา" — ระบบดึงประเภทธุรกิจ/อัตรา/KVA ของบัญชีนั้นมาพยากรณ์ให้อัตโนมัติ</li>
+        </ol>
+        <p><b>นำเข้า AMR จริง (หน้า Admin)</b></p>
+        <ol class="step-list">
+          <li>เลือกโหมด "ดึงจากเว็บ PEA" (กรอก username/password + ช่วงวันที่) หรือ "แนบไฟล์ที่มีอยู่แล้ว"</li>
+          <li>ปล่อยให้ระบบตรวจจับประเภทธุรกิจ/อัตรา/KVA อัตโนมัติจากหน้าข้อมูลผู้ใช้ไฟของ PEA (แนะนำ) หรือกรอกเองในตัวเลือกขั้นสูง</li>
+          <li>กด "ดาวน์โหลดและนำเข้า" — ข้อมูลเฉลี่ยแบบไม่ระบุตัวตนจะถูกบันทึกลง load_profiles.csv/load_curves.csv (ยิ่งนำเข้าเยอะ ยิ่งพยากรณ์แม่นขึ้น — ดูข้อ 5)</li>
+          <li>ดูผ่าน "หมวดหมู่ธุรกิจทั้งหมดในระบบ" ว่าประเภทไหนมีข้อมูลจริงรองรับแล้วบ้าง</li>
+          <li>(ไม่บังคับ) กด "ดึงข้อมูล DBD Open Data มาเก็บในเครื่อง" เป็นระยะ เพื่อให้ข้อจำกัดในข้อ 6.3 ทันสมัยที่สุด</li>
+        </ol>
+        <a class="back-to-top" href="#top">↑ กลับไปสารบัญ</a>
+      </div>
+
+    </main>
+  </div>
+</body>
+</html>

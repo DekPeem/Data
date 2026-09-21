@@ -24,6 +24,12 @@ def test_index_serves_html(client):
     assert b"<html" in res.data
 
 
+def test_methodology_page_serves_html(client):
+    res = client.get("/methodology")
+    assert res.status_code == 200
+    assert b"<html" in res.data
+
+
 def test_new_forecast_redirects_to_index(client):
     """หน้า /new-forecast แยกเดิมถูกรวมเข้าหน้าแรกเป็นแท็บแล้ว - route เก่ายังอยู่แต่แค่ redirect
     ไป "/" เผื่อมี bookmark/ลิงก์เก่าอ้างถึง"""
