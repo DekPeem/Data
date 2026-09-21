@@ -134,6 +134,51 @@ def test_import_amr_for_business_saves_has_solar_flag(monkeypatch, data_dir):
     assert curve.has_solar is True
 
 
+def test_import_amr_for_business_logs_import_history_per_account(monkeypatch, data_dir):
+    """โหมดนี้ (กรอกประเภทธุรกิจเอง + ดาวน์โหลดจากเว็บ) เดิมไม่เคยบันทึกประวัติการนำเข้าใน
+    เครื่องเลย ทำให้หน้า Admin หาชื่อบริษัทที่นำเข้าผ่านโหมดนี้ไม่เจอ — ต้องอ่านชื่อบริษัทจากหัว
+    รายงานของแต่ละไฟล์ที่ดาวน์โหลดมาได้ แล้วบันทึกแยกทีละบัญชี (accounts อาจมีมากกว่า 1)"""
+
+    def fake_download(username, password, accounts, start_date, end_date, download_dir, log, headless=True):
+        results = []
+        for i, account_no in enumerate(accounts):
+            path = os.path.join(download_dir, f"amr_{account_no}.xls")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(
+                    _SYNTHETIC_HTML_WITH_HEADER_TEMPLATE.format(
+                        account_no=account_no, company_name=f"บริษัท ทดสอบ {i} จำกัด",
+                        meter_no=f"M{i}", tariff="TOU",
+                    )
+                )
+            results.append(
+                DownloadResult(
+                    account_no=account_no, meter_text=f"M{i}", date_from=start_date, date_to=end_date,
+                    file_path=path, success=True,
+                )
+            )
+        return results
+
+    monkeypatch.setattr(amr_import, "download_amr_kw_reports", fake_download)
+
+    amr_import.import_amr_for_business(
+        username="test-user", password="test-pass", accounts=["0199000001", "0199000002"],
+        start_date="2026-07-01", end_date="2026-08-31",
+        business_type_code="TESTBIZ", rate_code="50", contract_kva=1000,
+        source_label="", has_solar=False, data_dir=data_dir,
+    )
+
+    from amr_mapping.loader import load_import_log_local
+
+    entries = load_import_log_local(data_dir / "import_log_local.csv")
+    assert len(entries) == 2
+    accounts_logged = {e["account_no"] for e in entries}
+    assert accounts_logged == {"0199000001", "0199000002"}
+    names_logged = {e["account_no"]: e["company_name"] for e in entries}
+    assert names_logged["0199000001"] == "บริษัท ทดสอบ 0 จำกัด"
+    assert names_logged["0199000002"] == "บริษัท ทดสอบ 1 จำกัด"
+    assert all(e["business_type_code"] == "TESTBIZ" and e["rate_code"] == "50" for e in entries)
+
+
 def test_import_amr_for_business_keeps_download_dir_for_reuse(monkeypatch, data_dir, tmp_path):
     """เปลี่ยนพฤติกรรมจากเดิม (เคยลบไฟล์ดิบทิ้งเสมอ) — ตอนนี้ต้อง "เก็บไว้" แทน เพื่อให้
     รันซ้ำ/นำเข้าเดือนเพิ่มไม่ต้องดาวน์โหลดของเดิมใหม่ (ตามที่ผู้ใช้ขอ)"""

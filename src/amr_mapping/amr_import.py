@@ -172,6 +172,12 @@ def import_amr_for_business(
     amr_downloads/ ที่ root ของ repo — gitignored) ไม่ลบทิ้งอัตโนมัติแล้ว เพื่อให้รันซ้ำ/นำเข้า
     เพิ่มไม่ต้องดาวน์โหลดของเดิมใหม่ (ใช้ cache ตามบัญชี+มิเตอร์+ช่วงวันที่ ดู amr_downloader.py)
 
+    บันทึกประวัติ (import_log_local.csv — ไฟล์ local-only เหมือนโหมดอื่นๆ) แยกทีละบัญชีที่ระบุมา
+    ด้วย (อ่านชื่อบริษัทจากหัวรายงานของไฟล์ที่ดาวน์โหลดมาได้ของบัญชีนั้น) เพื่อให้ตามดูย้อนหลังได้
+    ว่าโปรไฟล์นี้เฉลี่ยมาจากบัญชีจริงไหนบ้าง — ไม่ได้บันทึกเส้นโค้งแยกของแต่ละไซต์ (ต่างจาก
+    import_amr_from_files) เพราะฟังก์ชันนี้เฉลี่ยรวมได้หลายบัญชีเข้าด้วยกันในคำสั่งเดียว ไม่มีเส้น
+    โค้งของบัญชีใดบัญชีหนึ่งแยกเดี่ยวๆ ให้บันทึก
+
     คืนค่า LoadProfile ที่บันทึกไปแล้ว
     """
 
@@ -202,10 +208,44 @@ def import_amr_for_business(
     if source_label:
         notes += f" - {source_label}"
 
-    return _build_profile_from_downloads(
+    profile = _build_profile_from_downloads(
         downloaded_files, business_type_code, rate_code, billing_method, contract_kva, notes, data_dir, log,
         has_solar=has_solar,
     )
+
+    # บันทึกประวัติการนำเข้าในเครื่อง (import_log_local.csv) เหมือน import_amr_from_files —
+    # ฟังก์ชันนี้ (โหมดกรอกประเภทธุรกิจเอง) เดิมไม่เคยบันทึกเลย ทำให้ลิสต์ "ค้นหาบริษัท/ไซต์" ใน
+    # หน้า Admin หาชื่อบริษัทที่นำเข้าผ่านโหมดนี้ไม่เจอ — อ่านหัวรายงานของแต่ละไฟล์ที่ดาวน์โหลด
+    # สำเร็จ (อาจมีหลายบัญชีถ้า accounts ระบุมาหลายเลข) เพื่อเอาชื่อบริษัทจริงมาบันทึกแยกทีละบัญชี
+    # ให้ตรงกับ business_type_code/rate_code ที่ job นี้ resolve ออกมา (ไม่ใช่ตัวโปรไฟล์ที่เฉลี่ย
+    # รวมกันแล้ว ซึ่งไม่มีข้อมูลรายบัญชีเหลืออยู่)
+    logged_accounts = set()
+    for r in results:
+        if not (r.success and r.file_path) or r.account_no in logged_accounts:
+            continue
+        logged_accounts.add(r.account_no)
+        try:
+            header_info = parse_report_header(r.file_path)
+        except Exception as e:  # noqa: BLE001 — อ่านหัวรายงานไม่สำเร็จต้องไม่ทำให้ผลการนำเข้าหลักพัง
+            log(f"⚠️ อ่านหัวรายงานของบัญชี {r.account_no} เพื่อบันทึกประวัติไม่สำเร็จ (ไม่กระทบผลลัพธ์หลัก): {e}")
+            continue
+        company_name = (header_info.get("ชื่อผู้ใช้ไฟ") or "").strip()
+        try:
+            append_import_log_local(
+                {
+                    "imported_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    "business_type_code": business_type_code,
+                    "rate_code": rate_code,
+                    "company_name": company_name,
+                    "account_no": r.account_no,
+                    "has_solar": "true" if has_solar else "false",
+                },
+                data_dir / "import_log_local.csv",
+            )
+        except OSError as e:  # noqa: BLE001 — บันทึก log ไม่สำเร็จ ต้องไม่ทำให้ผลการนำเข้าหลักพังไปด้วย
+            log(f"⚠️ บันทึกประวัติการนำเข้าในเครื่องไม่สำเร็จ (ไม่กระทบผลลัพธ์หลัก): {e}")
+
+    return profile
 
 
 def import_amr_from_files(
