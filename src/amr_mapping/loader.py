@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -216,12 +216,53 @@ def save_load_curves(curves: List[LoadCurve], path: Path) -> None:
                 writer.writerow(row)
 
 
-def upsert_load_curve(curves: List[LoadCurve], new_curve: LoadCurve) -> List[LoadCurve]:
-    """แทนที่เส้นโค้งที่มี key (business_type_code, rate_code) ตรงกัน ด้วยเส้นโค้งใหม่
-    หรือเพิ่มต่อท้ายถ้ายังไม่มีคู่นี้อยู่ (คืน list ใหม่ ไม่แก้ของเดิม)"""
+def _merge_load_curve(old: LoadCurve, new: LoadCurve) -> LoadCurve:
+    """เฉลี่ยถ่วงน้ำหนัก (ตาม sample_size) เส้นโค้งเดิมกับเส้นโค้งใหม่ของ key เดียวกัน แทนที่จะ
+    เขียนทับทิ้งไปเฉยๆ — ยิ่งมีข้อมูลจริงสะสมมาก (นำเข้าหลายรอบ/หลายบัญชีที่ share key เดียวกัน
+    เช่น รหัสอัตรา UNKNOWN) ยิ่งพยากรณ์แม่นขึ้นจริงตามที่ตั้งใจไว้ (ดู /methodology)
 
+    ถ่วงน้ำหนักทีละชั่วโมงแยกตาม day_type — ถ้า day_type ไหนมีแค่ฝั่งเดียว (old หรือ new) ใช้ค่า
+    จากฝั่งนั้นตรงๆ ไม่ถ่วงน้ำหนัก, ถ้ามีทั้งคู่แต่บางชั่วโมงเป็น None (ไม่มีข้อมูล) ในฝั่งใดฝั่งหนึ่ง
+    ใช้ค่าจากฝั่งที่มีข้อมูลแทน (ถ่วงน้ำหนักไม่ได้ถ้ามีแค่ตัวเลขเดียว)"""
+
+    total_n = old.sample_size + new.sample_size
+    if total_n <= 0:
+        return new
+
+    merged_hours: Dict[str, List[Optional[float]]] = {}
+    for day_type in set(old.hours) | set(new.hours):
+        old_h = old.hours.get(day_type)
+        new_h = new.hours.get(day_type)
+        if old_h is None:
+            merged_hours[day_type] = new_h
+            continue
+        if new_h is None:
+            merged_hours[day_type] = old_h
+            continue
+        merged_hours[day_type] = [
+            (ov * old.sample_size + nv * new.sample_size) / total_n
+            if ov is not None and nv is not None
+            else (nv if nv is not None else ov)
+            for ov, nv in zip(old_h, new_h)
+        ]
+
+    if old.contract_kva_ref is not None and new.contract_kva_ref is not None:
+        merged_kva = (old.contract_kva_ref * old.sample_size + new.contract_kva_ref * new.sample_size) / total_n
+    else:
+        merged_kva = new.contract_kva_ref if new.contract_kva_ref is not None else old.contract_kva_ref
+
+    return replace(new, hours=merged_hours, contract_kva_ref=merged_kva, sample_size=total_n)
+
+
+def upsert_load_curve(curves: List[LoadCurve], new_curve: LoadCurve) -> List[LoadCurve]:
+    """เพิ่มเส้นโค้งใหม่ หรือถ้ามีเส้นโค้งของ key (business_type_code, rate_code, has_solar) นี้
+    อยู่แล้ว จะ "เฉลี่ยถ่วงน้ำหนัก" รวมกับของเดิมแทนการเขียนทับทิ้ง (ดู _merge_load_curve — ยิ่งมี
+    ข้อมูลสะสมมาก ยิ่งแม่นขึ้น) คืน list ใหม่เสมอ ไม่แก้ของเดิม"""
+
+    existing = next((c for c in curves if c.key() == new_curve.key()), None)
+    merged = _merge_load_curve(existing, new_curve) if existing is not None else new_curve
     result = [c for c in curves if c.key() != new_curve.key()]
-    result.append(new_curve)
+    result.append(merged)
     return result
 
 
@@ -310,13 +351,38 @@ def save_load_profiles(profiles: List[LoadProfile], path: Path) -> None:
             )
 
 
+def _merge_load_profile(old: LoadProfile, new: LoadProfile) -> LoadProfile:
+    """เฉลี่ยถ่วงน้ำหนัก (ตาม sample_size) โปรไฟล์เดิมกับโปรไฟล์ใหม่ของ key เดียวกัน แทนที่จะ
+    เขียนทับทิ้งไปเฉยๆ — เหตุผลเดียวกับ _merge_load_curve"""
+
+    total_n = old.sample_size + new.sample_size
+    if total_n <= 0:
+        return new
+
+    def wavg(ov: float, nv: float) -> float:
+        return (ov * old.sample_size + nv * new.sample_size) / total_n
+
+    merged_demand = {p: wavg(old.demand_kw.get(p, 0.0), new.demand_kw.get(p, 0.0)) for p in PERIODS}
+    merged_energy = {p: wavg(old.energy_kwh.get(p, 0.0), new.energy_kwh.get(p, 0.0)) for p in PERIODS}
+    if old.contract_kva_ref is not None and new.contract_kva_ref is not None:
+        merged_kva = wavg(old.contract_kva_ref, new.contract_kva_ref)
+    else:
+        merged_kva = new.contract_kva_ref if new.contract_kva_ref is not None else old.contract_kva_ref
+
+    return replace(new, demand_kw=merged_demand, energy_kwh=merged_energy, contract_kva_ref=merged_kva, sample_size=total_n)
+
+
 def upsert_load_profile(profiles: List[LoadProfile], new_profile: LoadProfile) -> List[LoadProfile]:
-    """แทนที่โปรไฟล์ที่มี key (business_type_code, rate_code) ตรงกัน ด้วยโปรไฟล์ใหม่
-    หรือเพิ่มต่อท้ายถ้ายังไม่มีคู่นี้อยู่ (คืน list ใหม่ ไม่แก้ของเดิม)
+    """เพิ่มโปรไฟล์ใหม่ หรือถ้ามีโปรไฟล์ของ key (business_type_code, rate_code, has_solar) นี้
+    อยู่แล้ว จะ "เฉลี่ยถ่วงน้ำหนัก" รวมกับของเดิมแทนการเขียนทับทิ้ง (ดู _merge_load_profile — ยิ่งมี
+    ข้อมูลจริงสะสมมาก เช่นนำเข้าหลายบัญชีที่ share รหัสอัตรา UNKNOWN เดียวกัน ยิ่งพยากรณ์แม่นขึ้น
+    ตามที่ตั้งใจไว้ ไม่ใช่แค่เก็บข้อมูลไซต์ล่าสุดไว้ตัวเดียวเหมือนเดิม) คืน list ใหม่เสมอ ไม่แก้ของเดิม
     """
 
+    existing = next((p for p in profiles if p.key() == new_profile.key()), None)
+    merged = _merge_load_profile(existing, new_profile) if existing is not None else new_profile
     result = [p for p in profiles if p.key() != new_profile.key()]
-    result.append(new_profile)
+    result.append(merged)
     return result
 
 

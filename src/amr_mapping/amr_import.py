@@ -105,11 +105,18 @@ def _build_profile_from_downloads(
     )
 
     reference: ReferenceData = load_reference_data(data_dir)
+    existing_profile = next((p for p in reference.load_profiles if p.key() == new_profile.key()), None)
     updated_profiles = upsert_load_profile(reference.load_profiles, new_profile)
     save_load_profiles(updated_profiles, data_dir / "load_profiles.csv")
+    merge_note = (
+        f" — เฉลี่ยถ่วงน้ำหนักรวมกับข้อมูลเดิม ({existing_profile.sample_size} ตัวอย่าง) เป็น "
+        f"{existing_profile.sample_size + new_profile.sample_size} ตัวอย่างรวม"
+        if existing_profile is not None
+        else ""
+    )
     log(
         f"💾 บันทึกลง {data_dir / 'load_profiles.csv'} แล้ว "
-        f"(key: {business_type_code}, {rate_code}, ติด Solar: {'ใช่' if has_solar else 'ไม่'})"
+        f"(key: {business_type_code}, {rate_code}, ติด Solar: {'ใช่' if has_solar else 'ไม่'}){merge_note}"
     )
 
     # เส้นโค้งกำลังไฟฟ้าเฉลี่ยรายชั่วโมง (ใช้ raw interval readings ทั้งหมดที่รวมมาจากทุกไฟล์

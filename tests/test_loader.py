@@ -18,6 +18,7 @@ from amr_mapping.loader import (
     save_load_curves,
     save_load_profiles,
     upsert_load_curve,
+    upsert_load_profile,
 )
 from amr_mapping.models import BusinessType, LoadCurve, LoadProfile
 
@@ -212,6 +213,122 @@ def test_upsert_load_curve_replaces_same_key():
     updated = next(c for c in result if c.key() == ("A", "1", False))
     assert updated.notes == "ใหม่"
     assert updated.hours["all"][0] == 9.0
+
+
+def test_upsert_load_curve_merges_weighted_average_when_both_have_sample_size():
+    """สองไซต์ share (business_type_code, rate_code, has_solar) เดียวกัน (เช่น รหัสอัตรา UNKNOWN)
+    ต้องเฉลี่ยถ่วงน้ำหนักรวมกัน ไม่ใช่เขียนทับของเดิมทิ้งเฉยๆ — sample_size ต้องรวมกันด้วย"""
+
+    old = LoadCurve(business_type_code="A", rate_code="UNKNOWN", hours={"all": [10.0] * 24}, sample_size=6)
+    new = LoadCurve(business_type_code="A", rate_code="UNKNOWN", hours={"all": [20.0] * 24}, sample_size=6)
+
+    result = upsert_load_curve([old], new)
+
+    assert len(result) == 1
+    merged = result[0]
+    assert merged.sample_size == 12
+    assert merged.hours["all"][0] == 15.0  # ถ่วงน้ำหนักเท่ากัน (6 กับ 6) -> ตรงกลางพอดี
+
+
+def test_upsert_load_curve_merge_respects_unequal_weights():
+    old = LoadCurve(business_type_code="A", rate_code="UNKNOWN", hours={"all": [0.0] * 24}, sample_size=1)
+    new = LoadCurve(business_type_code="A", rate_code="UNKNOWN", hours={"all": [40.0] * 24}, sample_size=3)
+
+    result = upsert_load_curve([old], new)
+
+    merged = result[0]
+    assert merged.sample_size == 4
+    assert merged.hours["all"][0] == 30.0  # (0*1 + 40*3) / 4 = 30
+
+
+def test_upsert_load_curve_merge_uses_available_side_when_hour_missing_on_one_side():
+    old = LoadCurve(business_type_code="A", rate_code="UNKNOWN", hours={"all": [None, 10.0] + [1.0] * 22}, sample_size=2)
+    new = LoadCurve(business_type_code="A", rate_code="UNKNOWN", hours={"all": [5.0, None] + [1.0] * 22}, sample_size=2)
+
+    result = upsert_load_curve([old], new)
+
+    merged = result[0]
+    assert merged.hours["all"][0] == 5.0  # มีแค่ฝั่ง new เท่านั้น
+    assert merged.hours["all"][1] == 10.0  # มีแค่ฝั่ง old เท่านั้น
+
+
+def test_upsert_load_curve_merge_keeps_day_type_present_only_on_one_side():
+    old = LoadCurve(business_type_code="A", rate_code="UNKNOWN", hours={"all": [1.0] * 24, "mon": [2.0] * 24}, sample_size=2)
+    new = LoadCurve(business_type_code="A", rate_code="UNKNOWN", hours={"all": [3.0] * 24}, sample_size=2)
+
+    result = upsert_load_curve([old], new)
+
+    merged = result[0]
+    assert merged.hours["mon"][0] == 2.0  # มีแค่ใน old — ต้องยังอยู่ ไม่หายไปเฉยๆ
+    assert merged.hours["all"][0] == 2.0  # (1*2 + 3*2) / 4
+
+
+def test_upsert_load_curve_falls_back_to_replace_when_no_sample_size_info():
+    """ทั้งคู่ sample_size=0 (ค่า default) — ไม่มีน้ำหนักให้ถ่วง ต้องแค่ใช้ของใหม่แทนของเก่าไปเลย
+    (พฤติกรรมเดิมก่อนมีการเฉลี่ยรวม)"""
+    old = LoadCurve(business_type_code="A", rate_code="1", hours={"all": [1.0] * 24})
+    new = LoadCurve(business_type_code="A", rate_code="1", hours={"all": [9.0] * 24})
+
+    result = upsert_load_curve([old], new)
+
+    assert result[0].hours["all"][0] == 9.0
+    assert result[0].sample_size == 0
+
+
+def test_upsert_load_profile_merges_weighted_average_when_both_have_sample_size():
+    old = LoadProfile(
+        business_type_code="A", rate_code="UNKNOWN", billing_method="TOU",
+        demand_kw={"P": 100.0, "OP": 50.0, "H": 60.0}, energy_kwh={"P": 1000.0, "OP": 500.0, "H": 600.0},
+        contract_kva_ref=1000.0, sample_size=6,
+    )
+    new = LoadProfile(
+        business_type_code="A", rate_code="UNKNOWN", billing_method="TOU",
+        demand_kw={"P": 200.0, "OP": 150.0, "H": 160.0}, energy_kwh={"P": 2000.0, "OP": 1500.0, "H": 1600.0},
+        contract_kva_ref=2000.0, sample_size=6,
+    )
+
+    result = upsert_load_profile([old], new)
+
+    assert len(result) == 1
+    merged = result[0]
+    assert merged.sample_size == 12
+    assert merged.demand_kw["P"] == 150.0
+    assert merged.demand_kw["OP"] == 100.0
+    assert merged.energy_kwh["P"] == 1500.0
+    assert merged.contract_kva_ref == 1500.0
+
+
+def test_upsert_load_profile_merge_uses_present_kva_when_only_one_side_has_it():
+    old = LoadProfile(
+        business_type_code="A", rate_code="UNKNOWN", billing_method="TOU",
+        demand_kw={"P": 1.0, "OP": 1.0, "H": 1.0}, energy_kwh={"P": 1.0, "OP": 1.0, "H": 1.0},
+        contract_kva_ref=None, sample_size=1,
+    )
+    new = LoadProfile(
+        business_type_code="A", rate_code="UNKNOWN", billing_method="TOU",
+        demand_kw={"P": 1.0, "OP": 1.0, "H": 1.0}, energy_kwh={"P": 1.0, "OP": 1.0, "H": 1.0},
+        contract_kva_ref=500.0, sample_size=1,
+    )
+
+    result = upsert_load_profile([old], new)
+
+    assert result[0].contract_kva_ref == 500.0
+
+
+def test_upsert_load_profile_adds_new_entry_when_key_not_seen_before():
+    existing = LoadProfile(
+        business_type_code="A", rate_code="1", billing_method="TOU",
+        demand_kw={"P": 1.0, "OP": 1.0, "H": 1.0}, energy_kwh={"P": 1.0, "OP": 1.0, "H": 1.0}, sample_size=1,
+    )
+    new = LoadProfile(
+        business_type_code="B", rate_code="2", billing_method="TOU",
+        demand_kw={"P": 2.0, "OP": 2.0, "H": 2.0}, energy_kwh={"P": 2.0, "OP": 2.0, "H": 2.0}, sample_size=1,
+    )
+
+    result = upsert_load_profile([existing], new)
+
+    assert len(result) == 2
+    assert any(p.key() == ("B", "2", False) for p in result)
 
 
 def test_customers_local_overrides_same_account_no(tmp_path):
