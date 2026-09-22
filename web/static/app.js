@@ -129,6 +129,7 @@ const rateCodeSelect = document.getElementById("f-rate-code");
 const kvaInput = document.getElementById("f-kva");
 const hasSolarSelect = document.getElementById("f-has-solar");
 const adhocSubmitBtn = document.getElementById("adhoc-submit-btn");
+const adhocSubmitCategoryBtn = document.getElementById("adhoc-submit-category-btn");
 const adhocFormHint = document.getElementById("adhoc-form-hint");
 
 let PROFILE_KEYS = []; // [{business_type_code, rate_code, sample_size}, ...]
@@ -513,16 +514,24 @@ async function runBusinessTypeLookup() {
 
 lookupBtn.addEventListener("click", runBusinessTypeLookup);
 
-async function runForecast() {
+// forceCategoryOnly = true ตอนกดปุ่ม "พยากรณ์ (ใช้ประเภทธุรกิจอย่างเดียว)" — บังคับไม่ส่งรหัสอัตรา
+// ไปเลย ต่อให้ผู้ใช้เผลอเลือกอัตราไว้ในช่องอยู่ก็ตาม เพื่อให้ได้ผลจับคู่ระดับ BUSINESS_ONLY ชัดเจน
+// แยกจากปุ่ม "พยากรณ์ (ใช้อัตรา)" ที่ต้องเลือกรหัสอัตราจริงก่อนถึงจะกดได้ (ไม่ใช่ "ไม่ระบุ")
+async function runForecast(forceCategoryOnly) {
   adhocFormHint.textContent = "";
   const displayName = nameInput.value.trim(); // ใช้แสดงผลเท่านั้น — ไม่ส่งไป server
   const businessTypeCode = businessTypeSelect.value.trim();
-  const rateCode = rateCodeSelect.value.trim();
+  const rateCode = forceCategoryOnly ? "" : rateCodeSelect.value.trim();
   const kvaRaw = kvaInput.value.trim();
   const hasSolarRaw = hasSolarSelect.value; // "" = ไม่ทราบ, "true"/"false" = ทราบแน่ชัด
 
   if (!businessTypeCode && !rateCode) {
     adhocFormHint.textContent = "กรุณาเลือกประเภทธุรกิจ หรือ กรอกรหัสอัตรา อย่างน้อยหนึ่งอย่าง";
+    return;
+  }
+
+  if (!forceCategoryOnly && !rateCode) {
+    adhocFormHint.textContent = 'ปุ่มนี้ต้องเลือก "รหัสอัตรา" ก่อน (ไม่ใช่ "ไม่ระบุ") — ถ้าไม่ทราบรหัสอัตรา ให้กดปุ่ม "พยากรณ์ (ใช้ประเภทธุรกิจอย่างเดียว)" แทน';
     return;
   }
 
@@ -571,7 +580,8 @@ async function runForecast() {
   }
 }
 
-adhocSubmitBtn.addEventListener("click", runForecast);
+adhocSubmitBtn.addEventListener("click", () => runForecast(false));
+adhocSubmitCategoryBtn.addEventListener("click", () => runForecast(true));
 
 // ── กราฟแท่ง P/OP/H ──
 
