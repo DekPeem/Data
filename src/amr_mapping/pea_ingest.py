@@ -45,6 +45,19 @@ def _read_html(path: Union[str, Path]) -> BeautifulSoup:
     return BeautifulSoup(content, "lxml")
 
 
+def is_ami_xlsx(path: Union[str, Path]) -> bool:
+    """เช็คว่าไฟล์นี้เป็น Excel (.xlsx) แท้หรือไม่ (ไม่ใช่ HTML แฝงเป็น .xls แบบไฟล์ AMRWEB
+    ปกติที่ฟังก์ชันอื่นๆ ในโมดูลนี้อ่าน) — เช็คจาก magic bytes ของไฟล์ (.xlsx เป็น ZIP archive
+    เริ่มด้วย "PK") ไม่ใช่เช็คจากนามสกุลไฟล์ เพราะไฟล์ AMRWEB ก็ตั้งชื่อ .xls เหมือนกันแต่เนื้อหา
+    จริงเป็น HTML ล้วนๆ — ใช้แยกแยะไฟล์จากระบบ "AMI" ของ PEA (ดู pea_ami_ingest.py)"""
+
+    try:
+        with open(path, "rb") as f:
+            return f.read(2) == b"PK"
+    except OSError:
+        return False
+
+
 def _to_float(text: str) -> Optional[float]:
     text = (text or "").replace(",", "").strip()
     if not text:
@@ -203,7 +216,16 @@ def parse_report_header(path: Union[str, Path]) -> dict:
     คืน dict คีย์เป็นป้ายชื่อภาษาไทย/อังกฤษตามที่ปรากฏในไฟล์ตรงๆ (เช่น "บัญชีผู้ใช้ไฟ",
     "ชื่อผู้ใช้ไฟ", "หมายเลขมิเตอร์", "Tariff", "CT Ratio", "VT Ratio") — คืน dict ว่างถ้าไฟล์
     ไม่มีตารางหัวรายงานนี้เลย (เช่นไฟล์รูปแบบเก่า/ไฟล์ทดสอบ) ไม่ error
+
+    ถ้าไฟล์เป็น Excel (.xlsx) แท้ (ไม่ใช่ HTML แฝงเป็น .xls แบบปกติ — เช่นไฟล์จากระบบ "AMI"
+    ของ PEA) จะส่งต่อให้ pea_ami_ingest.parse_ami_report_header อ่านแทนโดยอัตโนมัติ (import
+    แบบ lazy กันปัญหา circular import เพราะ pea_ami_ingest ก็ import จากไฟล์นี้เหมือนกัน)
     """
+
+    if is_ami_xlsx(path):
+        from .pea_ami_ingest import parse_ami_report_header
+
+        return parse_ami_report_header(path)
 
     soup = _read_html(path)
     info: dict = {}
@@ -221,7 +243,15 @@ def parse_interval_report(path: Union[str, Path]) -> List[IntervalReading]:
 
     หาแถวหัวตารางที่มีคอลัมน์ RATE A / RATE B / RATE C (ไม่สนตัวพิมพ์เล็ก-ใหญ่)
     แล้วอ่านทุกแถวที่มีค่า ยกเว้นแถวสรุปผลรวมท้ายตาราง (เช่น "ผลรวมทั้งหมด")
+
+    ถ้าไฟล์เป็น Excel (.xlsx) แท้ (ดู is_ami_xlsx) จะส่งต่อให้
+    pea_ami_ingest.parse_ami_interval_report อ่านแทนโดยอัตโนมัติ
     """
+
+    if is_ami_xlsx(path):
+        from .pea_ami_ingest import parse_ami_interval_report
+
+        return parse_ami_interval_report(path)
 
     soup = _read_html(path)
     tables = soup.find_all("table")
