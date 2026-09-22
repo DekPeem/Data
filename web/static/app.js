@@ -159,10 +159,19 @@ function updateRateCodeOptions() {
   const relevant = businessTypeCode ? PROFILE_KEYS.filter((k) => k.business_type_code === businessTypeCode) : PROFILE_KEYS;
   const rateCodes = [...new Set(relevant.map((k) => k.rate_code))];
 
+  // ตัวเลือกว่าง "ไม่ระบุ" — เผื่อไม่ทราบรหัสอัตรา จะได้พยากรณ์แบบจับคู่แค่ระดับประเภทธุรกิจได้
+  // (เดิมช่องนี้บังคับเลือกรหัสอัตราจริงเสมอ ไม่มีทางปล่อยว่างได้เลยถ้าเลือกประเภทธุรกิจไว้แล้ว)
   const previousValue = rateCodeSelect.value;
-  rateCodeSelect.innerHTML = rateCodes.map((code) => `<option value="${code}">${code}</option>`).join("");
+  rateCodeSelect.innerHTML =
+    `<option value="">-- ไม่ระบุ (จับคู่จากประเภทธุรกิจอย่างเดียว) --</option>` +
+    rateCodes.map((code) => `<option value="${code}">${code}</option>`).join("");
   if (rateCodes.includes(previousValue)) {
     rateCodeSelect.value = previousValue;
+  } else if (rateCodes.length) {
+    // ค่าเริ่มต้น: เลือกรหัสอัตราตัวแรกที่มีข้อมูลจริงให้ก่อนเสมอ (พฤติกรรมเดิม ก่อนเพิ่มตัวเลือก
+    // "ไม่ระบุ") ไม่งั้น dropdown จะไปตกที่ "ไม่ระบุ" เป็นค่าเริ่มต้นแทน ทำให้ auto-forecast
+    // (ตอนเลือกประเภทธุรกิจ/เดาจาก DBD-Wikipedia) ที่เคยทำงานอยู่แล้วพังไปด้วย
+    rateCodeSelect.value = rateCodes[0];
   }
 }
 
