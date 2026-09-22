@@ -1600,6 +1600,12 @@ def test_pending_amr_page_serves_html(client):
     assert b"<html" in res.data
 
 
+def test_business_match_page_serves_html(client):
+    res = client.get("/business-match")
+    assert res.status_code == 200
+    assert b"<html" in res.data
+
+
 def test_start_import_file_saves_pending_entry_when_business_type_and_rate_unknown(client, monkeypatch, tmp_path):
     """โหมดแนบไฟล์: อ่านเลขบัญชีจากไฟล์ได้ แต่หาประเภทธุรกิจ/รหัสอัตราไม่เจอในทะเบียนลูกค้า — แทนที่
     จะทิ้ง error เฉยๆ ต้องบันทึกไว้เป็นรายการ "รอทราบอัตรา" (pending_amr_local.csv) เพื่อกรอกย้อนหลัง

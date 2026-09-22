@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>จับคู่เฉพาะหมวดธุรกิจ — No AMR</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .warn-box {
+      background: #fff7e6; border: 1px solid rgba(250, 178, 25, 0.4); border-radius: 10px;
+      padding: 14px 18px; font-size: 13px; color: #7a5a00; line-height: 1.6;
+    }
+    .match-table { width: 100%; border-collapse: collapse; }
+    .match-table th {
+      text-align: left; font-size: 12px; color: #8996ab; font-weight: 600; padding: 8px 10px;
+      border-bottom: 1px solid rgba(15,23,42,0.08);
+    }
+    .match-table td { padding: 8px 10px; border-bottom: 1px solid rgba(15,23,42,0.06); font-size: 13.5px; vertical-align: middle; }
+    .match-table tr:last-child td { border-bottom: none; }
+    .match-table select {
+      width: 100%; min-width: 220px; height: 38px; border-radius: 8px; border: 1px solid rgba(15,23,42,0.14);
+      padding: 0 10px; font-size: 13px; font-family: inherit; background: #fff; color: #0f1b2d;
+    }
+    .match-btn {
+      background: #2a78d6; color: #fff; border: none; border-radius: 8px; padding: 0 16px;
+      height: 38px; font-size: 13px; font-weight: 600; font-family: inherit; cursor: pointer; white-space: nowrap;
+    }
+    .match-btn:hover { background: #184f95; }
+    .match-btn:disabled { opacity: 0.6; cursor: default; }
+    .match-empty { padding: 40px 20px; text-align: center; color: #8996ab; font-size: 13.5px; }
+    .match-hint { font-size: 12px; color: #d03b3b; margin-top: 2px; }
+    .match-name { font-weight: 600; color: #0f1b2d; }
+    .match-sub { font-size: 12px; color: #8996ab; }
+  </style>
+</head>
+<body>
+  <div class="root">
+
+    <header class="header">
+      <div class="header-brand">
+        <div class="logo-mark">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>
+        </div>
+        <div class="header-titles">
+          <div class="header-title">จับคู่เฉพาะหมวดธุรกิจ</div>
+          <div class="header-subtitle">สำหรับไฟล์ที่ไม่ทราบรหัสอัตรา — เลือกแค่ประเภทธุรกิจแล้วยืนยันได้เลย เร็วกว่าตอนมีไฟล์เยอะ</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:16px;align-items:center;">
+        <a href="/pending-amr" style="font-size:13px;color:#2a78d6;text-decoration:none;">รู้รหัสอัตราด้วย? ไปหน้ารอทราบอัตรา →</a>
+        <a href="/admin" style="font-size:13px;color:#2a78d6;text-decoration:none;">← กลับหน้านำเข้า AMR</a>
+      </div>
+    </header>
+
+    <main class="body-wrap">
+
+      <div class="warn-box">
+        ⚠️ หน้านี้แสดง <b>เลขบัญชี/ชื่อผู้ใช้ไฟจริง</b> — ใช้ดูในเครื่องนี้เท่านั้น กดยืนยันแล้วจะบันทึก
+        ด้วย <b>รหัสอัตราพิเศษ "ไม่ทราบ"</b> เสมอ (ใช้จับคู่ได้แค่ระดับประเภทธุรกิจ ไม่ใช่ตรงเป๊ะ) —
+        ถ้ารู้รหัสอัตราจริงของบัญชีไหน ไปกรอกที่หน้า <a href="/pending-amr">"รอทราบอัตรา"</a> แทนจะแม่นกว่า
+      </div>
+
+      <div class="card" style="padding: 20px 24px;">
+        <table class="match-table">
+          <thead>
+            <tr>
+              <th>บัญชี/บริษัท</th>
+              <th style="width:280px;">ประเภทธุรกิจ</th>
+              <th style="width:110px;"></th>
+            </tr>
+          </thead>
+          <tbody id="match-table-body"></tbody>
+        </table>
+        <div id="match-empty-state"></div>
+      </div>
+
+    </main>
+  </div>
+
+  <script src="business_match.js"></script>
+</body>
+</html>
