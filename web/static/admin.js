@@ -882,11 +882,21 @@ function renderResult(result, customerProfile) {
   `;
 }
 
+// ข้อความ error นี้ไม่ใช่ความผิดพลาดจริง — แค่ยังไม่ทราบประเภทธุรกิจ/อัตราของบัญชีนี้เฉยๆ (รอกรอก
+// ทีหลังได้) แต่บางเส้นทาง (เช่น โหมดเข้าสู่ระบบด้วย username/password) ยังไม่ได้ตั้ง status เป็น
+// "pending_rate" ที่หน้าตาเป็นมิตรกว่า — เช็คจากข้อความแทน กันไม่ให้ผู้ใช้ตกใจเห็นกล่องแดง "ไม่สำเร็จ"
+// ทั้งที่จริงๆ แค่ต้องไปกรอกต่อที่หน้า "รอทราบอัตรา" เท่านั้นเอง
+function isUnknownBusinessRateError(msg) {
+  return typeof msg === "string" && msg.includes("ไม่ทราบประเภทธุรกิจ/รหัสอัตราของบัญชีนี้");
+}
+
 async function pollJob(jobId, activeBtn) {
   const res = await fetch(`/api/admin/import/${jobId}`);
   const data = await res.json();
 
-  setStatusPill(data.status);
+  const treatAsPendingRate = data.status === "pending_rate" || (data.status === "error" && isUnknownBusinessRateError(data.error));
+
+  setStatusPill(treatAsPendingRate ? "pending_rate" : data.status);
   jobLog.textContent = (data.logs || []).join("\n");
   jobLog.scrollTop = jobLog.scrollHeight;
 
@@ -903,12 +913,14 @@ async function pollJob(jobId, activeBtn) {
     // ต้องโหลด import log ให้เสร็จก่อน (เติมตัวแปร importLogEntries) แล้วค่อยวาดการ์ดประเภทธุรกิจ
     // ไม่งั้นชื่อบริษัทในการ์ดจะยังว่างเพราะ fetch สองอันแข่งกัน (race condition)
     loadImportLogLocal().then(loadBusinessTypesTable);
-  } else if (data.status === "pending_rate") {
+  } else if (treatAsPendingRate) {
     jobResult.innerHTML = `
       <div class="search-hint" style="min-height:auto;">
         ${data.error || "ไม่ทราบประเภทธุรกิจ/รหัสอัตราของบัญชีนี้"}<br>
-        📋 ระบบบันทึกไฟล์นี้ไว้ในรายการ <a href="/pending-amr" target="_blank" rel="noopener">"รอทราบอัตรา"</a> แล้ว
-        — ไม่ต้องอัปโหลดไฟล์ใหม่ กลับมากรอกประเภทธุรกิจ/รหัสอัตราทีหลังได้เมื่อทราบแล้ว
+        📋 ลองดูที่รายการ <a href="/pending-amr" target="_blank" rel="noopener">"รอทราบอัตรา"</a> —
+        ถ้าระบบอ่านเลขบัญชีจากไฟล์นี้ได้ จะเจอรายการนี้อยู่ที่นั่นแล้ว ไม่ต้องอัปโหลดไฟล์ใหม่
+        กลับมากรอกประเภทธุรกิจ/รหัสอัตราทีหลังได้เมื่อทราบแล้ว (ถ้าไม่เจอในรายการ ลองอัปโหลดไฟล์
+        เดิมซ้ำอีกครั้งได้ ไม่ซ้ำซ้อนเสียหายอะไร)
       </div>`;
   } else if (data.status === "error") {
     jobResult.innerHTML = `<div class="search-hint" style="min-height:auto;">${data.error || "เกิดข้อผิดพลาด"}</div>`;
