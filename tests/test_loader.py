@@ -88,6 +88,39 @@ def test_business_types_hierarchy_fields_round_trip(tmp_path):
     assert loaded.division_name_th == "การผลิตกระดาษ"
 
 
+def test_save_functions_write_lf_line_endings_not_crlf(tmp_path):
+    """csv.DictWriter เขียน \\r\\n เป็นค่าเริ่มต้นถ้าไม่ตั้ง lineterminator เอง — ทำให้ไฟล์ที่เขียน
+    กลับด้วยฟังก์ชันเหล่านี้กลายเป็น CRLF ทั้งไฟล์ทั้งที่ไฟล์เดิมในโปรเจกต์ใช้ LF ล้วน สร้าง diff
+    รกทุกครั้งที่บันทึกโดยไม่จำเป็น (เจอจริงตอนเพิ่มแถวใหม่ใน business_types.csv ด้วย
+    save_business_types) — ทุกฟังก์ชันที่เขียนไฟล์ .csv ต้องคง LF เดิมไว้เสมอ"""
+
+    data_dir = _make_data_dir(tmp_path)
+
+    bt = BusinessType(code="17011", name_th="ผลิตเยื่อกระดาษ", category="paper", notes="ทดสอบ")
+    save_business_types({"17011": bt}, data_dir / "business_types.csv")
+    assert b"\r\n" not in (data_dir / "business_types.csv").read_bytes()
+
+    profile = LoadProfile(
+        business_type_code="TESTBIZ", rate_code="50", billing_method="TOU",
+        demand_kw={"P": 1, "OP": 1, "H": 1}, energy_kwh={"P": 1, "OP": 1, "H": 1},
+    )
+    save_load_profiles([profile], data_dir / "load_profiles.csv")
+    assert b"\r\n" not in (data_dir / "load_profiles.csv").read_bytes()
+
+    curve = LoadCurve(business_type_code="TESTBIZ", rate_code="50", hours={"all": [10.0] * 24})
+    save_load_curves([curve], data_dir / "load_curves.csv")
+    assert b"\r\n" not in (data_dir / "load_curves.csv").read_bytes()
+
+    append_pending_amr_local({"pending_id": "p1", "account_no": "019900000001"}, data_dir / "pending_amr_local.csv")
+    assert b"\r\n" not in (data_dir / "pending_amr_local.csv").read_bytes()
+
+    append_site_curve_local("บริษัท เอ จำกัด", "019900000001", curve, data_dir / "site_curves_local.csv")
+    assert b"\r\n" not in (data_dir / "site_curves_local.csv").read_bytes()
+
+    append_import_log_local({"account_no": "019900000001"}, data_dir / "import_log_local.csv")
+    assert b"\r\n" not in (data_dir / "import_log_local.csv").read_bytes()
+
+
 def test_business_types_without_hierarchy_columns_still_loads(tmp_path):
     """ไฟล์ business_types.csv แบบเก่า (ไม่มีคอลัมน์ section_code/division_code เลย) ต้องยัง
     โหลดได้ตามปกติ ไม่ error - hierarchy fields เป็น None/ค่าว่างแทน"""

@@ -70,7 +70,7 @@ def save_business_types(business_types: Dict[str, BusinessType], path: Path) -> 
     """เขียน business_types กลับเป็นไฟล์ business_types.csv (เขียนทับทั้งไฟล์)"""
 
     with path.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=_BUSINESS_TYPE_FIELDNAMES)
+        writer = csv.DictWriter(f, fieldnames=_BUSINESS_TYPE_FIELDNAMES, lineterminator="\n")
         writer.writeheader()
         for bt in business_types.values():
             writer.writerow(
@@ -196,7 +196,7 @@ def save_load_curves(curves: List[LoadCurve], path: Path) -> None:
     เขียนเป็นหลายแถว (แถวละ 1 day_type) เท่าจำนวน day_type ที่มีข้อมูลจริงเท่านั้น"""
 
     with path.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=_LOAD_CURVE_FIELDNAMES)
+        writer = csv.DictWriter(f, fieldnames=_LOAD_CURVE_FIELDNAMES, lineterminator="\n")
         writer.writeheader()
         for curve in curves:
             for day_type in DAY_TYPES:
@@ -329,7 +329,7 @@ def save_load_profiles(profiles: List[LoadProfile], path: Path) -> None:
     """เขียนรายการ LoadProfile กลับเป็นไฟล์ load_profiles.csv (เขียนทับทั้งไฟล์)"""
 
     with path.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=_LOAD_PROFILE_FIELDNAMES)
+        writer = csv.DictWriter(f, fieldnames=_LOAD_PROFILE_FIELDNAMES, lineterminator="\n")
         writer.writeheader()
         for p in profiles:
             writer.writerow(
@@ -456,7 +456,7 @@ def _migrate_import_log_header_if_needed(path: Path) -> None:
         rows = list(reader)
 
     with path.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=_IMPORT_LOG_FIELDNAMES)
+        writer = csv.DictWriter(f, fieldnames=_IMPORT_LOG_FIELDNAMES, lineterminator="\n")
         writer.writeheader()
         for row in rows:
             writer.writerow({k: row.get(k) or "" for k in _IMPORT_LOG_FIELDNAMES})
@@ -475,7 +475,7 @@ def append_import_log_local(entry: dict, path: Path) -> None:
         _migrate_import_log_header_if_needed(path)
 
     with path.open("a", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=_IMPORT_LOG_FIELDNAMES)
+        writer = csv.DictWriter(f, fieldnames=_IMPORT_LOG_FIELDNAMES, lineterminator="\n")
         if not file_exists:
             writer.writeheader()
         writer.writerow({k: entry.get(k, "") for k in _IMPORT_LOG_FIELDNAMES})
@@ -508,7 +508,7 @@ def remove_import_log_local_entry(imported_at: str, account_no: str, path: Path)
     if len(remaining) == len(rows):
         return False
     with path.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=_IMPORT_LOG_FIELDNAMES)
+        writer = csv.DictWriter(f, fieldnames=_IMPORT_LOG_FIELDNAMES, lineterminator="\n")
         writer.writeheader()
         for row in remaining:
             writer.writerow({k: row.get(k, "") for k in _IMPORT_LOG_FIELDNAMES})
@@ -543,7 +543,7 @@ def append_site_curve_local(company_name: str, account_no: str, curve: LoadCurve
 
     file_exists = path.exists()
     with path.open("a", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=_SITE_CURVE_FIELDNAMES)
+        writer = csv.DictWriter(f, fieldnames=_SITE_CURVE_FIELDNAMES, lineterminator="\n")
         if not file_exists:
             writer.writeheader()
         for day_type in DAY_TYPES:
@@ -620,7 +620,7 @@ def append_pending_amr_local(entry: dict, path: Path) -> None:
 
     file_exists = path.exists()
     with path.open("a", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=_PENDING_AMR_FIELDNAMES)
+        writer = csv.DictWriter(f, fieldnames=_PENDING_AMR_FIELDNAMES, lineterminator="\n")
         if not file_exists:
             writer.writeheader()
         writer.writerow({k: entry.get(k, "") for k in _PENDING_AMR_FIELDNAMES})
@@ -648,7 +648,7 @@ def remove_pending_amr_local(pending_id: str, path: Path) -> bool:
     if len(remaining) == len(rows):
         return False
     with path.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=_PENDING_AMR_FIELDNAMES)
+        writer = csv.DictWriter(f, fieldnames=_PENDING_AMR_FIELDNAMES, lineterminator="\n")
         writer.writeheader()
         for row in remaining:
             writer.writerow({k: row.get(k, "") for k in _PENDING_AMR_FIELDNAMES})
