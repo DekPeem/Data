@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import dataclasses
+import io
 import os
 import sys
 import threading
@@ -23,7 +24,7 @@ from typing import List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from flask import Flask, jsonify, redirect, request
+from flask import Flask, jsonify, redirect, request, send_file
 from werkzeug.utils import secure_filename
 
 from amr_mapping import estimate_customer_load, load_reference_data
@@ -306,6 +307,47 @@ def api_get_site_curve(account_no: str):
             # ไปที่อื่นนอกจากหน้า Admin ของเครื่องนี้เอง
             "company_name": entry.get("company_name") or "",
         }
+    )
+
+
+# ไฟล์ local-only ที่มีชื่อบริษัท/เลขบัญชีลูกค้าจริง (อยู่ใน .gitignore ทั้งหมด ไม่เคยถูก commit
+# เข้า repo) — เป็นข้อมูลชุดเดียวที่ "ไม่มีสำเนาสำรองที่ไหนเลย" ถ้าเครื่องที่รันเว็บนี้พัง/ไฟล์
+# เสียหาย ข้อมูลที่นำเข้ามาทั้งหมดจะหายถาวร กู้คืนไม่ได้ (ต่างจาก load_profiles.csv/
+# load_curves.csv/business_types.csv ที่ commit เข้า git repo อยู่แล้ว จึงไม่รวมในนี้) ไม่รวม
+# dbd_juristic_local.db เพราะเป็นแคชที่ดึงใหม่จาก DBD Open Data ได้เสมอ ไม่ใช่ข้อมูลต้นทาง
+_BACKUP_LOCAL_FILENAMES = [
+    "customers_local.csv",
+    "import_log_local.csv",
+    "site_curves_local.csv",
+    "pending_amr_local.csv",
+]
+
+
+@app.route("/api/admin/backup")
+def api_admin_backup():
+    """สร้างไฟล์ .zip รวมข้อมูล local-only ทั้งหมดที่มีอยู่จริงตอนนี้ (ข้ามไฟล์ที่ยังไม่เคยสร้าง)
+    ให้ดาวน์โหลดทันที — ใช้สำรองข้อมูลลูกค้าจริงไว้นอกเครื่องเป็นระยะ (เช่น ก็อปไปไดรฟ์อื่น/
+    คลาวด์ส่วนตัว) เพราะไฟล์เหล่านี้อยู่ในเครื่องอย่างเดียว ไม่เคย commit เข้า git เลย"""
+
+    buffer = io.BytesIO()
+    included = []
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for filename in _BACKUP_LOCAL_FILENAMES:
+            path = DEFAULT_DATA_DIR / filename
+            if path.exists():
+                zf.write(path, arcname=filename)
+                included.append(filename)
+    buffer.seek(0)
+
+    if not included:
+        return jsonify({"error": "no_data", "message": "ยังไม่มีข้อมูล local ให้สำรองเลย"}), 404
+
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    return send_file(
+        buffer,
+        mimetype="application/zip",
+        as_attachment=True,
+        download_name=f"no-amr-backup-{timestamp}.zip",
     )
 
 

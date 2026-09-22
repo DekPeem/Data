@@ -441,6 +441,34 @@ def test_get_site_curve_returns_that_sites_own_curve(client, monkeypatch, tmp_pa
     assert data["company_name"] == "บริษัท เอ จำกัด"
 
 
+def test_admin_backup_returns_404_when_no_local_files_exist(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    res = client.get("/api/admin/backup")
+    assert res.status_code == 404
+    assert res.get_json()["error"] == "no_data"
+
+
+def test_admin_backup_zips_only_existing_local_files(client, monkeypatch, tmp_path):
+    import io
+    import zipfile
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    (tmp_path / "customers_local.csv").write_text("account_no,name\n019900000001,บริษัท เอ จำกัด\n", encoding="utf-8")
+    (tmp_path / "site_curves_local.csv").write_text("company_name\nบริษัท เอ จำกัด\n", encoding="utf-8")
+    # ไฟล์แคชที่ดึงใหม่ได้เสมอ ไม่ใช่ข้อมูลต้นทาง — ต้องไม่ถูกรวมในไฟล์สำรอง
+    (tmp_path / "dbd_juristic_local.db").write_bytes(b"fake sqlite bytes")
+
+    res = client.get("/api/admin/backup")
+    assert res.status_code == 200
+    assert res.mimetype == "application/zip"
+    assert "attachment" in res.headers.get("Content-Disposition", "")
+
+    with zipfile.ZipFile(io.BytesIO(res.data)) as zf:
+        names = set(zf.namelist())
+        assert names == {"customers_local.csv", "site_curves_local.csv"}
+        assert b"019900000001" in zf.read("customers_local.csv")
+
+
 def test_business_type_hierarchy_update_success(client, monkeypatch, tmp_path):
     import shutil
 
