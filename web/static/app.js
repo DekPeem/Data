@@ -619,6 +619,11 @@ function renderStatTiles(demand, energy) {
 //    ที่มาของธุรกิจ/อัตรา ฯลฯ) ส่วน data (match/matched_profile/forecast/curve) รูปแบบเดียวกัน
 //    ทั้งสอง endpoint (/api/forecast/<account_no> และ /api/forecast-adhoc) อยู่แล้ว ──
 
+// ระดับการจับคู่ที่ "รหัสอัตรา" ของโปรไฟล์ที่แสดง ตรงกับอัตราที่ระบุ/ทราบจริงๆ (ไม่ใช่แค่หยิบ
+// ตัวแรกที่เจอในประเภทธุรกิจเดียวกันมาโชว์เฉยๆ) — ใช้แยกกรณี "มีอัตราจริง" ออกจากกรณี "ไม่ทราบ
+// อัตรา จับคู่แค่ประเภทธุรกิจ" ตามที่ผู้ใช้ขอ ไม่ให้สับสนว่าอัตราที่โชว์คืออัตราจริงของลูกค้า
+const RATE_CONFIRMED_LEVELS = ["exact_business_and_rate", "exact_business_and_rate_solar_mismatch", "rate_only"];
+
 function renderResult(data, identity) {
   const m = data.match;
   const p = data.matched_profile;
@@ -626,13 +631,20 @@ function renderResult(data, identity) {
 
   const matchColor = m.is_exact ? "#0ca30c" : "#fab219";
   const matchBg = m.is_exact ? "#e8f7ec" : "#fff7e6";
+  const rateIsReference = !RATE_CONFIRMED_LEVELS.includes(m.level);
 
   const businessBadge = identity.businessTypeCode
     ? `<span class="badge" style="background:#eef3fa;color:#184f95;">${p.business_type_name || identity.businessTypeCode} · ${identity.businessTypeCode}</span>`
     : `<span class="badge" style="background:rgba(15,23,42,0.05);color:#55647a;">ยังไม่จัดประเภทธุรกิจ</span>`;
 
   const solarSuffix = p.has_solar ? " · ☀️ ติด Solar" : "";
-  const fields = [...identity.fields, { label: "โปรไฟล์ที่ใช้อ้างอิง", value: `${p.business_type_name || p.business_type_code || "-"} / อัตรา ${p.rate_code}${solarSuffix}` }];
+  const profileFieldLabel = rateIsReference
+    ? "โปรไฟล์ที่ใช้อ้างอิง (ไม่ทราบอัตรา — จับคู่จากประเภทธุรกิจเท่านั้น)"
+    : "โปรไฟล์ที่ใช้อ้างอิง (ตรงตามอัตราที่ระบุ)";
+  const profileFieldValue = rateIsReference
+    ? `${p.business_type_name || p.business_type_code || "-"} / <span style="color:#b4650c;">อัตรา ${p.rate_code} (ตัวอย่าง ไม่ใช่อัตราจริง)</span>${solarSuffix}`
+    : `${p.business_type_name || p.business_type_code || "-"} / อัตรา ${p.rate_code}${solarSuffix}`;
+  const fields = [...identity.fields, { label: profileFieldLabel, value: profileFieldValue }];
   if (identity.extraField) {
     fields.push({ label: identity.extraField.label, value: identity.extraField.getValue(p) });
   }
@@ -672,6 +684,17 @@ function renderResult(data, identity) {
         <div class="match-right-value">${m.scale_factor.toFixed(2)}×</div>
       </div>
     </div>
+
+    ${
+      rateIsReference
+        ? `<div class="warn-box" style="background:#fff7e6;border-color:rgba(180,101,12,0.35);color:#8a4b06;">
+            ⚠️ <b>ไม่ใช่การจับคู่อัตราแบบตรงเป๊ะ (${m.level_label_th})</b> — ตัวเลข "อัตรา ${p.rate_code}"
+            ที่แสดงเป็นเพียง<b>ตัวอย่างอัตราหนึ่งที่บังเอิญมีข้อมูลอยู่</b>ในกลุ่มที่จับคู่ได้
+            <u>ไม่ใช่อัตราจริงของลูกค้ารายนี้</u> — ถ้าทราบรหัสอัตราที่แท้จริง กรุณาเลือกในช่อง
+            "รหัสอัตรา" เพื่อผลที่แม่นยำขึ้น (จับคู่ตรง Exact Match)
+          </div>`
+        : ""
+    }
 
     ${
       m.warnings.length
