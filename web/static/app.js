@@ -135,19 +135,54 @@ const adhocFormHint = document.getElementById("adhoc-form-hint");
 let PROFILE_KEYS = []; // [{business_type_code, rate_code, sample_size}, ...]
 let BUSINESS_TYPE_NAMES = {}; // code -> name_th
 
+function escapeHtml(s) {
+  return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+// ใช้ /api/business-types-full (มี section_code/section_name_th) แทน /api/business-types แบบ
+// เดิม เพื่อจัดกลุ่มตัวเลือกด้วย <optgroup> ตาม TSIC Section (A, B, C, ...) — รายการยาวขึ้นเรื่อยๆ
+// ตามจำนวนประเภทธุรกิจที่มีโปรไฟล์จริงในระบบ ถ้าโชว์เป็นลิสต์แบนยาวๆ ไม่จัดกลุ่มจะเลื่อนหายาก
+// (ผู้ใช้แจ้งว่าอ่านยาก) — ใช้ <optgroup> ของ <select> เองแทนการเขียน custom dropdown widget
+// ใหม่ทั้งหมด (แบบที่ใช้ในหน้า Admin/รอทราบอัตรา) เพราะเป็นแค่ตัวเลือกครั้งเดียวไม่ได้ค้นหาบ่อย
+// เหมือนหน้านั้น ยังคง businessTypeSelect เป็น native <select> เหมือนเดิมทุกจุด (โค้ดอื่นที่อ่าน/
+// เขียน .value ที่มีอยู่แล้วไม่ต้องแก้อะไรเพิ่ม)
 async function loadBusinessTypesAndKeys() {
   try {
-    const [typesRes, keysRes] = await Promise.all([fetch("/api/business-types"), fetch("/api/load-profile-keys")]);
+    const [typesRes, keysRes] = await Promise.all([fetch("/api/business-types-full"), fetch("/api/load-profile-keys")]);
     const types = await typesRes.json();
     PROFILE_KEYS = await keysRes.json();
+    const typeByCode = Object.fromEntries(types.map((t) => [t.code, t]));
     BUSINESS_TYPE_NAMES = Object.fromEntries(types.map((t) => [t.code, t.name_th]));
 
     const businessCodesWithData = [...new Set(PROFILE_KEYS.map((k) => k.business_type_code))];
-    businessTypeSelect.innerHTML =
-      `<option value="">-- ไม่ระบุ (จับคู่จากอัตราอย่างเดียว) --</option>` +
-      businessCodesWithData
-        .map((code) => `<option value="${code}">${BUSINESS_TYPE_NAMES[code] || code} · ${code}</option>`)
-        .join("");
+
+    const groups = new Map();
+    for (const code of businessCodesWithData) {
+      const bt = typeByCode[code];
+      const key = bt && bt.section_code ? bt.section_code : "UNVERIFIED";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push({ code, bt });
+    }
+    const sortedKeys = [...groups.keys()].sort((a, b) => {
+      if (a === "UNVERIFIED") return 1;
+      if (b === "UNVERIFIED") return -1;
+      return a.localeCompare(b);
+    });
+
+    const optgroupsHtml = sortedKeys
+      .map((key) => {
+        const items = groups
+          .get(key)
+          .sort((a, b) => (a.bt ? a.bt.name_th : a.code).localeCompare(b.bt ? b.bt.name_th : b.code, "th"));
+        const label = key === "UNVERIFIED" ? "ยังไม่ตรวจสอบ TSIC" : `${key} · ${items[0].bt ? items[0].bt.section_name_th : ""}`;
+        const optionsHtml = items
+          .map(({ code, bt }) => `<option value="${escapeHtml(code)}">${escapeHtml(bt ? bt.name_th : code)} · ${escapeHtml(code)}</option>`)
+          .join("");
+        return `<optgroup label="${escapeHtml(label)}">${optionsHtml}</optgroup>`;
+      })
+      .join("");
+
+    businessTypeSelect.innerHTML = `<option value="">-- ไม่ระบุ (จับคู่จากอัตราอย่างเดียว) --</option>` + optgroupsHtml;
 
     updateRateCodeOptions();
   } catch (err) {
