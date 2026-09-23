@@ -23,10 +23,10 @@ def test_exact_match(reference):
 
 
 def test_business_only_fallback(reference):
-    # โรงพยาบาล (86101) มีเฉพาะรหัสอัตรา 50 ในตารางอ้างอิง -> ขออัตราอื่นที่ไม่มีจริง ต้อง fallback
-    match = find_load_profile(reference.load_profiles, business_type_code="86101", rate_code="9999")
+    # การผลิตน้ำแข็ง (31212) มีเฉพาะรหัสอัตรา 30 ในตารางอ้างอิง -> ขออัตราอื่นที่ไม่มีจริง ต้อง fallback
+    match = find_load_profile(reference.load_profiles, business_type_code="31212", rate_code="9999")
     assert match.level == MatchLevel.BUSINESS_ONLY
-    assert match.profile.business_type_code == "86101"
+    assert match.profile.business_type_code == "31212"
 
 
 def test_rate_only_fallback(reference):

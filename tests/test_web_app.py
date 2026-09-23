@@ -345,8 +345,8 @@ def test_list_business_types_full_marks_placeholder_profiles_as_no_curve(client)
     res = client.get("/api/business-types-full")
     data = res.get_json()
 
-    hospital = next(bt for bt in data if bt["code"] == "86101")
-    profile = next(p for p in hospital["profiles"] if p["rate_code"] == "50")
+    mall = next(bt for bt in data if bt["code"] == "47190")
+    profile = next(p for p in mall["profiles"] if p["rate_code"] == "50")
     assert profile["has_curve"] is False
 
     # ตัวที่ยังไม่เคยตรวจสอบ TSIC เลย ต้องเป็น None ไม่ใช่ error
