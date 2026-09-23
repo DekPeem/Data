@@ -21,6 +21,7 @@ from .models import (
 from .loader import (
     ReferenceData,
     load_reference_data,
+    load_tsic_code_mapping,
     save_business_types,
     save_load_profiles,
     save_load_curves,
@@ -39,6 +40,7 @@ from .loader import (
     remove_pending_amr_local,
 )
 from .mapping import find_load_profile, find_load_curve, estimate_customer_load, UNKNOWN_RATE_CODE
+from .tsic_normalize import normalize_tsic_code, normalize_tsic_code_with_audit
 
 __all__ = [
     "BusinessType",
@@ -52,6 +54,7 @@ __all__ = [
     "ForecastResult",
     "ReferenceData",
     "load_reference_data",
+    "load_tsic_code_mapping",
     "save_load_profiles",
     "upsert_load_profile",
     "remove_load_profile",
@@ -72,4 +75,6 @@ __all__ = [
     "find_load_curve",
     "estimate_customer_load",
     "UNKNOWN_RATE_CODE",
+    "normalize_tsic_code",
+    "normalize_tsic_code_with_audit",
 ]

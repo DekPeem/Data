@@ -93,6 +93,27 @@ def save_business_types(business_types: Dict[str, BusinessType], path: Path) -> 
             )
 
 
+def load_tsic_code_mapping(path: Optional[Path] = None) -> Dict[str, str]:
+    """โหลดตารางแปลงรหัส TSIC ระบบเดิมของ PEA/AMR (TSIC 2544) -> รหัสมาตรฐานใหม่ (TSIC 2552/
+    กรมพัฒนาธุรกิจการค้า) จาก data/reference/tsic_code_mapping.csv คืน dict {รหัสเก่า: รหัสใหม่}
+
+    เพิ่มคู่รหัสใหม่ในอนาคตได้ง่ายๆ แค่เพิ่มแถวในไฟล์ CSV นี้ (คอลัมน์ old_code, new_code, notes)
+    ไม่ต้องแก้โค้ดไฟล์นี้หรือ tsic_normalize.py เลย — คืน dict ว่างถ้ายังไม่มีไฟล์นี้ (ไม่ error
+    ระบบยังทำงานได้ปกติ แค่ไม่แปลงอะไรให้เท่านั้น ดู tsic_normalize.normalize_tsic_code)"""
+
+    path = path or (DEFAULT_DATA_DIR / "tsic_code_mapping.csv")
+    mapping: Dict[str, str] = {}
+    if not path.exists():
+        return mapping
+    with path.open(encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            old_code = (row.get("old_code") or "").strip()
+            new_code = (row.get("new_code") or "").strip()
+            if old_code and new_code:
+                mapping[old_code] = new_code
+    return mapping
+
+
 def upsert_business_type(business_types: Dict[str, BusinessType], new_bt: BusinessType) -> Dict[str, BusinessType]:
     """แทนที่/เพิ่มประเภทธุรกิจตาม code (คืน dict ใหม่ ไม่แก้ของเดิม)"""
 
@@ -309,12 +330,24 @@ def _load_customers(path: Path) -> List[Customer]:
                     # ต่างจาก has_amr ตรงที่ไม่ทราบ (คอลัมน์ว่าง/ไม่มีคอลัมน์) ต้องเป็น None
                     # ไม่ใช่ False เพราะ "ไม่ทราบ" กับ "ไม่ติด Solar แน่ๆ" มีความหมายต่างกัน
                     has_solar=_to_optional_bool(row.get("has_solar", "")),
+                    # business_type_code_raw เป็นคอลัมน์ที่เพิ่มเข้ามาทีหลัง (เหมือน has_solar) —
+                    # ไฟล์เก่าที่ยังไม่มีคอลัมน์นี้ต้องโหลดได้ตามปกติ (ไม่มี raw code ให้ตรวจสอบ)
+                    business_type_code_raw=(row.get("business_type_code_raw") or "").strip() or None,
                 )
             )
     return customers
 
 
-_CUSTOMER_FIELDNAMES = ["account_no", "name", "business_type_code", "rate_code", "contract_kva", "has_amr", "has_solar"]
+_CUSTOMER_FIELDNAMES = [
+    "account_no",
+    "name",
+    "business_type_code",
+    "rate_code",
+    "contract_kva",
+    "has_amr",
+    "has_solar",
+    "business_type_code_raw",
+]
 
 
 def load_customers_local(path: Path) -> List[Customer]:
@@ -340,6 +373,7 @@ def save_customers_local(customers: List[Customer], path: Path) -> None:
                     "contract_kva": "" if c.contract_kva is None else c.contract_kva,
                     "has_amr": "true" if c.has_amr else "false",
                     "has_solar": "" if c.has_solar is None else ("true" if c.has_solar else "false"),
+                    "business_type_code_raw": c.business_type_code_raw or "",
                 }
             )
 
@@ -486,7 +520,15 @@ def load_reference_data(data_dir: Optional[Path] = None) -> ReferenceData:
     )
 
 
-_IMPORT_LOG_FIELDNAMES = ["imported_at", "business_type_code", "rate_code", "company_name", "account_no", "has_solar"]
+_IMPORT_LOG_FIELDNAMES = [
+    "imported_at",
+    "business_type_code",
+    "rate_code",
+    "company_name",
+    "account_no",
+    "has_solar",
+    "business_type_code_raw",
+]
 
 
 def _migrate_import_log_header_if_needed(path: Path) -> None:

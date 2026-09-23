@@ -50,6 +50,7 @@ from amr_mapping.loader import (
     load_import_log_local,
     load_pending_amr_local,
     load_site_curves_local,
+    load_tsic_code_mapping,
     remove_import_log_local_entry,
     remove_load_curve,
     remove_load_profile,
@@ -62,6 +63,7 @@ from amr_mapping.loader import (
 )
 from amr_mapping.mapping import UNKNOWN_RATE_CODE, MatchLevel, find_load_curve
 from amr_mapping.models import BusinessType, Customer
+from amr_mapping.tsic_normalize import normalize_tsic_code_with_audit
 from amr_mapping.wikipedia_lookup import search_wikipedia_company
 
 app = Flask(__name__, static_folder="static", static_url_path="")
@@ -103,6 +105,7 @@ def _customer_to_dict(customer) -> dict:
         "account_no": customer.account_no,
         "name": customer.name,
         "business_type_code": customer.business_type_code,
+        "business_type_code_raw": customer.business_type_code_raw,
         "rate_code": customer.rate_code,
         "contract_kva": customer.contract_kva,
         "has_amr": customer.has_amr,
@@ -412,9 +415,23 @@ def api_update_overview_entry():
     current = next((c for c in get_reference().customers if c.account_no == account_no), None)
 
     name = body.get("name", current.name if current else "") or (current.name if current else account_no)
-    business_type_code = body.get(
-        "business_type_code", current.business_type_code if current else None
-    )
+
+    # TSIC Code Normalization — business_type_code ที่ผู้ใช้กรอก/เลือกเองในหน้า /overview (User
+    # Input) อาจเป็นรหัสเก่าตามระบบเดิมของ กฟภ. ก็ได้ แปลงเป็นรหัสมาตรฐานใหม่ทันทีก่อนบันทึกลง
+    # customers_local.csv (ฟิลด์ business_type_code ใช้จับคู่จริงทั้งระบบ) เก็บรหัสดิบไว้ที่
+    # business_type_code_raw เป็น audit trail (ดู tsic_normalize.py) — คำนวณใหม่เฉพาะตอนที่ body
+    # ส่ง business_type_code มาแก้จริงๆ เท่านั้น ไม่งั้นจะคำนวณจากค่าที่แปลงแล้วเดิมซ้ำ (idempotent
+    # ไม่มีผลต่อ business_type_code เอง แต่จะเขียนทับ audit trail เดิมทิ้งอย่างผิดๆ ทุกครั้งที่แก้
+    # ฟิลด์อื่นที่ไม่เกี่ยวเลย เช่น rate_code)
+    if "business_type_code" in body:
+        tsic_mapping = load_tsic_code_mapping(DEFAULT_DATA_DIR / "tsic_code_mapping.csv")
+        business_type_code, business_type_code_raw = normalize_tsic_code_with_audit(
+            body.get("business_type_code"), tsic_mapping
+        )
+    else:
+        business_type_code = current.business_type_code if current else None
+        business_type_code_raw = current.business_type_code_raw if current else None
+
     rate_code = body.get("rate_code", current.rate_code if current else None)
     contract_kva_raw = body.get("contract_kva", current.contract_kva if current else None)
     try:
@@ -437,6 +454,7 @@ def api_update_overview_entry():
         account_no=account_no,
         name=(name or account_no).strip(),
         business_type_code=(business_type_code or "").strip() or None,
+        business_type_code_raw=business_type_code_raw,
         rate_code=(rate_code or "").strip() or None,
         contract_kva=contract_kva,
         has_amr=has_amr_in_registry or has_amr_in_import_log,

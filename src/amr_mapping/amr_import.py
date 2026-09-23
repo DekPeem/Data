@@ -26,6 +26,7 @@ from .loader import (
     append_import_log_local,
     append_site_curve_local,
     load_reference_data,
+    load_tsic_code_mapping,
     save_business_types,
     save_load_curves,
     save_load_profiles,
@@ -41,6 +42,7 @@ from .pea_ingest import (
     parse_interval_report,
     parse_report_header,
 )
+from .tsic_normalize import normalize_tsic_code_with_audit
 
 # โฟลเดอร์เก็บไฟล์ AMR ดิบที่ดาวน์โหลดมาแบบถาวร (ไม่ใช่ temp dir ที่ลบทิ้งหลังเสร็จเหมือนเดิม)
 # อยู่ที่ root ของ repo นี้ — มี .gitignore คุ้มครองแล้ว (amr_downloads/) ไม่มีทางหลุดเข้า
@@ -192,6 +194,15 @@ def import_amr_for_business(
     download_dir = str(Path(download_dir) if download_dir else DEFAULT_DOWNLOAD_DIR)
     os.makedirs(download_dir, exist_ok=True)
 
+    # TSIC Code Normalization — business_type_code ตรงนี้เป็นค่าที่ผู้ใช้กรอก/เลือกเองในฟอร์ม
+    # นำเข้า AMR (อาจพิมพ์รหัสเก่าตามระบบเดิมของ กฟภ. มาก็ได้) แปลงเป็นรหัสมาตรฐานใหม่ทันทีก่อนใช้
+    # เป็น key ของ load_profiles.csv/load_curves.csv — เก็บรหัสดิบไว้ที่ business_type_code_raw
+    # เพื่อบันทึกลง import_log_local.csv เป็น audit trail (ดู tsic_normalize.py)
+    tsic_mapping = load_tsic_code_mapping(data_dir / "tsic_code_mapping.csv")
+    business_type_code, business_type_code_raw = normalize_tsic_code_with_audit(business_type_code, tsic_mapping)
+    if business_type_code_raw and business_type_code_raw != business_type_code:
+        log(f"🔄 แปลงรหัส TSIC {business_type_code_raw} (ระบบเดิม) -> {business_type_code} (มาตรฐานใหม่)")
+
     log(
         f"📂 โฟลเดอร์เก็บไฟล์ AMR (เก็บไว้ใช้ซ้ำ ไม่ลบอัตโนมัติ อยู่ใน .gitignore แล้ว "
         f"ไม่มีทางหลุดเข้า repo public): {download_dir}"
@@ -246,6 +257,7 @@ def import_amr_for_business(
                     "company_name": company_name,
                     "account_no": r.account_no,
                     "has_solar": "true" if has_solar else "false",
+                    "business_type_code_raw": business_type_code_raw or "",
                 },
                 data_dir / "import_log_local.csv",
             )
@@ -329,6 +341,15 @@ def import_amr_from_files(
             if contract_kva is None:
                 contract_kva = matched.contract_kva
 
+    # TSIC Code Normalization — business_type_code ตรงนี้อาจมาจากพารามิเตอร์ที่ผู้ใช้กรอกเอง
+    # หรือจากทะเบียนลูกค้า (ทั้งคู่อาจเป็นรหัสเก่าตามระบบเดิมของ กฟภ.) แปลงเป็นรหัสมาตรฐานใหม่
+    # ทันทีก่อนใช้เป็น key ของ load_profiles.csv/load_curves.csv — เก็บรหัสดิบไว้บันทึกลง
+    # import_log_local.csv เป็น audit trail (ดู tsic_normalize.py)
+    tsic_mapping = load_tsic_code_mapping(data_dir / "tsic_code_mapping.csv")
+    business_type_code, business_type_code_raw = normalize_tsic_code_with_audit(business_type_code, tsic_mapping)
+    if business_type_code_raw and business_type_code_raw != business_type_code:
+        log(f"🔄 แปลงรหัส TSIC {business_type_code_raw} (ระบบเดิม) -> {business_type_code} (มาตรฐานใหม่)")
+
     if not business_type_code or not rate_code:
         hint = ""
         if account_no:
@@ -358,6 +379,7 @@ def import_amr_from_files(
                     "company_name": company_name,
                     "account_no": account_no,
                     "has_solar": "true" if has_solar else "false",
+                    "business_type_code_raw": business_type_code_raw or "",
                 },
                 data_dir / "import_log_local.csv",
             )
@@ -434,6 +456,16 @@ def import_amr_auto(
     rate_code = profile_info.get("rate_code") or ""
     billing_method = profile_info.get("billing_method") or "TOU"
 
+    # TSIC Code Normalization — business_type_code ตรงนี้คือรหัสที่สแกนมาจากหน้าข้อมูลผู้ใช้ไฟ
+    # ของ PEA โดยตรง ซึ่งยังใช้รหัส TSIC ระบบเดิม (TSIC 2544) อยู่บางส่วน (เช่น 93311 แทนที่จะเป็น
+    # 86101 ตามมาตรฐานปัจจุบัน) แปลงเป็นรหัสมาตรฐานใหม่ทันทีก่อนใช้เป็น key ของ
+    # load_profiles.csv/load_curves.csv/business_types.csv — เก็บรหัสดิบไว้บันทึกลง
+    # import_log_local.csv เป็น audit trail (ดู tsic_normalize.py)
+    tsic_mapping = load_tsic_code_mapping(data_dir / "tsic_code_mapping.csv")
+    business_type_code, business_type_code_raw = normalize_tsic_code_with_audit(business_type_code, tsic_mapping)
+    if business_type_code_raw and business_type_code_raw != business_type_code:
+        log(f"🔄 แปลงรหัส TSIC {business_type_code_raw} (ระบบเดิม) -> {business_type_code} (มาตรฐานใหม่)")
+
     if not business_type_code or not rate_code:
         raise RuntimeError(
             "ไม่สามารถตรวจจับประเภทธุรกิจ/ประเภทอัตราจากหน้าข้อมูลผู้ใช้ไฟได้ "
@@ -449,11 +481,14 @@ def import_amr_auto(
     # เพิ่มประเภทธุรกิจใหม่อัตโนมัติ ถ้าเป็นรหัสที่ยังไม่เคยมีใน business_types.csv
     reference: ReferenceData = load_reference_data(data_dir)
     if business_type_code not in reference.business_types:
+        auto_notes = "เพิ่มอัตโนมัติจากการนำเข้า AMR (สแกนจากหน้าข้อมูลผู้ใช้ไฟของ PEA)"
+        if business_type_code_raw and business_type_code_raw != business_type_code:
+            auto_notes += f" — แปลงจากรหัสเดิม {business_type_code_raw} (TSIC 2544) เป็นรหัสมาตรฐานใหม่นี้อัตโนมัติ"
         new_bt = BusinessType(
             code=business_type_code,
             name_th=business_type_name or f"ธุรกิจรหัส {business_type_code}",
             category="auto",
-            notes="เพิ่มอัตโนมัติจากการนำเข้า AMR (สแกนจากหน้าข้อมูลผู้ใช้ไฟของ PEA)",
+            notes=auto_notes,
         )
         updated_bts = upsert_business_type(reference.business_types, new_bt)
         save_business_types(updated_bts, data_dir / "business_types.csv")
@@ -486,6 +521,7 @@ def import_amr_auto(
                 "company_name": profile_info.get("name") or "",
                 "account_no": profile_info.get("account_no") or "",
                 "has_solar": "true" if has_solar else "false",
+                "business_type_code_raw": business_type_code_raw or "",
             },
             data_dir / "import_log_local.csv",
         )

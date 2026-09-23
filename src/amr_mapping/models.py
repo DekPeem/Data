@@ -129,6 +129,11 @@ class Customer:
     contract_kva: Optional[float] = None
     has_amr: bool = False
     has_solar: Optional[bool] = None  # None = ไม่ทราบ (ไม่บังคับกรอก — ดู LoadProfile.has_solar)
+    # รหัส TSIC ดิบที่รับเข้ามาจริง ก่อนแปลงเป็นรหัสมาตรฐานใหม่ (business_type_code ด้านบนคือ
+    # รหัสที่แปลงแล้ว ใช้ประมวลผล matching จริง) — เก็บไว้เป็น audit trail เฉยๆ ไม่มีผลต่อการจับคู่
+    # ใดๆ ทั้งสิ้น ดู tsic_normalize.normalize_tsic_code_with_audit — None ถ้าไม่เคยผ่านการแปลง
+    # (เช่น ลูกค้าเก่าที่มีมาก่อนฟีเจอร์นี้) หรือรหัสที่กรอกมาว่างเปล่าตั้งแต่แรก
+    business_type_code_raw: Optional[str] = None
 
 
 @dataclass(frozen=True)

@@ -2112,3 +2112,96 @@ def test_resolve_pending_amr_returns_400_when_saved_files_are_gone(client, monke
     )
     assert res.status_code == 400
     assert "ไม่พบไฟล์" in res.get_json()["message"]
+
+
+def test_overview_entry_normalizes_legacy_tsic_code_from_user_input(client, monkeypatch, tmp_path):
+    """ผู้ใช้กรอก/เลือกรหัส TSIC เก่าเองในหน้า /overview (User Input) — ต้องถูกแปลงเป็นรหัส
+    มาตรฐานใหม่ทันทีก่อนบันทึกลง customers_local.csv (Requirement 1) โดยรหัสดิบที่กรอกมาต้องถูก
+    เก็บไว้ที่ business_type_code_raw เป็น audit trail (Requirement 2)"""
+
+    tmp_data_dir = tmp_path / "reference"
+    tmp_data_dir.mkdir()
+    (tmp_data_dir / "tsic_code_mapping.csv").write_text(
+        "old_code,new_code,notes\n93311,86101,โรงพยาบาลทั่วไป\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_data_dir)
+
+    res = client.patch(
+        "/api/admin/overview-entry",
+        json={
+            "account_no": "TEST-TSIC-NORMALIZE-001",
+            "name": "ลูกค้าทดสอบ normalize",
+            "business_type_code": "93311",
+            "rate_code": "30",
+        },
+    )
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["business_type_code"] == "86101"
+    assert data["business_type_code_raw"] == "93311"
+
+    from amr_mapping.loader import load_customers_local
+
+    saved = load_customers_local(tmp_data_dir / "customers_local.csv")
+    assert len(saved) == 1
+    assert saved[0].business_type_code == "86101"
+    assert saved[0].business_type_code_raw == "93311"
+
+
+def test_overview_entry_fallback_keeps_unknown_code_unchanged(client, monkeypatch, tmp_path):
+    """ไม่มีไฟล์ tsic_code_mapping.csv เลย (หรือรหัสไม่อยู่ใน mapping) — ต้องบันทึกรหัสเดิมได้ตาม
+    ปกติ ไม่ error (Requirement 3: Fallback Logic)"""
+
+    tmp_data_dir = tmp_path / "reference"
+    tmp_data_dir.mkdir()
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_data_dir)
+
+    res = client.patch(
+        "/api/admin/overview-entry",
+        json={
+            "account_no": "TEST-TSIC-NORMALIZE-002",
+            "name": "ลูกค้าทดสอบ fallback",
+            "business_type_code": "63201",
+            "rate_code": "50",
+        },
+    )
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["business_type_code"] == "63201"
+    assert data["business_type_code_raw"] == "63201"
+
+
+def test_overview_entry_editing_unrelated_field_does_not_clobber_existing_raw_audit(client, monkeypatch, tmp_path):
+    """แก้ไขแค่ rate_code (ไม่แตะ business_type_code เลย) ต้องไม่เขียนทับ business_type_code_raw
+    เดิมทิ้งด้วยค่าที่แปลงแล้ว (ดูคอมเมนต์ใน api_update_overview_entry — บั๊กที่ตั้งใจป้องกัน)
+
+    ใช้ monkeypatch ที่ get_reference() ตรงๆ (แทนการพึ่งพา customers_local.csv ที่เขียนไปจริง)
+    เพราะ get_reference() ในแอปจริงโหลดจาก loader.DEFAULT_DATA_DIR เสมอ (ไม่ใช่ app_module.
+    DEFAULT_DATA_DIR ที่ mock ในเทสต์นี้ — เทสต์อื่นในไฟล์นี้ก็ใช้วิธีเดียวกันเวลาต้องการ current
+    customer ที่กำหนดเอง)"""
+
+    from amr_mapping.models import Customer
+
+    tmp_data_dir = tmp_path / "reference"
+    tmp_data_dir.mkdir()
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_data_dir)
+
+    existing_customer = Customer(
+        account_no="TEST-TSIC-NORMALIZE-003",
+        name="ลูกค้าทดสอบ preserve raw",
+        business_type_code="86101",
+        business_type_code_raw="93311",
+        rate_code="30",
+    )
+    patched = replace(app_module.get_reference(), customers=[existing_customer])
+    monkeypatch.setattr(app_module, "get_reference", lambda: patched)
+
+    res = client.patch(
+        "/api/admin/overview-entry",
+        json={"account_no": "TEST-TSIC-NORMALIZE-003", "rate_code": "40"},
+    )
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["business_type_code"] == "86101"
+    assert data["business_type_code_raw"] == "93311"
+    assert data["rate_code"] == "40"

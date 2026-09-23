@@ -659,3 +659,69 @@ def test_import_amr_auto_raises_when_detection_incomplete(monkeypatch, data_dir)
             username="u", password="p", start_date="2026-07-01", end_date="2026-08-31",
             data_dir=data_dir, download_dir=data_dir.parent / "downloads",
         )
+
+
+def test_import_amr_auto_normalizes_legacy_tsic_code_scraped_from_pea(monkeypatch, data_dir):
+    """business_type_code ที่สแกนมาจากหน้าข้อมูลผู้ใช้ไฟของ PEA อาจเป็นรหัสเก่าตามระบบเดิม
+    (TSIC 2544) — ต้องถูกแปลงเป็นรหัสมาตรฐานใหม่ (TSIC 2552/DBD) ทันทีก่อนบันทึกลง
+    load_profiles.csv/business_types.csv (Requirement 1: Data Normalization) โดยรหัสดิบที่สแกน
+    มาได้ต้องยังถูกเก็บไว้ใน import_log_local.csv เป็น audit trail (Requirement 2)"""
+
+    (data_dir / "tsic_code_mapping.csv").write_text(
+        "old_code,new_code,notes\n93311,86101,โรงพยาบาลทั่วไป\n", encoding="utf-8"
+    )
+
+    def fake_download(username, password, start_date, end_date, download_dir, log, headless=True):
+        profile_info = {
+            "name": "โรงพยาบาลทดสอบ",
+            "account_no": username,
+            "rate_code": "30",
+            "billing_method": "TOU",
+            "business_type_code": "93311",  # รหัสเก่าตามระบบเดิมที่ กฟภ. ยังส่งมา
+            "business_type_name": "โรงพยาบาลทั่วไป",
+            "kva": "900",
+            "meter_no": "22222222",
+        }
+        path = os.path.join(download_dir, "amr_auto.xls")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(_SYNTHETIC_INTERVAL_HTML)
+        results = [DownloadResult(account_no=username, meter_text="M1", date_from=start_date, date_to=end_date, file_path=path, success=True)]
+        return profile_info, results
+
+    monkeypatch.setattr(amr_import, "download_amr_with_profile", fake_download)
+
+    profile = amr_import.import_amr_auto(
+        username="019900000002", password="secret-pass",
+        start_date="2026-07-01", end_date="2026-08-31",
+        data_dir=data_dir, download_dir=data_dir.parent / "downloads",
+    )
+
+    # ฟิลด์หลักที่ใช้จับคู่จริง (matching) ต้องเป็นรหัสใหม่ที่แปลงแล้ว ไม่ใช่รหัสดิบ
+    assert profile.business_type_code == "86101"
+
+    reference = load_reference_data(data_dir)
+    assert "86101" in reference.business_types
+    assert "93311" not in reference.business_types  # ไม่ได้สร้างแถวรหัสเก่าขึ้นมาเลย
+    assert any(p.business_type_code == "86101" for p in reference.load_profiles)
+
+    from amr_mapping.loader import load_import_log_local
+
+    log_entries = load_import_log_local(data_dir / "import_log_local.csv")
+    assert len(log_entries) == 1
+    assert log_entries[0]["business_type_code"] == "86101"
+    assert log_entries[0]["business_type_code_raw"] == "93311"  # audit trail ของรหัสดิบ
+
+
+def test_import_amr_auto_fallback_keeps_unknown_code_unchanged(monkeypatch, data_dir):
+    """รหัสที่ไม่อยู่ใน mapping table (ในที่นี้ไม่มีไฟล์ tsic_code_mapping.csv เลยด้วยซ้ำ) ต้องใช้
+    ได้ตามปกติ ไม่ error ไม่บล็อกการนำเข้า (Requirement 3: Fallback Logic)"""
+
+    monkeypatch.setattr(amr_import, "download_amr_with_profile", _fake_download_amr_with_profile)
+
+    profile = amr_import.import_amr_auto(
+        username="019900000003", password="secret-pass",
+        start_date="2026-07-01", end_date="2026-08-31",
+        data_dir=data_dir, download_dir=data_dir.parent / "downloads",
+    )
+
+    assert profile.business_type_code == "34111"
