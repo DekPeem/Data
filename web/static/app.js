@@ -140,6 +140,23 @@ const adhocFormHint = document.getElementById("adhoc-form-hint");
 let PROFILE_KEYS = []; // [{business_type_code, rate_code, sample_size}, ...]
 let BUSINESS_TYPE_NAMES = {}; // code -> name_th
 let BUSINESS_TYPE_GROUPS = new Map(); // section_code (หรือ "UNVERIFIED") -> [{code, bt}, ...]
+let BUSINESS_TYPE_BY_CODE = {}; // code -> business type เต็ม (รวม alias_of) จาก /api/business-types-full
+
+// รหัสธุรกิจที่ถือว่า "เรื่องเดียวกัน" กับ code (ตัวเอง + alias ทุกทิศทาง) — พอร์ตมาจาก
+// mapping._equivalent_codes ฝั่ง Python (ดู src/amr_mapping/mapping.py) ใช้ตอนหารายชื่อบริษัทจริง
+// ที่ backing โปรไฟล์นี้ (renderMatchedCompanies) เพื่อให้สอดคล้องกับตรรกะจับคู่จริงที่ backend
+// ใช้ตอนพยากรณ์ — ไม่งั้นถ้าเทียบ business_type_code ตรงตัวเฉยๆ จะพลาดบัญชีที่นำเข้าไว้ด้วยรหัส
+// alias คู่กัน (เช่น 86101/93311) ไปทั้งที่จริงๆ เป็นข้อมูลของธุรกิจเดียวกันที่ไปหนุนโปรไฟล์นี้ด้วย
+function equivalentBusinessTypeCodes(code) {
+  const codes = new Set([code]);
+  const bt = BUSINESS_TYPE_BY_CODE[code];
+  const canonical = bt && bt.alias_of ? bt.alias_of : code;
+  codes.add(canonical);
+  for (const [otherCode, otherBt] of Object.entries(BUSINESS_TYPE_BY_CODE)) {
+    if (otherCode === canonical || otherBt.alias_of === canonical) codes.add(otherCode);
+  }
+  return codes;
+}
 
 function escapeHtml(s) {
   return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -162,6 +179,7 @@ async function loadBusinessTypesAndKeys() {
     PROFILE_KEYS = await keysRes.json();
     const typeByCode = Object.fromEntries(types.map((t) => [t.code, t]));
     BUSINESS_TYPE_NAMES = Object.fromEntries(types.map((t) => [t.code, t.name_th]));
+    BUSINESS_TYPE_BY_CODE = typeByCode;
 
     const businessCodesWithData = [...new Set(PROFILE_KEYS.map((k) => k.business_type_code))];
 
@@ -961,8 +979,12 @@ async function renderMatchedCompanies(businessTypeCode, rateCode) {
     if (!res.ok) return;
     const entries = await res.json();
 
+    // เทียบแบบรู้จัก alias (86101/93311 ฯลฯ) ให้ตรงกับตรรกะจับคู่จริงที่ backend ใช้ตอนพยากรณ์
+    // (mapping._equivalent_codes) ไม่งั้นถ้าบัญชีถูกนำเข้า/แก้ไว้ด้วยรหัส alias คู่กัน (ไม่ใช่รหัส
+    // เป๊ะๆ ที่ businessTypeCode ระบุมา) จะไม่โผล่ในรายชื่อนี้ทั้งที่จริงๆ ก็เป็นข้อมูลธุรกิจเดียวกัน
+    const equivalentCodes = equivalentBusinessTypeCodes(businessTypeCode);
     const matched = entries.filter(
-      (e) => e.business_type_code === businessTypeCode && e.rate_code === rateCode
+      (e) => equivalentCodes.has(e.business_type_code) && e.rate_code === rateCode
     );
     const seen = new Set();
     const names = [];

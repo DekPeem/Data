@@ -52,6 +52,12 @@ function mergeCustomersWithImportLog(registryCustomers, importLogEntries) {
 
   // importLogEntries มาจาก /api/import-log-local ซึ่งเรียงใหม่สุดก่อนอยู่แล้ว — ใช้ Set กันไม่ให้
   // แถวเก่ากว่าของบัญชีเดียวกัน (นำเข้าซ้ำหลายรอบ) มาทับแถวล่าสุดที่ประมวลผลไปแล้ว
+  //
+  // ลำดับความสำคัญ: "ทะเบียนลูกค้า" (customers_local.csv ผ่าน /api/customers) ต้องชนะ
+  // import_log_local.csv เสมอถ้ามีค่าอยู่แล้ว เพราะ customers_local.csv คือไฟล์ที่ PATCH
+  // /api/admin/overview-entry เขียนทับตอนกด "แก้ไข" ในหน้านี้ (ดู web/app.py) — import_log_local
+  // เป็นแค่ประวัติตอนนำเข้าครั้งแรก ไม่เคยถูกอัปเดตตามหลังการแก้ไขเลย ถ้าให้ import log ชนะ
+  // ค่าที่เพิ่งแก้ไขไปจะ "เด้งกลับ" เป็นค่าเดิมตอนโหลดหน้าใหม่ทันที (บั๊กที่เจอจริง)
   const seenFromLog = new Set();
   for (const entry of importLogEntries) {
     const accountNo = entry.account_no;
@@ -59,12 +65,13 @@ function mergeCustomersWithImportLog(registryCustomers, importLogEntries) {
     seenFromLog.add(accountNo);
 
     const existing = byAccount.get(accountNo) || { account_no: accountNo };
+    const existingHasSolar = existing.has_solar !== undefined && existing.has_solar !== null;
     byAccount.set(accountNo, {
       ...existing,
-      name: entry.company_name || existing.name,
-      business_type_code: entry.business_type_code || existing.business_type_code,
-      rate_code: entry.rate_code || existing.rate_code,
-      has_solar: entry.has_solar === "true" ? true : entry.has_solar === "false" ? false : existing.has_solar,
+      name: existing.name || entry.company_name,
+      business_type_code: existing.business_type_code || entry.business_type_code,
+      rate_code: existing.rate_code || entry.rate_code,
+      has_solar: existingHasSolar ? existing.has_solar : entry.has_solar === "true" ? true : entry.has_solar === "false" ? false : existing.has_solar,
       has_amr: true,
     });
   }
