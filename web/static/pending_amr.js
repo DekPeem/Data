@@ -5,19 +5,53 @@
 
 const pendingListEl = document.getElementById("pending-list");
 
-let businessTypeOptionsHtml = "";
+// รายการยาวขึ้นเรื่อยๆ ตามจำนวนประเภทธุรกิจที่เพิ่มเข้าระบบ — เรียงตามชื่อ (ไม่ใช่ตามลำดับที่เพิ่ม
+// เข้าไฟล์) ให้หาง่ายขึ้นตอนเลื่อนดูทั้งรายการก่อนพิมพ์ค้นหา
+let businessTypes = [];
 
 async function loadBusinessTypeOptions() {
   try {
     const res = await fetch("/api/business-types");
-    const types = await res.json();
-    businessTypeOptionsHtml =
-      `<option value="">-- เลือกประเภทธุรกิจ --</option>` +
-      types.map((t) => `<option value="${t.code}">${t.name_th} (${t.code})</option>`).join("");
+    businessTypes = (await res.json()).sort((a, b) => a.name_th.localeCompare(b.name_th, "th"));
   } catch (err) {
     console.error("โหลดประเภทธุรกิจไม่สำเร็จ", err);
   }
 }
+
+function businessTypeDropdownHtml() {
+  return `
+    <div class="biz-type-combobox">
+      <input type="hidden" class="p-business-type">
+      <input type="text" class="biz-type-search-input" placeholder="🔍 ค้นหาประเภทธุรกิจ (${businessTypes.length} รายการ)..." autocomplete="off">
+      <div class="biz-type-dropdown">
+        ${businessTypes.map((t) => `<button type="button" class="biz-type-dropdown-item" data-code="${t.code}">${t.name_th} (${t.code})</button>`).join("")}
+        <div class="biz-type-dropdown-empty" style="display:none;">ไม่พบประเภทธุรกิจที่ตรงกับคำค้นหา</div>
+      </div>
+    </div>`;
+}
+
+// กรองรายการใน dropdown ตามคำที่พิมพ์ — จับคู่แบบ "มีคำนี้อยู่ตรงไหนก็ได้" ไม่สนตัวพิมพ์เล็ก-ใหญ่
+// (เหมือน filterComboboxDropdown ในหน้า Admin แต่ทำแยกเองเพราะหน้านี้ไม่ได้โหลด admin.js ร่วมด้วย)
+function filterBizTypeDropdown(input) {
+  const wrap = input.closest(".biz-type-combobox");
+  const query = input.value.trim().toLowerCase();
+  const items = wrap.querySelectorAll(".biz-type-dropdown-item");
+  let anyVisible = false;
+  items.forEach((item) => {
+    const match = !query || item.textContent.toLowerCase().includes(query);
+    item.style.display = match ? "" : "none";
+    if (match) anyVisible = true;
+  });
+  wrap.querySelector(".biz-type-dropdown-empty").style.display = anyVisible ? "none" : "block";
+}
+
+// ปิด dropdown ที่เปิดค้างไว้เมื่อคลิกข้างนอกกล่องค้นหา (ผูกครั้งเดียว ใช้ event delegation เพราะ
+// การ์ดแต่ละใบถูกสร้าง/ลบทิ้งไปเรื่อยๆ ตามรายการที่ resolve/delete)
+document.addEventListener("click", (e) => {
+  document.querySelectorAll(".biz-type-combobox.open").forEach((box) => {
+    if (!box.contains(e.target)) box.classList.remove("open");
+  });
+});
 
 function formatCreatedAt(iso) {
   try {
@@ -53,7 +87,7 @@ function renderPendingCard(entry) {
     <div class="pending-form-grid">
       <div class="form-field">
         <label>ประเภทธุรกิจ</label>
-        <select class="p-business-type">${businessTypeOptionsHtml}</select>
+        ${businessTypeDropdownHtml()}
       </div>
       <div class="form-field">
         <label>รหัสอัตรา</label>
@@ -89,6 +123,19 @@ function renderPendingCard(entry) {
   const deleteBtn = wrap.querySelector(".p-delete-btn");
   const rateCodeInput = wrap.querySelector(".p-rate-code");
   const rateUnknownCheckbox = wrap.querySelector(".p-rate-unknown");
+
+  const bizCombobox = wrap.querySelector(".biz-type-combobox");
+  const bizSearchInput = wrap.querySelector(".biz-type-search-input");
+  const bizHiddenInput = wrap.querySelector(".p-business-type");
+  bizSearchInput.addEventListener("focus", () => bizCombobox.classList.add("open"));
+  bizSearchInput.addEventListener("input", () => filterBizTypeDropdown(bizSearchInput));
+  bizCombobox.querySelectorAll(".biz-type-dropdown-item").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      bizHiddenInput.value = btn.dataset.code;
+      bizSearchInput.value = btn.textContent;
+      bizCombobox.classList.remove("open");
+    });
+  });
 
   // ติ๊ก "ไม่ทราบรหัสอัตรา" แล้ว ไม่ต้องกรอกช่องรหัสอัตราอีก (ปิดไว้กันสับสนว่าต้องกรอกไหม) —
   // จะบันทึกด้วยรหัสอัตรา sentinel พิเศษแทน ยังเอาไปใช้จับคู่ระดับ "ประเภทธุรกิจ" ได้อยู่
