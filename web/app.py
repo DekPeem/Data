@@ -340,7 +340,11 @@ def api_update_overview_entry():
     โค้ดส่วนนี้อยู่ใน public repo ตั้ง default ไว้จะไม่ปลอดภัยเลย) เทียบรหัสผ่านด้วย
     hmac.compare_digest กัน timing attack"""
 
-    configured_password = os.environ.get("ADMIN_EDIT_PASSWORD")
+    # .strip() กันปัญหาที่เจอจริง: Windows cmd.exe เก็บช่องว่างท้ายค่าไว้ตรงๆ ถ้าพิมพ์
+    # `set ADMIN_EDIT_PASSWORD=123456 ` (มีเว้นวรรคเกินก่อน Enter) — ตัวแปรจะเป็น "123456 " ทำให้
+    # เทียบกับรหัสผ่านที่พิมพ์ในกล่อง prompt ("123456" ไม่มีเว้นวรรค) ไม่ตรงกันทั้งที่ผู้ใช้มองว่า
+    # เป็นรหัสเดียวกัน ไม่มีใครตั้งใจใช้ช่องว่างนำ/ตามหลังเป็นส่วนหนึ่งของรหัสผ่านจริงๆ อยู่แล้ว
+    configured_password = (os.environ.get("ADMIN_EDIT_PASSWORD") or "").strip()
     if not configured_password:
         return jsonify(
             {
@@ -351,11 +355,11 @@ def api_update_overview_entry():
         ), 503
 
     body = request.get_json(silent=True) or {}
-    password = body.get("password") or ""
+    password = (body.get("password") or "").strip()
     # hmac.compare_digest แบบ str ต้องเป็น ASCII ล้วนทั้งคู่เท่านั้น (raise TypeError ถ้ามีอักขระ
     # นอก ASCII แม้แต่ตัวเดียวในฝั่งไหนก็ตาม) — เข้ารหัสเป็น UTF-8 bytes ก่อนเทียบเสมอ กันพังกรณี
     # ตั้งรหัสผ่าน/พิมพ์รหัสผ่านเป็นภาษาไทยหรือมีอักขระพิเศษปน
-    if not hmac.compare_digest(str(password).encode("utf-8"), configured_password.encode("utf-8")):
+    if not hmac.compare_digest(password.encode("utf-8"), configured_password.encode("utf-8")):
         return jsonify({"error": "wrong_password", "message": "รหัสผ่านไม่ถูกต้อง"}), 403
 
     account_no = (body.get("account_no") or "").strip()
