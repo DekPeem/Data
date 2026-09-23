@@ -16,9 +16,9 @@ def reference():
 
 
 def test_exact_match(reference):
-    match = find_load_profile(reference.load_profiles, business_type_code="63201", rate_code="50")
+    match = find_load_profile(reference.load_profiles, business_type_code="55101", rate_code="50")
     assert match.level == MatchLevel.EXACT
-    assert match.profile.business_type_code == "63201"
+    assert match.profile.business_type_code == "55101"
     assert match.profile.rate_code == "50"
 
 
@@ -45,7 +45,7 @@ def test_scaling_by_kva(reference):
     customer = Customer(
         account_no="TEST-001",
         name="ทดสอบ",
-        business_type_code="63201",
+        business_type_code="55101",
         rate_code="50",
         contract_kva=1000,  # ครึ่งหนึ่งของ contract_kva_ref (2000)
         has_amr=False,
@@ -56,7 +56,7 @@ def test_scaling_by_kva(reference):
     # เทียบกับค่าดิบของโปรไฟล์อ้างอิงโดยตรง แทนการ hardcode ตัวเลข เพื่อไม่ให้ test
     # พังทุกครั้งที่ข้อมูลอ้างอิงถูกอัปเดตด้วยค่าเฉลี่ยจาก AMR จริงชุดใหม่
     ref_profile = next(
-        p for p in reference.load_profiles if p.business_type_code == "63201" and p.rate_code == "50"
+        p for p in reference.load_profiles if p.business_type_code == "55101" and p.rate_code == "50"
     )
     assert result.demand_kw["P"] == pytest.approx(ref_profile.demand_kw["P"] * 0.5, rel=1e-3)
     assert result.energy_kwh["P"] == pytest.approx(ref_profile.energy_kwh["P"] * 0.5, rel=1e-3)

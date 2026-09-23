@@ -73,7 +73,7 @@ reference = load_reference_data()
 customer = Customer(
     account_no="DEMO-HOTEL-001",
     name="ลูกค้าโรงแรมตัวอย่าง (สมมติ)",
-    business_type_code="63201",  # โรงแรม
+    business_type_code="55101",  # โรงแรม
     rate_code="50",
     contract_kva=2000,
     has_amr=False,
@@ -104,7 +104,7 @@ print(result.match_level, result.demand_kw, result.energy_kwh)
 ```bash
 python scripts/update_load_profile_from_register.py \
     --input /path/to/ไฟล์ประวัติมิเตอร์.xls \
-    --business-type 63201 \
+    --business-type 55101 \
     --rate-code 50 \
     --ct-ratio "50:5 A." \
     --vt-ratio "22000:110 V." \
@@ -230,9 +230,10 @@ PEA ผ่าน Selenium → คำนวณโปรไฟล์ P/OP/H → �
 
 | business_type_code | rate_code | ที่มา |
 |---|---|---|
-| `63201` (โรงแรม) | `50` | **ข้อมูลจริง** — ค่าเฉลี่ยจาก AMR จริง 12 เดือน (anonymized ผ่าน `pea_ingest`) |
+| `55101` (โรงแรม) | `50` | **ข้อมูลจริง** — ค่าเฉลี่ยจาก AMR จริง 12 เดือน (anonymized ผ่าน `pea_ingest`) — เดิมเป็น `63201` (รหัสผิดหมวด) ก่อน migrate ผ่านฟีเจอร์ TSIC Code Normalization |
 | `UNSPECIFIED` | `3224` | **ข้อมูลจริง** — จากใบแจ้งค่าไฟฟ้าจริง 1 รอบบิล (PEA กำแพงเพชร มิ.ย. 2569) |
-| `86101`, `47190`, `MANU`, `DEFAULT` | ต่างๆ | **PLACEHOLDER** — ค่าประมาณสำหรับสาธิตเท่านั้น (ระบุไว้ในคอลัมน์ `notes`) |
+| `86101` (โรงพยาบาล), `29301` (ชิ้นส่วนยานยนต์) | ต่างๆ | **ข้อมูลจริง** — เดิมเป็นรหัสเก่า `93311`/`38439` ก่อน migrate มาเป็นรหัส TSIC 2552/DBD มาตรฐานปัจจุบัน |
+| `47190`, `MANU`, `DEFAULT` | ต่างๆ | **PLACEHOLDER** — ค่าประมาณสำหรับสาธิตเท่านั้น (ระบุไว้ในคอลัมน์ `notes`) |
 
 แถวที่เป็น PLACEHOLDER ควรแทนที่ด้วยค่าเฉลี่ยจาก AMR จริงของผู้ใช้ไฟกลุ่มนั้นๆ ผ่าน
 สคริปต์ด้านบน เมื่อมีข้อมูลพร้อม และควรตรวจสอบรหัสประเภทธุรกิจ (TSIC) ให้ตรงกับที่

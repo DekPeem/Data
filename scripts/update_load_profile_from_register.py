@@ -9,7 +9,7 @@
 ตัวอย่างการใช้งาน:
     python scripts/update_load_profile_from_register.py \\
         --input /path/to/Billing_register_history.xls \\
-        --business-type 63201 \\
+        --business-type 55101 \\
         --rate-code 50 \\
         --ct-ratio "50:5 A." \\
         --vt-ratio "22000:110 V." \\
@@ -37,7 +37,7 @@ from amr_mapping.pea_ingest import (
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--input", required=True, help="path ไฟล์ประวัติการอ่านหน่วยมิเตอร์ AMR (.xls)")
-    parser.add_argument("--business-type", required=True, help="รหัสประเภทธุรกิจ เช่น 63201")
+    parser.add_argument("--business-type", required=True, help="รหัสประเภทธุรกิจ เช่น 55101")
     parser.add_argument("--rate-code", required=True, help="รหัสประเภทอัตรา เช่น 50")
     parser.add_argument("--billing-method", default="TOU")
     parser.add_argument("--ct-ratio", help='เช่น "50:5 A." (ใช้คู่กับ --vt-ratio แทน --multiplier)')

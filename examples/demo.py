@@ -41,7 +41,7 @@ def main() -> None:
     hotel_customer = Customer(
         account_no="DEMO-HOTEL-001",
         name="ลูกค้าโรงแรมตัวอย่าง (สมมติ)",
-        business_type_code="63201",
+        business_type_code="55101",
         rate_code="50",
         contract_kva=2000,
         has_amr=False,

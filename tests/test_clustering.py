@@ -303,7 +303,7 @@ def reference():
 
 def test_cluster_business_types_runs_against_real_reference_data(reference):
     clusters = cluster_business_types(reference)
-    # ข้อมูลจริงตอนนี้มีธุรกิจที่มี LoadCurve จริงอยู่ 5 ประเภท (31212/34111/34120/63201/71919)
+    # ข้อมูลจริงตอนนี้มีธุรกิจที่มี LoadCurve จริงอยู่ 5 ประเภท (31212/34111/34120/55101/71919)
     assert len(clusters) >= 1
     assert all(isinstance(c, BusinessTypeCluster) for c in clusters)
     assert all(c.shape_label for c in clusters)

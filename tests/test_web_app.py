@@ -84,7 +84,7 @@ def test_forecast_curve_available_and_scaled_when_present(client, monkeypatch):
 
     original = app_module.load_reference_data()
     curve = LoadCurve(
-        business_type_code="63201",
+        business_type_code="55101",
         rate_code="50",
         hours={"all": [10.0 if h == 9 else None for h in range(24)]},
         contract_kva_ref=2000.0,  # เท่ากับ contract_kva ของ DEMO-HOTEL-001 -> scale_factor เป็น 1.0
@@ -143,7 +143,7 @@ def test_list_load_profile_keys_excludes_default_fallback_row(client):
     data = res.get_json()
     # ไม่เช็ค sample_size ตายตัวเพราะข้อมูลจริงนี้จะถูกอัปเดตเพิ่มเรื่อยๆ ตามจำนวนไซต์ที่นำเข้า
     assert any(
-        k["business_type_code"] == "63201" and k["rate_code"] == "50" and k["has_solar"] is False for k in data
+        k["business_type_code"] == "55101" and k["rate_code"] == "50" and k["has_solar"] is False for k in data
     )
     # แถว DEFAULT/DEFAULT เป็นแค่ fallback ไม่ใช่ธุรกิจจริง ต้องไม่อยู่ในรายการนี้
     assert not any(k["business_type_code"] == "DEFAULT" and k["rate_code"] == "DEFAULT" for k in data)
@@ -322,7 +322,7 @@ def test_list_business_types(client):
     res = client.get("/api/business-types")
     assert res.status_code == 200
     data = res.get_json()
-    assert any(bt["code"] == "63201" for bt in data)
+    assert any(bt["code"] == "55101" for bt in data)
 
 
 def test_list_business_types_full_includes_hierarchy_and_profiles(client):
@@ -1483,7 +1483,7 @@ def test_business_type_lookup_guesses_business_type_from_wikipedia_keyword(clien
     assert status["status"] == "success"
     wp_result = status["result"]["wikipedia_result"]
     assert wp_result["guessed_keyword"] == "โรงแรม"
-    assert wp_result["suggested_business_type_code"] == "63201"
+    assert wp_result["suggested_business_type_code"] == "55101"
     assert wp_result["suggested_is_approximate"] is False
     # มั่นใจพอ (ไม่ใช่แค่ประมาณการ) -> ไม่ต้องมีรายการอันดับให้เลือก auto-apply ไปเลยพอ
     assert "ranked_candidates" not in wp_result
@@ -1585,7 +1585,7 @@ def test_business_type_lookup_suggests_business_type_from_dbd_opendata_purpose_c
     match = result["dbd_opendata_matches"][0]
     assert match["tsic_code"] == "55101"
     assert match["tsic_name_th"] == "กิจการโรงแรม"
-    assert match["suggested_business_type_code"] == "63201"  # หมวดโรงแรม (division 55) มีโปรไฟล์จริงรองรับ
+    assert match["suggested_business_type_code"] == "55101"  # ตรงกับ tsic_code จาก DBD Open Data เป๊ะ (exact match)
     assert match["suggested_is_approximate"] is False
     assert result["dbd_opendata_exact_match_index"] == 0
 
