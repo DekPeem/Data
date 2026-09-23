@@ -12,8 +12,17 @@
 // แถว DEMO (customers.csv สาธิต — account_no ขึ้นต้นด้วย "DEMO-" เสมอตามธรรมเนียมของ repo นี้)
 // ถูกกรองทิ้งไม่ให้ขึ้นในตารางนี้ เพราะเป็นข้อมูลสมมติ ไม่ใช่ลูกค้าจริง
 //
-// "ก่อตั้งเมื่อไหร่" ไม่มีอยู่ในตารางนี้ เพราะไม่มีแหล่งข้อมูลนี้เก็บไว้ที่ไหนในระบบเลย (ดู
-// customers.csv/customers_local.csv และ dbd_lookup.py — ไม่มีฟิลด์วันจดทะเบียน/ก่อตั้ง)
+// จัดกลุ่มแถวตาม Section (TSIC A-U) พร้อมแถบปุ่มกรองด่วน — คำนวณจากรายชื่อ section ที่เจอจริง
+// ในข้อมูลปัจจุบันเท่านั้น (ไม่ fix รายชื่อ 21 หมวดไว้ตายตัว กันปุ่มเยอะเกินจำเป็นตอนข้อมูลน้อย)
+//
+// "ใช้ไฟเฉลี่ย/เดือน" และ "Peak สูงสุด/วัน" คำนวณจากกราฟรายชั่วโมงจริงของแต่ละไซต์ (ดึงจาก
+// /api/admin/site-curve/<account_no> ซึ่งอ่านจาก site_curves_local.csv) — ใช้ค่าเฉลี่ยกำลังไฟฟ้า
+// (kW) รายชั่วโมงของ day_type "all" (ค่าเฉลี่ยรวมทุกวันในช่วงที่นำเข้า ไม่แยกวันธรรมดา/วันหยุด):
+//   Peak สูงสุด/วัน = max(hours["all"]) หน่วย kW
+//   ใช้ไฟเฉลี่ย/เดือน = sum(hours["all"]) หน่วย kWh/วัน (avg kW ต่อชม. x 1 ชม. = kWh ของชม.นั้น)
+//                       คูณ 30 วัน โดยประมาณ
+// มีเฉพาะบัญชีที่นำเข้า AMR จริงแบบรู้เลขบัญชี (ผ่านโหมด auto/ไฟล์ที่อ่านเลขบัญชีได้) เท่านั้น —
+// บัญชีที่ลงทะเบียนไว้ล่วงหน้าอย่างเดียวไม่มีกราฟให้คำนวณ จะแสดง "ไม่มีข้อมูล"
 //
 // แก้ไขได้ในตาราง (ปุ่ม "แก้ไข" ต่อแถว) — บันทึกผ่าน PATCH /api/admin/overview-entry ซึ่งเขียนลง
 // customers_local.csv (upsert ตาม account_no) มีผลกับทั้งระบบทันที ต้องใส่รหัสผ่านก่อนบันทึกได้
@@ -24,12 +33,16 @@ const tbody = document.getElementById("overview-tbody");
 const emptyState = document.getElementById("overview-empty");
 const countEl = document.getElementById("overview-count");
 const searchBox = document.getElementById("search-box");
+const sectionFilterBar = document.getElementById("section-filter-bar");
 
 const SESSION_PASSWORD_KEY = "overviewEditPassword";
+const UNCLASSIFIED_SECTION_KEY = "__unclassified__";
 
 let customers = [];
 let businessTypeByCode = {};
+let usageStatsByAccount = {};
 let editingAccountNo = null;
+let activeSectionFilter = null; // null = ทั้งหมด
 
 function mergeCustomersWithImportLog(registryCustomers, importLogEntries) {
   const byAccount = new Map();
@@ -74,14 +87,38 @@ function businessLabelOf(c) {
   return bt ? bt.name_th : c.business_type_code ? c.business_type_code : "ยังไม่ระบุ";
 }
 
+function sectionOf(c) {
+  return businessTypeByCode[c.business_type_code] || null;
+}
+
+function sectionKeyOf(c) {
+  const bt = sectionOf(c);
+  return bt && bt.section_code ? bt.section_code : UNCLASSIFIED_SECTION_KEY;
+}
+
 function sectionLabelOf(c) {
-  const bt = businessTypeByCode[c.business_type_code];
+  const bt = sectionOf(c);
   return bt && bt.section_name_th ? `${bt.section_code} · ${bt.section_name_th}` : "-";
+}
+
+function usageCells(accountNo) {
+  const stats = usageStatsByAccount[accountNo];
+  if (!stats) {
+    return {
+      monthlyKwh: `<span class="pill-muted" title="ไม่มีกราฟรายชั่วโมงของบัญชีนี้ (ยังไม่เคยนำเข้า AMR แบบรู้เลขบัญชี)">ไม่มีข้อมูล</span>`,
+      peakKw: `<span class="pill-muted">ไม่มีข้อมูล</span>`,
+    };
+  }
+  return {
+    monthlyKwh: `${stats.monthlyKwh.toLocaleString("th-TH", { maximumFractionDigits: 0 })} kWh`,
+    peakKw: `${stats.peakKw.toLocaleString("th-TH", { maximumFractionDigits: 1 })} kW`,
+  };
 }
 
 function renderViewRow(c) {
   const rateCell = c.rate_code ? escapeHtml(c.rate_code) : `<span class="pill-muted">ยังไม่มี</span>`;
   const amrCell = c.has_amr ? `<span class="pill-yes">✅ มีแล้ว</span>` : `<span class="pill-muted">ยังไม่มี</span>`;
+  const usage = usageCells(c.account_no);
 
   return `
     <td>
@@ -91,7 +128,8 @@ function renderViewRow(c) {
     <td>${escapeHtml(businessLabelOf(c))}</td>
     <td>${escapeHtml(sectionLabelOf(c))}</td>
     <td>${rateCell}</td>
-    <td><span class="pill-muted" title="ยังไม่มีแหล่งข้อมูลนี้ในระบบ">ไม่มีข้อมูล</span></td>
+    <td>${usage.monthlyKwh}</td>
+    <td>${usage.peakKw}</td>
     <td>${solarCell(c.has_solar)}</td>
     <td>${amrCell}</td>
     <td>
@@ -105,6 +143,7 @@ function renderViewRow(c) {
 function renderEditRow(c) {
   const resolvedLabel = businessLabelOf(c);
   const solarValue = c.has_solar === true ? "true" : c.has_solar === false ? "false" : "";
+  const usage = usageCells(c.account_no);
 
   return `
     <td>
@@ -117,7 +156,8 @@ function renderEditRow(c) {
     </td>
     <td>${escapeHtml(sectionLabelOf(c))}</td>
     <td><input type="text" class="edit-input" data-field="rate_code" value="${escapeHtml(c.rate_code || "")}" placeholder="เช่น 50"></td>
-    <td><span class="pill-muted">ไม่มีข้อมูล</span></td>
+    <td>${usage.monthlyKwh}</td>
+    <td>${usage.peakKw}</td>
     <td>
       <select class="edit-input" data-field="has_solar">
         <option value="" ${solarValue === "" ? "selected" : ""}>ไม่ทราบ</option>
@@ -136,16 +176,64 @@ function renderEditRow(c) {
   `;
 }
 
+const COLUMN_COUNT = 9;
+
+function renderSectionFilterBar() {
+  const seen = new Map(); // section_code -> section_name_th
+  let hasUnclassified = false;
+  for (const c of customers) {
+    const bt = sectionOf(c);
+    if (bt && bt.section_code) seen.set(bt.section_code, bt.section_name_th);
+    else hasUnclassified = true;
+  }
+  const sectionCodes = Array.from(seen.keys()).sort();
+
+  const chips = [`<button type="button" class="section-chip ${activeSectionFilter === null ? "active" : ""}" data-section="">ทั้งหมด</button>`];
+  for (const code of sectionCodes) {
+    chips.push(
+      `<button type="button" class="section-chip ${activeSectionFilter === code ? "active" : ""}" data-section="${escapeHtml(code)}" title="${escapeHtml(seen.get(code) || "")}">${escapeHtml(code)}</button>`
+    );
+  }
+  if (hasUnclassified) {
+    chips.push(
+      `<button type="button" class="section-chip ${activeSectionFilter === UNCLASSIFIED_SECTION_KEY ? "active" : ""}" data-section="${UNCLASSIFIED_SECTION_KEY}">ยังไม่ระบุหมวด</button>`
+    );
+  }
+  sectionFilterBar.innerHTML = chips.join("");
+}
+
 function renderRows(list) {
   tbody.innerHTML = "";
   emptyState.style.display = list.length === 0 ? "flex" : "none";
   countEl.textContent = `ทั้งหมด ${list.length} ราย`;
 
+  // จัดกลุ่มตาม section แล้วเรียง section ตามรหัส (A, B, C, ...) ส่วนที่ยังไม่ระบุหมวดไว้ท้ายสุด
+  const groups = new Map();
   for (const c of list) {
-    const tr = document.createElement("tr");
-    tr.dataset.account = c.account_no || "";
-    tr.innerHTML = c.account_no && c.account_no === editingAccountNo ? renderEditRow(c) : renderViewRow(c);
-    tbody.appendChild(tr);
+    const key = sectionKeyOf(c);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(c);
+  }
+  const sortedKeys = Array.from(groups.keys()).sort((a, b) => {
+    if (a === UNCLASSIFIED_SECTION_KEY) return 1;
+    if (b === UNCLASSIFIED_SECTION_KEY) return -1;
+    return a.localeCompare(b);
+  });
+
+  for (const key of sortedKeys) {
+    const rows = groups.get(key);
+    const headerLabel = key === UNCLASSIFIED_SECTION_KEY ? "ยังไม่ระบุหมวด" : sectionLabelOf(rows[0]);
+    const headerTr = document.createElement("tr");
+    headerTr.className = "section-group-header";
+    headerTr.innerHTML = `<td colspan="${COLUMN_COUNT}">${escapeHtml(headerLabel)} (${rows.length} ราย)</td>`;
+    tbody.appendChild(headerTr);
+
+    for (const c of rows) {
+      const tr = document.createElement("tr");
+      tr.dataset.account = c.account_no || "";
+      tr.innerHTML = c.account_no && c.account_no === editingAccountNo ? renderEditRow(c) : renderViewRow(c);
+      tbody.appendChild(tr);
+    }
   }
 
   if (editingAccountNo) {
@@ -162,19 +250,34 @@ function renderRows(list) {
 
 function currentFilteredList() {
   const q = searchBox.value.trim().toLowerCase();
-  if (!q) return customers;
-  return customers.filter((c) => {
-    const haystack = [c.name, c.account_no, c.business_type_code, businessLabelOf(c), sectionLabelOf(c)]
-      .filter(Boolean)
-      .join(" ")
-      .toLowerCase();
-    return haystack.includes(q);
-  });
+  let list = customers;
+  if (activeSectionFilter !== null) {
+    list = list.filter((c) => sectionKeyOf(c) === activeSectionFilter);
+  }
+  if (q) {
+    list = list.filter((c) => {
+      const haystack = [c.name, c.account_no, c.business_type_code, businessLabelOf(c), sectionLabelOf(c)]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+  }
+  return list;
 }
 
 function applyFilter() {
+  renderSectionFilterBar();
   renderRows(currentFilteredList());
 }
+
+sectionFilterBar.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-section]");
+  if (!btn) return;
+  const section = btn.dataset.section;
+  activeSectionFilter = section === "" ? null : section;
+  applyFilter();
+});
 
 async function saveEdit(accountNo, row) {
   const hintEl = row.querySelector('[data-role="edit-hint"]');
@@ -264,6 +367,32 @@ tbody.addEventListener("click", (e) => {
   }
 });
 
+function computeUsageStatsFromCurve(dayTypes) {
+  const hours = (dayTypes && dayTypes.all) || [];
+  const values = hours.filter((v) => v !== null && v !== undefined);
+  if (values.length === 0) return null;
+  const peakKw = Math.max(...values);
+  const dailyKwh = values.reduce((sum, v) => sum + v, 0);
+  return { peakKw, monthlyKwh: dailyKwh * 30 };
+}
+
+async function loadUsageStats(accountNos) {
+  const entries = await Promise.all(
+    accountNos.map(async (accountNo) => {
+      try {
+        const res = await fetch(`/api/admin/site-curve/${encodeURIComponent(accountNo)}`);
+        const data = await res.json();
+        if (!data.available) return [accountNo, null];
+        return [accountNo, computeUsageStatsFromCurve(data.day_types)];
+      } catch (err) {
+        console.error(`โหลดกราฟของบัญชี ${accountNo} ไม่สำเร็จ`, err);
+        return [accountNo, null];
+      }
+    })
+  );
+  usageStatsByAccount = Object.fromEntries(entries.filter(([, stats]) => stats !== null));
+}
+
 async function load() {
   try {
     const [customersRes, importLogRes, businessTypesRes] = await Promise.all([
@@ -278,7 +407,11 @@ async function load() {
 
     customers = mergeCustomersWithImportLog(registryCustomers, importLogEntries);
     customers.sort((a, b) => (a.name || "").localeCompare(b.name || "", "th"));
-    renderRows(customers);
+    applyFilter();
+
+    // โหลดกราฟรายชั่วโมง (เพื่อคำนวณ ใช้ไฟเฉลี่ย/เดือน + Peak) แยกทีหลัง ไม่บล็อกการแสดงตารางหลัก
+    await loadUsageStats(customers.map((c) => c.account_no).filter(Boolean));
+    applyFilter();
   } catch (err) {
     console.error("โหลดข้อมูลภาพรวมไม่สำเร็จ", err);
     emptyState.textContent = "โหลดข้อมูลไม่สำเร็จ ลองรีเฟรชหน้าใหม่อีกครั้ง";

@@ -22,6 +22,19 @@
       padding: 0 14px; font-size: 13.5px; font-family: inherit; background: #fff; color: #0f1b2d;
     }
     .overview-search:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.12); }
+
+    .section-filter-bar { display: flex; flex-wrap: wrap; gap: 8px; }
+    .section-chip {
+      height: 32px; padding: 0 12px; border-radius: 999px; font-size: 12.5px; font-weight: 600;
+      border: 1px solid rgba(15,23,42,0.14); background: #fff; color: #55647a; cursor: pointer; font-family: inherit;
+    }
+    .section-chip:hover { background: #f7f9fc; }
+    .section-chip.active { background: #2a78d6; border-color: #2a78d6; color: #fff; }
+    .section-group-header td {
+      background: #f7f9fc; font-weight: 700; font-size: 12.5px; color: #184f95;
+      padding: 10px 14px; border-bottom: 1px solid rgba(15,23,42,0.08);
+    }
+
     .table-card { padding: 0; }
     table.overview-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 13.5px; }
     table.overview-table th {
@@ -81,7 +94,7 @@
         ⚠️ หน้านี้แสดง <b>ชื่อบัญชีจริง</b> จากประวัติการนำเข้า AMR ในเครื่องนี้ (import_log_local.csv) รวมกับทะเบียนลูกค้า (customers_local.csv ถ้ามี) —
         ใช้ดูในเครื่องนี้เท่านั้น ไม่ถูกบันทึกเข้า repo สาธารณะ (ตัดแถวข้อมูลสมมติ/DEMO ออกให้แล้ว)<br>
         ✏️ กด "แก้ไข" ที่แถวไหนก็ได้เพื่อแก้ประเภทธุรกิจ/รหัสอัตรา/สถานะ Solar — บันทึกแล้วมีผลกับทั้งระบบทันที (เขียนลง customers_local.csv ซึ่งหน้าค้นหา/พยากรณ์อื่นๆ อ่านค่าเดียวกันนี้) ต้องใส่รหัสผ่านก่อนถึงจะบันทึกได้ทุกครั้งที่เปิดหน้านี้ใหม่<br>
-        ℹ️ คอลัมน์ "ก่อตั้งเมื่อไหร่" ยังไม่มีแหล่งข้อมูลนี้ในระบบเลย (ไม่มีตรงไหนเก็บวันจดทะเบียน/ก่อตั้งของบริษัทไว้) จึงแสดงเป็น "ไม่มีข้อมูล" ไปก่อน — ถ้าต้องการให้เพิ่มช่องกรอกเองสำหรับข้อมูลนี้ แจ้งได้เลย
+        ⚡ "ใช้ไฟเฉลี่ย/เดือน" และ "Peak สูงสุด/วัน" คำนวณจากกราฟรายชั่วโมงจริงของแต่ละไซต์ (site_curves_local.csv — ค่าเฉลี่ยกำลังไฟฟ้า 24 ชม. คูณ 30 วันสำหรับหน่วยต่อเดือน) มีเฉพาะบัญชีที่เคยนำเข้า AMR จริงแบบรู้เลขบัญชีเท่านั้น
       </div>
 
       <div class="overview-toolbar">
@@ -89,12 +102,14 @@
         <div id="overview-count" class="overview-count"></div>
       </div>
 
+      <div id="section-filter-bar" class="section-filter-bar"></div>
+
       <div class="card table-card">
         <table class="overview-table">
           <colgroup>
-            <col style="width:19%"><col style="width:18%"><col style="width:17%">
-            <col style="width:8%"><col style="width:9%"><col style="width:9%">
-            <col style="width:8%"><col style="width:12%">
+            <col style="width:17%"><col style="width:15%"><col style="width:14%">
+            <col style="width:6%"><col style="width:10%"><col style="width:9%">
+            <col style="width:8%"><col style="width:7%"><col style="width:10%">
           </colgroup>
           <thead>
             <tr>
@@ -102,7 +117,8 @@
               <th>ธุรกิจอะไร</th>
               <th>อยู่หมวดไหน (TSIC)</th>
               <th>มีอัตราไหม</th>
-              <th>ก่อตั้งเมื่อไหร่</th>
+              <th>ใช้ไฟเฉลี่ย/เดือน</th>
+              <th>Peak สูงสุด/วัน</th>
               <th>ติด Solar รึยัง</th>
               <th>มี AMR จริงหรือยัง</th>
               <th>จัดการ</th>
