@@ -931,6 +931,7 @@ function setStatusPill(status) {
     success: { text: "✅ สำเร็จ", bg: "#e8f7ec", color: "#006300" },
     error: { text: "❌ ไม่สำเร็จ", bg: "#fdecea", color: "#a01818" },
     pending_rate: { text: "📋 บันทึกไว้รอทราบอัตรา", bg: "#fff8e6", color: "#8a6100" },
+    needs_manual_entry: { text: "⚠️ ต้องกรอกประเภทธุรกิจ/อัตราเอง", bg: "#fff8e6", color: "#8a6100" },
   };
   const s = map[status] || map.running;
   jobStatusPill.textContent = s.text;
@@ -968,9 +969,10 @@ function renderResult(result, customerProfile) {
 }
 
 // ข้อความ error นี้ไม่ใช่ความผิดพลาดจริง — แค่ยังไม่ทราบประเภทธุรกิจ/อัตราของบัญชีนี้เฉยๆ (รอกรอก
-// ทีหลังได้) แต่บางเส้นทาง (เช่น โหมดเข้าสู่ระบบด้วย username/password) ยังไม่ได้ตั้ง status เป็น
-// "pending_rate" ที่หน้าตาเป็นมิตรกว่า — เช็คจากข้อความแทน กันไม่ให้ผู้ใช้ตกใจเห็นกล่องแดง "ไม่สำเร็จ"
-// ทั้งที่จริงๆ แค่ต้องไปกรอกต่อที่หน้า "รอทราบอัตรา" เท่านั้นเอง
+// ทีหลังได้) ใช้กันไม่ให้ผู้ใช้ตกใจเห็นกล่องแดง "ไม่สำเร็จ" — แต่ status "error" ที่มีข้อความนี้
+// ไม่ได้แปลว่าถูกบันทึกเป็นรายการ "รอทราบอัตรา" เสมอไป (backend บันทึกได้ก็ต่อเมื่ออ่านเลขบัญชีจาก
+// ไฟล์ได้เท่านั้น — ดู web/app.py:_run_import_file_job) ต้องแยกจาก status "pending_rate" จริงๆ
+// ด้วย ไม่งั้นจะไปบอกผู้ใช้ให้เช็ครายการที่มันไม่เคยถูกบันทึกเข้าไปเลย
 function isUnknownBusinessRateError(msg) {
   return typeof msg === "string" && msg.includes("ไม่ทราบประเภทธุรกิจ/รหัสอัตราของบัญชีนี้");
 }
@@ -979,9 +981,10 @@ async function pollJob(jobId, activeBtn) {
   const res = await fetch(`/api/admin/import/${jobId}`);
   const data = await res.json();
 
-  const treatAsPendingRate = data.status === "pending_rate" || (data.status === "error" && isUnknownBusinessRateError(data.error));
+  const savedAsPending = data.status === "pending_rate";
+  const needsManualEntry = data.status === "error" && isUnknownBusinessRateError(data.error);
 
-  setStatusPill(treatAsPendingRate ? "pending_rate" : data.status);
+  setStatusPill(savedAsPending ? "pending_rate" : needsManualEntry ? "needs_manual_entry" : data.status);
   jobLog.textContent = (data.logs || []).join("\n");
   jobLog.scrollTop = jobLog.scrollHeight;
 
@@ -998,14 +1001,21 @@ async function pollJob(jobId, activeBtn) {
     // ต้องโหลด import log ให้เสร็จก่อน (เติมตัวแปร importLogEntries) แล้วค่อยวาดการ์ดประเภทธุรกิจ
     // ไม่งั้นชื่อบริษัทในการ์ดจะยังว่างเพราะ fetch สองอันแข่งกัน (race condition)
     loadImportLogLocal().then(loadBusinessTypesTable);
-  } else if (treatAsPendingRate) {
+  } else if (savedAsPending) {
     jobResult.innerHTML = `
       <div class="search-hint" style="min-height:auto;">
         ${data.error || "ไม่ทราบประเภทธุรกิจ/รหัสอัตราของบัญชีนี้"}<br>
-        📋 ลองดูที่รายการ <a href="/pending-amr" target="_blank" rel="noopener">"รอทราบอัตรา"</a> —
-        ถ้าระบบอ่านเลขบัญชีจากไฟล์นี้ได้ จะเจอรายการนี้อยู่ที่นั่นแล้ว ไม่ต้องอัปโหลดไฟล์ใหม่
-        กลับมากรอกประเภทธุรกิจ/รหัสอัตราทีหลังได้เมื่อทราบแล้ว (ถ้าไม่เจอในรายการ ลองอัปโหลดไฟล์
-        เดิมซ้ำอีกครั้งได้ ไม่ซ้ำซ้อนเสียหายอะไร)
+        📋 ระบบอ่านเลขบัญชีจากไฟล์นี้ได้แล้ว บันทึกรายการนี้ไว้ในหน้า
+        <a href="/pending-amr" target="_blank" rel="noopener">"รอทราบอัตรา"</a> ให้แล้ว ไม่ต้องอัปโหลดไฟล์ใหม่ —
+        กลับมากรอกประเภทธุรกิจ/รหัสอัตราทีหลังได้เมื่อทราบแล้ว
+      </div>`;
+  } else if (needsManualEntry) {
+    jobResult.innerHTML = `
+      <div class="search-hint" style="min-height:auto;">
+        ${data.error || "ไม่ทราบประเภทธุรกิจ/รหัสอัตราของบัญชีนี้"}<br>
+        ⚠️ ระบบอ่าน "เลขบัญชี" จากไฟล์นี้ไม่ได้เลย จึงบันทึกเป็นรายการรอทราบอัตราให้ไม่ได้
+        (จะไม่เจอในหน้า "รอทราบอัตรา" แน่นอน) — กรุณากรอกประเภทธุรกิจและรหัสอัตราในฟอร์มด้านบน
+        แล้วอัปโหลดไฟล์นี้ใหม่อีกครั้ง
       </div>`;
   } else if (data.status === "error") {
     jobResult.innerHTML = `<div class="search-hint" style="min-height:auto;">${data.error || "เกิดข้อผิดพลาด"}</div>`;
