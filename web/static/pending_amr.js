@@ -5,35 +5,88 @@
 
 const pendingListEl = document.getElementById("pending-list");
 
-// รายการยาวขึ้นเรื่อยๆ ตามจำนวนประเภทธุรกิจที่เพิ่มเข้าระบบ — เรียงตามชื่อ (ไม่ใช่ตามลำดับที่เพิ่ม
-// เข้าไฟล์) ให้หาง่ายขึ้นตอนเลื่อนดูทั้งรายการก่อนพิมพ์ค้นหา
+// รายชื่อ Section (TSIC) มาตรฐาน 21 หมวด (A-U) — ก๊อปมาจาก TSIC_SECTIONS ใน admin.js
+// (หน้านี้ไม่ได้โหลด admin.js ร่วมด้วย เลยต้องมีชุดข้อมูลเดียวกันแยกไว้เอง)
+const TSIC_SECTIONS = [
+  { code: "A", from: 1, to: 3, name_th: "เกษตรกรรม การป่าไม้ และการประมง" },
+  { code: "B", from: 5, to: 9, name_th: "การทำเหมืองแร่และเหมืองหิน" },
+  { code: "C", from: 10, to: 33, name_th: "การผลิต" },
+  { code: "D", from: 35, to: 35, name_th: "ไฟฟ้า ก๊าซ ไอน้ำ และระบบปรับอากาศ" },
+  { code: "E", from: 36, to: 39, name_th: "การจัดหาน้ำ การจัดการน้ำเสียและของเสีย" },
+  { code: "F", from: 41, to: 43, name_th: "การก่อสร้าง" },
+  { code: "G", from: 45, to: 47, name_th: "การขายส่งและการขายปลีก การซ่อมยานยนต์และจักรยานยนต์" },
+  { code: "H", from: 49, to: 53, name_th: "การขนส่งและสถานที่เก็บสินค้า" },
+  { code: "I", from: 55, to: 56, name_th: "ที่พักแรมและบริการด้านอาหาร" },
+  { code: "J", from: 58, to: 63, name_th: "ข้อมูลข่าวสารและการสื่อสาร" },
+  { code: "K", from: 64, to: 66, name_th: "กิจกรรมทางการเงินและการประกันภัย" },
+  { code: "L", from: 68, to: 68, name_th: "กิจกรรมเกี่ยวกับอสังหาริมทรัพย์" },
+  { code: "M", from: 69, to: 75, name_th: "กิจกรรมทางวิชาชีพ วิทยาศาสตร์ และเทคนิค" },
+  { code: "N", from: 77, to: 82, name_th: "กิจกรรมการบริหารและบริการสนับสนุน" },
+  { code: "O", from: 84, to: 84, name_th: "การบริหารราชการ การป้องกันประเทศ และการประกันสังคมภาคบังคับ" },
+  { code: "P", from: 85, to: 85, name_th: "การศึกษา" },
+  { code: "Q", from: 86, to: 88, name_th: "กิจกรรมด้านสุขภาพและงานสังคมสงเคราะห์" },
+  { code: "R", from: 90, to: 93, name_th: "ศิลปะ ความบันเทิง และนันทนาการ" },
+  { code: "S", from: 94, to: 96, name_th: "กิจกรรมการบริการอื่นๆ" },
+  { code: "T", from: 97, to: 98, name_th: "กิจกรรมการจ้างงานในครัวเรือน" },
+  { code: "U", from: 99, to: 99, name_th: "กิจกรรมขององค์การระหว่างประเทศ" },
+];
+
+function sectionLabel(code) {
+  if (code === "UNVERIFIED") return "ยังไม่ตรวจสอบ TSIC";
+  const s = TSIC_SECTIONS.find((s) => s.code === code);
+  return s ? `${s.code} · ${s.name_th}` : code;
+}
+
+// รายการยาวขึ้นเรื่อยๆ ตามจำนวนประเภทธุรกิจที่เพิ่มเข้าระบบ — แบ่งเป็น 2 ขั้น เลือก Section
+// (TSIC) ก่อน แล้วค่อยเลือกประเภทธุรกิจย่อยเฉพาะในกลุ่มนั้น กันไม่ให้เลื่อนหารายการยาวเดียว
 let businessTypes = [];
 
 async function loadBusinessTypeOptions() {
   try {
-    const res = await fetch("/api/business-types");
+    const res = await fetch("/api/business-types-full");
     businessTypes = (await res.json()).sort((a, b) => a.name_th.localeCompare(b.name_th, "th"));
   } catch (err) {
     console.error("โหลดประเภทธุรกิจไม่สำเร็จ", err);
   }
 }
 
+// จัดกลุ่มประเภทธุรกิจตาม section_code — ตัวที่ยังไม่เคยตรวจสอบ TSIC เลย (section_code ว่าง)
+// ไปอยู่กลุ่ม "UNVERIFIED" ท้ายสุดเสมอ
+function groupBySection() {
+  const groups = {};
+  businessTypes.forEach((t) => {
+    const key = t.section_code || "UNVERIFIED";
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(t);
+  });
+  return groups;
+}
+
 function businessTypeDropdownHtml() {
+  const groups = groupBySection();
+  const sectionKeys = Object.keys(groups).sort((a, b) => (a === "UNVERIFIED" ? 1 : b === "UNVERIFIED" ? -1 : a.localeCompare(b)));
+
   return `
-    <div class="biz-type-combobox">
-      <input type="hidden" class="p-business-type">
-      <input type="text" class="biz-type-search-input" placeholder="🔍 ค้นหาประเภทธุรกิจ (${businessTypes.length} รายการ)..." autocomplete="off">
+    <input type="hidden" class="p-business-type">
+    <div class="section-combobox">
+      <input type="text" class="biz-type-search-input" placeholder="🔍 เลือก Section (TSIC) ก่อน..." autocomplete="off">
       <div class="biz-type-dropdown">
-        ${businessTypes.map((t) => `<button type="button" class="biz-type-dropdown-item" data-code="${t.code}">${t.name_th} (${t.code})</button>`).join("")}
-        <div class="biz-type-dropdown-empty" style="display:none;">ไม่พบประเภทธุรกิจที่ตรงกับคำค้นหา</div>
+        ${sectionKeys
+          .map((key) => `<button type="button" class="biz-type-dropdown-item" data-section="${key}">${sectionLabel(key)} (${groups[key].length})</button>`)
+          .join("")}
+        <div class="biz-type-dropdown-empty" style="display:none;">ไม่พบ Section ที่ตรงกับคำค้นหา</div>
       </div>
+    </div>
+    <div class="biz-type-combobox" style="margin-top:6px;">
+      <input type="text" class="biz-type-search-input" placeholder="เลือก Section ก่อน..." autocomplete="off" disabled>
+      <div class="biz-type-dropdown"></div>
     </div>`;
 }
 
 // กรองรายการใน dropdown ตามคำที่พิมพ์ — จับคู่แบบ "มีคำนี้อยู่ตรงไหนก็ได้" ไม่สนตัวพิมพ์เล็ก-ใหญ่
 // (เหมือน filterComboboxDropdown ในหน้า Admin แต่ทำแยกเองเพราะหน้านี้ไม่ได้โหลด admin.js ร่วมด้วย)
-function filterBizTypeDropdown(input) {
-  const wrap = input.closest(".biz-type-combobox");
+function filterDropdown(input, comboboxSelector) {
+  const wrap = input.closest(comboboxSelector);
   const query = input.value.trim().toLowerCase();
   const items = wrap.querySelectorAll(".biz-type-dropdown-item");
   let anyVisible = false;
@@ -42,13 +95,14 @@ function filterBizTypeDropdown(input) {
     item.style.display = match ? "" : "none";
     if (match) anyVisible = true;
   });
-  wrap.querySelector(".biz-type-dropdown-empty").style.display = anyVisible ? "none" : "block";
+  const emptyMsg = wrap.querySelector(".biz-type-dropdown-empty");
+  if (emptyMsg) emptyMsg.style.display = anyVisible ? "none" : "block";
 }
 
 // ปิด dropdown ที่เปิดค้างไว้เมื่อคลิกข้างนอกกล่องค้นหา (ผูกครั้งเดียว ใช้ event delegation เพราะ
 // การ์ดแต่ละใบถูกสร้าง/ลบทิ้งไปเรื่อยๆ ตามรายการที่ resolve/delete)
 document.addEventListener("click", (e) => {
-  document.querySelectorAll(".biz-type-combobox.open").forEach((box) => {
+  document.querySelectorAll(".section-combobox.open, .biz-type-combobox.open").forEach((box) => {
     if (!box.contains(e.target)) box.classList.remove("open");
   });
 });
@@ -124,18 +178,47 @@ function renderPendingCard(entry) {
   const rateCodeInput = wrap.querySelector(".p-rate-code");
   const rateUnknownCheckbox = wrap.querySelector(".p-rate-unknown");
 
-  const bizCombobox = wrap.querySelector(".biz-type-combobox");
-  const bizSearchInput = wrap.querySelector(".biz-type-search-input");
   const bizHiddenInput = wrap.querySelector(".p-business-type");
-  bizSearchInput.addEventListener("focus", () => bizCombobox.classList.add("open"));
-  bizSearchInput.addEventListener("input", () => filterBizTypeDropdown(bizSearchInput));
-  bizCombobox.querySelectorAll(".biz-type-dropdown-item").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      bizHiddenInput.value = btn.dataset.code;
-      bizSearchInput.value = btn.textContent;
-      bizCombobox.classList.remove("open");
+  const sectionCombobox = wrap.querySelector(".section-combobox");
+  const sectionSearchInput = sectionCombobox.querySelector(".biz-type-search-input");
+  const bizCombobox = wrap.querySelector(".biz-type-combobox");
+  const bizSearchInput = bizCombobox.querySelector(".biz-type-search-input");
+  const bizDropdown = bizCombobox.querySelector(".biz-type-dropdown");
+  const groups = groupBySection();
+
+  sectionSearchInput.addEventListener("focus", () => sectionCombobox.classList.add("open"));
+  sectionSearchInput.addEventListener("input", () => filterDropdown(sectionSearchInput, ".section-combobox"));
+  sectionCombobox.querySelectorAll(".biz-type-dropdown-item").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      // ต้องกัน event นี้ไม่ให้ไปถึง document (ดู click-outside-to-close ด้านล่าง) — ไม่งั้น
+      // biz-type-combobox ที่เพิ่งสั่งเปิดต่อจากบรรทัดล่างนี้ จะโดนปิดทันทีในคลิกเดียวกัน เพราะ
+      // ต้นทางคลิกอยู่นอก biz-type-combobox (อยู่ใน section-combobox ต่างหาก)
+      e.stopPropagation();
+      sectionSearchInput.value = sectionLabel(btn.dataset.section);
+      sectionCombobox.classList.remove("open");
+
+      // เปลี่ยน Section แล้ว ต้องล้างประเภทธุรกิจที่เคยเลือกไว้ (อาจไม่อยู่ใน Section ใหม่แล้ว)
+      bizHiddenInput.value = "";
+      const types = groups[btn.dataset.section] || [];
+      bizSearchInput.disabled = false;
+      bizSearchInput.value = "";
+      bizSearchInput.placeholder = `🔍 ค้นหาประเภทธุรกิจ (${types.length} รายการ)...`;
+      bizDropdown.innerHTML =
+        types.map((t) => `<button type="button" class="biz-type-dropdown-item" data-code="${t.code}">${t.name_th} (${t.code})</button>`).join("") +
+        `<div class="biz-type-dropdown-empty" style="display:none;">ไม่พบประเภทธุรกิจที่ตรงกับคำค้นหา</div>`;
+      bizDropdown.querySelectorAll(".biz-type-dropdown-item").forEach((itemBtn) => {
+        itemBtn.addEventListener("click", () => {
+          bizHiddenInput.value = itemBtn.dataset.code;
+          bizSearchInput.value = itemBtn.textContent;
+          bizCombobox.classList.remove("open");
+        });
+      });
+      bizCombobox.classList.add("open");
+      bizSearchInput.focus();
     });
   });
+  bizSearchInput.addEventListener("focus", () => bizCombobox.classList.add("open"));
+  bizSearchInput.addEventListener("input", () => filterDropdown(bizSearchInput, ".biz-type-combobox"));
 
   // ติ๊ก "ไม่ทราบรหัสอัตรา" แล้ว ไม่ต้องกรอกช่องรหัสอัตราอีก (ปิดไว้กันสับสนว่าต้องกรอกไหม) —
   // จะบันทึกด้วยรหัสอัตรา sentinel พิเศษแทน ยังเอาไปใช้จับคู่ระดับ "ประเภทธุรกิจ" ได้อยู่
