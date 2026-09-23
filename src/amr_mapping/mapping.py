@@ -62,6 +62,57 @@ def _equivalent_codes(business_type_code: str, business_types: Optional[Dict[str
     return codes
 
 
+def _weighted_average_profile(
+    candidates: List[LoadProfile], business_type_code: str, rate_code: Optional[str]
+) -> LoadProfile:
+    """ถัวเฉลี่ย demand_kw/energy_kwh/contract_kva_ref ของโปรไฟล์ผู้สมัครทั้งหมด (candidates)
+    ถ่วงน้ำหนักตาม sample_size (อย่างน้อยเป็น 1 เสมอ กันโปรไฟล์ที่ไม่ทราบ sample_size ถูกลด
+    น้ำหนักเหลือ 0 จนหายไปจากการเฉลี่ยทั้งที่ยังเป็นข้อมูลจริง) แทนที่จะหยิบ candidates[0]
+    ตัวแรกในลิสต์เฉยๆ (พฤติกรรมเดิมของชั้น BUSINESS_ONLY/DIVISION_ONLY/RATE_ONLY) — ใช้เมื่อมี
+    มากกว่า 1 ตัวเลือกเท่านั้น (ตัวเดียวคืนตัวเดิมตรงๆ ไม่สร้างโปรไฟล์สังเคราะห์ขึ้นมาเปล่าๆ)
+
+    business_type_code/rate_code ที่ส่งมาคือรหัสที่ลูกค้าขอจริง (ใช้เป็น label ของโปรไฟล์
+    สังเคราะห์ที่คืนออกไป) ไม่ใช่รหัสของ candidate ตัวใดตัวหนึ่งเจาะจง — ตัวเรียกใช้
+    (find_load_profile) ต้องแนบ candidates ดิบไว้ใน MatchResult.contributing_profiles ด้วย
+    เพราะ web/app.py ต้องใช้รหัสจริงของแต่ละ candidate ไปหาเส้นโค้งรายชั่วโมงมาถัวเฉลี่ยด้วย
+    น้ำหนักเดียวกัน (โปรไฟล์สังเคราะห์นี้ไม่มีเส้นโค้งเป็นของตัวเอง)"""
+
+    if len(candidates) == 1:
+        return candidates[0]
+
+    def weight(p: LoadProfile) -> float:
+        return max(p.sample_size, 1)
+
+    total_weight = sum(weight(p) for p in candidates)
+    demand_kw = {
+        period: round(sum(p.demand_kw[period] * weight(p) for p in candidates) / total_weight, 2)
+        for period in PERIODS
+    }
+    energy_kwh = {
+        period: round(sum(p.energy_kwh[period] * weight(p) for p in candidates) / total_weight, 2)
+        for period in PERIODS
+    }
+
+    kva_candidates = [p for p in candidates if p.contract_kva_ref]
+    contract_kva_ref = None
+    if kva_candidates:
+        kva_weight = sum(weight(p) for p in kva_candidates)
+        contract_kva_ref = round(sum(p.contract_kva_ref * weight(p) for p in kva_candidates) / kva_weight, 2)
+
+    source_labels = sorted({f"{p.business_type_code}/{p.rate_code}" for p in candidates})
+    return LoadProfile(
+        business_type_code=business_type_code,
+        rate_code=rate_code or candidates[0].rate_code,
+        billing_method=candidates[0].billing_method,
+        demand_kw=demand_kw,
+        energy_kwh=energy_kwh,
+        contract_kva_ref=contract_kva_ref,
+        sample_size=sum(p.sample_size for p in candidates),
+        notes=f"ค่าเฉลี่ยถ่วงน้ำหนักจาก {len(candidates)} โปรไฟล์: {', '.join(source_labels)}",
+        has_solar=candidates[0].has_solar,
+    )
+
+
 def _pick_by_solar(candidates: List[LoadProfile], has_solar: Optional[bool]) -> tuple:
     """เลือกโปรไฟล์ที่เหมาะกับสถานะ Solar ที่สุดจากรายการที่ตรงธุรกิจ+อัตราแล้ว (candidates
     ต้องไม่ว่าง) คืน (โปรไฟล์ที่เลือก, ตรงสถานะ Solar หรือไม่) — ใช้ตัดสิน EXACT vs SOLAR_MISMATCH
@@ -112,7 +163,7 @@ def find_load_profile(
         ]
         if exact_candidates:
             chosen, solar_ok = _pick_by_solar(exact_candidates, has_solar)
-            return MatchResult(chosen, MatchLevel.EXACT if solar_ok else MatchLevel.SOLAR_MISMATCH)
+            return MatchResult(chosen, MatchLevel.EXACT if solar_ok else MatchLevel.SOLAR_MISMATCH, [chosen])
 
     if business_type_code:
         candidates = [p for p in profiles if p.business_type_code in equivalent_codes]
@@ -121,8 +172,11 @@ def find_load_profile(
             if rate_code:
                 preferred = [p for p in candidates if p.rate_code == rate_code]
                 if preferred:
-                    return MatchResult(preferred[0], MatchLevel.EXACT)
-            return MatchResult(candidates[0], MatchLevel.BUSINESS_ONLY)
+                    return MatchResult(preferred[0], MatchLevel.EXACT, [preferred[0]])
+            # ไม่ตรงอัตราเลยสักตัว — ถัวเฉลี่ยถ่วงน้ำหนักจากทุกโปรไฟล์ของธุรกิจนี้ (ทุกอัตรา/
+            # สถานะ Solar) แทนการหยิบตัวแรกในลิสต์เฉยๆ (ดู _weighted_average_profile)
+            averaged = _weighted_average_profile(candidates, business_type_code, rate_code)
+            return MatchResult(averaged, MatchLevel.BUSINESS_ONLY, candidates)
 
         # ไม่มีโปรไฟล์ของ business_type_code นี้ตรงๆ เลย — ลองหาโปรไฟล์ของธุรกิจอื่นที่อยู่ใน
         # TSIC division เดียวกัน (ต้องทราบ division_code ของทั้งเป้าหมายและผู้สมัครทุกตัว)
@@ -139,20 +193,23 @@ def find_load_profile(
                     if rate_code:
                         preferred = [p for p in division_candidates if p.rate_code == rate_code]
                         if preferred:
-                            return MatchResult(preferred[0], MatchLevel.DIVISION_ONLY)
-                    return MatchResult(division_candidates[0], MatchLevel.DIVISION_ONLY)
+                            averaged = _weighted_average_profile(preferred, business_type_code, rate_code)
+                            return MatchResult(averaged, MatchLevel.DIVISION_ONLY, preferred)
+                    averaged = _weighted_average_profile(division_candidates, business_type_code, rate_code)
+                    return MatchResult(averaged, MatchLevel.DIVISION_ONLY, division_candidates)
 
     if rate_code:
         candidates = [p for p in profiles if p.rate_code == rate_code]
         if candidates:
-            return MatchResult(candidates[0], MatchLevel.RATE_ONLY)
+            averaged = _weighted_average_profile(candidates, business_type_code or DEFAULT_BUSINESS_CODE, rate_code)
+            return MatchResult(averaged, MatchLevel.RATE_ONLY, candidates)
 
     default = next(
         (p for p in profiles if p.business_type_code == DEFAULT_BUSINESS_CODE and p.rate_code == DEFAULT_RATE_CODE),
         None,
     )
     if default is not None:
-        return MatchResult(default, MatchLevel.DEFAULT)
+        return MatchResult(default, MatchLevel.DEFAULT, [default])
 
     raise LookupError(
         "ไม่พบโปรไฟล์ที่ตรงกัน และไม่มีค่า DEFAULT ใน load_profiles.csv "
@@ -225,6 +282,11 @@ def estimate_customer_load(customer: Customer, reference: ReferenceData) -> Fore
 
     if match.level != MatchLevel.EXACT:
         warnings.append(f"ใช้การจับคู่แบบ {match.level.value} (ไม่ใช่ exact match) ผลลัพธ์เป็นเพียงค่าประมาณ")
+        if len(match.contributing_profiles) > 1:
+            warnings.append(
+                f"ค่าที่แสดงเป็นค่าเฉลี่ยถ่วงน้ำหนักจากโปรไฟล์อ้างอิง {len(match.contributing_profiles)} รายการ "
+                "(ถ่วงน้ำหนักตามจำนวนตัวอย่าง/ไฟล์ AMR ที่ใช้สร้างแต่ละโปรไฟล์)"
+            )
 
     demand_kw = {p: round(profile.demand_kw[p] * scale_factor, 2) for p in PERIODS}
     energy_kwh = {p: round(profile.energy_kwh[p] * scale_factor, 2) for p in PERIODS}
@@ -236,5 +298,6 @@ def estimate_customer_load(customer: Customer, reference: ReferenceData) -> Fore
         scale_factor=round(scale_factor, 4),
         demand_kw=demand_kw,
         energy_kwh=energy_kwh,
+        contributing_profiles=match.contributing_profiles,
         warnings=warnings,
     )

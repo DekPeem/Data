@@ -231,6 +231,74 @@ def test_find_load_profile_alias_ignored_without_business_types_dict():
     assert match.level == MatchLevel.DEFAULT
 
 
+def test_find_load_profile_business_only_averages_multiple_candidates_weighted_by_sample_size():
+    """มีโปรไฟล์ของธุรกิจเดียวกัน 2 อัตราที่ไม่ตรงกับที่ขอ — ต้องได้ค่าเฉลี่ยถ่วงน้ำหนักตาม
+    sample_size ไม่ใช่หยิบตัวแรกในลิสต์เฉยๆ (ตัวแรก sample_size=10 ค่า P=100, ตัวสอง
+    sample_size=30 ค่า P=200 -> ถ่วงน้ำหนักได้ (100*10 + 200*30)/40 = 175)"""
+
+    profiles = [
+        LoadProfile(
+            business_type_code="31212", rate_code="10", billing_method="TOU",
+            demand_kw={"P": 100, "OP": 100, "H": 100}, energy_kwh={"P": 100, "OP": 100, "H": 100},
+            sample_size=10,
+        ),
+        LoadProfile(
+            business_type_code="31212", rate_code="20", billing_method="TOU",
+            demand_kw={"P": 200, "OP": 200, "H": 200}, energy_kwh={"P": 200, "OP": 200, "H": 200},
+            sample_size=30,
+        ),
+    ]
+
+    match = find_load_profile(profiles, business_type_code="31212", rate_code="9999")
+    assert match.level == MatchLevel.BUSINESS_ONLY
+    assert match.profile.demand_kw["P"] == pytest.approx(175.0)
+    assert match.profile.sample_size == 40
+    assert len(match.contributing_profiles) == 2
+
+
+def test_find_load_profile_single_candidate_returns_real_profile_unchanged():
+    """มีตัวเลือกเดียว — ต้องคืนโปรไฟล์จริงตัวนั้นตรงๆ ไม่สร้างโปรไฟล์สังเคราะห์ขึ้นมาเปล่าๆ"""
+
+    profiles = [
+        LoadProfile(
+            business_type_code="31212", rate_code="10", billing_method="TOU",
+            demand_kw={"P": 100, "OP": 100, "H": 100}, energy_kwh={"P": 100, "OP": 100, "H": 100},
+            sample_size=10, notes="ของจริง",
+        ),
+    ]
+
+    match = find_load_profile(profiles, business_type_code="31212", rate_code="9999")
+    assert match.level == MatchLevel.BUSINESS_ONLY
+    assert match.profile is profiles[0]
+    assert match.profile.notes == "ของจริง"
+
+
+def test_find_load_profile_division_only_averages_multiple_candidates():
+    """DIVISION_ONLY ที่มีธุรกิจอื่นในกลุ่มเดียวกันมากกว่า 1 ราย ต้องถัวเฉลี่ยถ่วงน้ำหนักเช่นกัน
+    ไม่ใช่หยิบ division_candidates[0] ตัวแรกเฉยๆ (พฤติกรรมเดิมก่อนแก้)"""
+
+    business_types = {
+        "17011": BusinessType(code="17011", name_th="ผลิตเยื่อกระดาษ", category="paper", division_code="17"),
+        "17013": BusinessType(code="17013", name_th="ผลิตกระดาษลัง", category="paper", division_code="17"),
+        "17012": BusinessType(code="17012", name_th="ผลิตกระดาษแข็ง", category="paper", division_code="17"),
+    }
+    profiles = [
+        LoadProfile(
+            business_type_code="17011", rate_code="40", billing_method="TOU",
+            demand_kw={"P": 10, "OP": 10, "H": 10}, energy_kwh={"P": 10, "OP": 10, "H": 10}, sample_size=1,
+        ),
+        LoadProfile(
+            business_type_code="17013", rate_code="40", billing_method="TOU",
+            demand_kw={"P": 30, "OP": 30, "H": 30}, energy_kwh={"P": 30, "OP": 30, "H": 30}, sample_size=1,
+        ),
+    ]
+
+    match = find_load_profile(profiles, business_type_code="17012", rate_code="40", business_types=business_types)
+    assert match.level == MatchLevel.DIVISION_ONLY
+    assert match.profile.demand_kw["P"] == pytest.approx(20.0)
+    assert len(match.contributing_profiles) == 2
+
+
 def test_find_load_curve_exact_match_only_no_fallback():
     curves = [
         LoadCurve(business_type_code="63201", rate_code="50", hours={"all": [1.0] * 24}),

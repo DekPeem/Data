@@ -135,6 +135,12 @@ class Customer:
 class MatchResult:
     profile: LoadProfile
     level: MatchLevel
+    # โปรไฟล์จริงทั้งหมดที่ถูกนำมาถ่วงน้ำหนักเฉลี่ยรวมเป็น profile ด้านบน (ดู
+    # mapping._weighted_average_profile) — ว่างเปล่าหรือมีแค่ตัวเดียวถ้า profile ด้านบนคือ
+    # โปรไฟล์จริงตัวเดียวอยู่แล้ว (ไม่ได้ถัวเฉลี่ย) ใช้ต่อที่ web/app.py เพื่อหา/ถัวเฉลี่ยเส้นโค้ง
+    # รายชั่วโมงจากทุกโปรไฟล์ต้นทางด้วยน้ำหนักเดียวกัน แทนที่จะอิงแค่ business_type_code/rate_code
+    # ของ profile สังเคราะห์ด้านบน (ซึ่งอาจไม่มีเส้นโค้งจริงเป็นของตัวเอง)
+    contributing_profiles: List[LoadProfile] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -147,4 +153,5 @@ class ForecastResult:
     scale_factor: float
     demand_kw: Dict[str, float]
     energy_kwh: Dict[str, float]
+    contributing_profiles: List[LoadProfile] = field(default_factory=list)
     warnings: list = field(default_factory=list)

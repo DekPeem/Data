@@ -146,6 +146,56 @@ def _curve_response(
     }
 
 
+def _blended_curve_response(reference, contributing_profiles, scale_factor: float) -> dict:
+    """เหมือน _curve_response แต่รองรับกรณี matched_profile เป็นโปรไฟล์สังเคราะห์ที่ถัวเฉลี่ยมา
+    จากหลายโปรไฟล์จริง (ดู mapping._weighted_average_profile — เกิดตอนชั้น BUSINESS_ONLY/
+    DIVISION_ONLY/RATE_ONLY มีมากกว่า 1 ตัวเลือก) โปรไฟล์สังเคราะห์นั้นไม่มีเส้นโค้งรายชั่วโมงเป็น
+    ของตัวเอง จึงต้องหาเส้นโค้งของโปรไฟล์ต้นทางแต่ละตัว (contributing_profiles) แล้วถัวเฉลี่ยราย
+    ชั่วโมงด้วยน้ำหนักเดียวกับตอนถัวเฉลี่ย P/OP/H (sample_size อย่างน้อย 1) — ต้นทางไหนไม่มีเส้น
+    โค้งจริง (แค่แถว placeholder ใน load_profiles.csv) จะถูกข้ามไปเฉยๆ ไม่ทำให้ทั้งหมดพัง"""
+
+    weighted_curves = []
+    for p in contributing_profiles:
+        curve = find_load_curve(reference.load_curves, p.business_type_code, p.rate_code, has_solar=p.has_solar)
+        if curve is not None:
+            weighted_curves.append((curve, max(p.sample_size, 1)))
+
+    if not weighted_curves:
+        return _NO_CURVE
+
+    def scale(v):
+        return None if v is None else round(v * scale_factor, 2)
+
+    if len(weighted_curves) == 1:
+        curve, _weight = weighted_curves[0]
+        return {
+            "available": True,
+            "day_types": {day_type: [scale(v) for v in hours] for day_type, hours in curve.hours.items()},
+            "sample_size": curve.sample_size,
+        }
+
+    day_types = weighted_curves[0][0].hours.keys()
+    blended_day_types = {}
+    for day_type in day_types:
+        hours = []
+        for hour_idx in range(24):
+            total_value = 0.0
+            total_weight = 0.0
+            for curve, weight in weighted_curves:
+                v = curve.hours.get(day_type, [None] * 24)[hour_idx]
+                if v is not None:
+                    total_value += v * weight
+                    total_weight += weight
+            hours.append(scale(total_value / total_weight) if total_weight > 0 else None)
+        blended_day_types[day_type] = hours
+
+    return {
+        "available": True,
+        "day_types": blended_day_types,
+        "sample_size": sum(curve.sample_size for curve, _weight in weighted_curves),
+    }
+
+
 def _estimate_result_to_dict(result, reference) -> dict:
     """แปลง ForecastResult เป็น dict สำหรับตอบกลับ JSON — โครงสร้างเดียวกับที่เดิมเขียนซ้ำอยู่ 2
     จุด (/api/forecast/<account_no> และ /api/forecast-adhoc) ดึงมารวมไว้ที่เดียว เพื่อให้จุดที่ 3
@@ -176,12 +226,10 @@ def _estimate_result_to_dict(result, reference) -> dict:
             "demand_kw": result.demand_kw,
             "energy_kwh": result.energy_kwh,
         },
-        "curve": _curve_response(
+        "curve": _blended_curve_response(
             reference,
-            result.matched_profile.business_type_code,
-            result.matched_profile.rate_code,
+            result.contributing_profiles or [result.matched_profile],
             result.scale_factor,
-            has_solar=result.matched_profile.has_solar,
         ),
     }
 
