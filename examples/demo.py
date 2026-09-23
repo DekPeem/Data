@@ -63,7 +63,7 @@ def main() -> None:
     hospital_customer = Customer(
         account_no="TEST-HOSP-001",
         name="ลูกค้าโรงพยาบาลตัวอย่าง",
-        business_type_code="93311",
+        business_type_code="86101",
         rate_code=None,
         contract_kva=900,
         has_amr=False,

@@ -1,7 +1,7 @@
 account_no,name,business_type_code,rate_code,contract_kva,has_amr
 DEMO-HOTEL-001,ลูกค้าโรงแรมตัวอย่าง (สมมติ),63201,50,2000,false
 DEMO-UNCLASSIFIED-001,ลูกค้าตัวอย่างที่ยังไม่จัดประเภทธุรกิจ (สมมติ),,3224,,false
-DEMO-HOSPITAL-001,ลูกค้าโรงพยาบาลตัวอย่าง (สมมติ),93311,,900,false
+DEMO-HOSPITAL-001,ลูกค้าโรงพยาบาลตัวอย่าง (สมมติ),86101,,900,false
 DEMO-MALL-001,ลูกค้าห้างสรรพสินค้าตัวอย่าง (สมมติ),47190,50,1500,false
 DEMO-FACTORY-001,ลูกค้าโรงงานตัวอย่าง (สมมติ),MANU,50,2500,false
 DEMO-UNKNOWN-001,ลูกค้าที่ไม่มีข้อมูลจัดประเภทเลย (สมมติ),,,,false
