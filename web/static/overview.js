@@ -115,8 +115,15 @@ function usageCells(accountNo) {
   };
 }
 
+// UNKNOWN_RATE_CODE (mapping.py) — รู้ประเภทธุรกิจแต่ "ตั้งใจไม่ทราบ" รหัสอัตรา ไม่ใช่ค่าว่าง
+// เปล่าๆ (ต่างจาก "ยังไม่มี") แสดงเป็น pill สีเทาแบบเดียวกัน ไม่โชว์คำว่า UNKNOWN ดิบๆ ให้ดูรก
+function rateCell(rateCode) {
+  if (!rateCode) return `<span class="pill-muted">ยังไม่มี</span>`;
+  if (rateCode === "UNKNOWN") return `<span class="pill-muted" title="รู้ประเภทธุรกิจ แต่ยังไม่ทราบรหัสอัตรา">ไม่ทราบรหัสอัตรา</span>`;
+  return escapeHtml(rateCode);
+}
+
 function renderViewRow(c) {
-  const rateCell = c.rate_code ? escapeHtml(c.rate_code) : `<span class="pill-muted">ยังไม่มี</span>`;
   const amrCell = c.has_amr ? `<span class="pill-yes">✅ มีแล้ว</span>` : `<span class="pill-muted">ยังไม่มี</span>`;
   const usage = usageCells(c.account_no);
 
@@ -127,7 +134,7 @@ function renderViewRow(c) {
     </td>
     <td>${escapeHtml(businessLabelOf(c))}</td>
     <td>${escapeHtml(sectionLabelOf(c))}</td>
-    <td>${rateCell}</td>
+    <td>${rateCell(c.rate_code)}</td>
     <td>${usage.monthlyKwh}</td>
     <td>${usage.peakKw}</td>
     <td>${solarCell(c.has_solar)}</td>

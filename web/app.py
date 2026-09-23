@@ -346,7 +346,10 @@ def api_update_overview_entry():
 
     body = request.get_json(silent=True) or {}
     password = body.get("password") or ""
-    if not hmac.compare_digest(str(password), configured_password):
+    # hmac.compare_digest แบบ str ต้องเป็น ASCII ล้วนทั้งคู่เท่านั้น (raise TypeError ถ้ามีอักขระ
+    # นอก ASCII แม้แต่ตัวเดียวในฝั่งไหนก็ตาม) — เข้ารหัสเป็น UTF-8 bytes ก่อนเทียบเสมอ กันพังกรณี
+    # ตั้งรหัสผ่าน/พิมพ์รหัสผ่านเป็นภาษาไทยหรือมีอักขระพิเศษปน
+    if not hmac.compare_digest(str(password).encode("utf-8"), configured_password.encode("utf-8")):
         return jsonify({"error": "wrong_password", "message": "รหัสผ่านไม่ถูกต้อง"}), 403
 
     account_no = (body.get("account_no") or "").strip()
