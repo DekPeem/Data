@@ -7,6 +7,10 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap">
   <link rel="stylesheet" href="styles.css">
   <style>
+    /* หน้านี้มีคอลัมน์เยอะ (7-8 คอลัมน์) — ขยาย body-wrap ให้กว้างกว่าหน้าอื่นๆ เฉพาะหน้านี้
+       (ไม่แตะ .body-wrap ใน styles.css ที่ใช้ร่วมกับหน้าอื่น) จะได้ไม่ต้องเลื่อนซ้าย-ขวาดูตาราง */
+    .body-wrap { max-width: 1400px; }
+
     .warn-box {
       background: #fff7e6; border: 1px solid rgba(250, 178, 25, 0.4); border-radius: 10px;
       padding: 14px 18px; font-size: 13px; color: #7a5a00; line-height: 1.6;
@@ -18,19 +22,38 @@
       padding: 0 14px; font-size: 13.5px; font-family: inherit; background: #fff; color: #0f1b2d;
     }
     .overview-search:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.12); }
-    .table-card { padding: 0; overflow-x: auto; }
-    table.overview-table { width: 100%; border-collapse: collapse; font-size: 13.5px; white-space: nowrap; }
+    .table-card { padding: 0; }
+    table.overview-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: 13.5px; }
     table.overview-table th {
-      position: sticky; top: 0; background: #fff; text-align: left; font-size: 12px; font-weight: 600;
-      color: #8996ab; padding: 12px 16px; border-bottom: 1px solid rgba(15,23,42,0.1);
+      text-align: left; font-size: 12px; font-weight: 600;
+      color: #8996ab; padding: 12px 14px; border-bottom: 1px solid rgba(15,23,42,0.1);
     }
-    table.overview-table td { padding: 12px 16px; border-bottom: 1px solid rgba(15,23,42,0.06); color: #0f1b2d; }
+    table.overview-table td {
+      padding: 12px 14px; border-bottom: 1px solid rgba(15,23,42,0.06); color: #0f1b2d;
+      overflow-wrap: break-word;
+    }
     table.overview-table tbody tr:hover { background: #f7f9fc; }
     .cell-sub { font-size: 12px; color: #8996ab; margin-top: 2px; }
     .pill-muted { display: inline-block; font-size: 12px; color: #8996ab; }
     .pill-yes { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; color: #006300; font-weight: 600; }
     .pill-no { display: inline-block; font-size: 12.5px; color: #a01818; }
     .pill-unknown { display: inline-block; font-size: 12.5px; color: #8996ab; }
+
+    .edit-input {
+      width: 100%; box-sizing: border-box; height: 32px; padding: 0 8px; font-size: 12.5px;
+      border: 1px solid rgba(15,23,42,0.16); border-radius: 6px; font-family: inherit; background: #fff; color: #0f1b2d;
+    }
+    .edit-input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 2px rgba(59,130,246,0.12); }
+    .edit-resolved-label { font-size: 11px; color: #8996ab; margin-top: 3px; }
+    .row-actions { display: flex; gap: 6px; }
+    .btn-tiny {
+      height: 30px; padding: 0 10px; font-size: 12px; font-weight: 600; border-radius: 6px;
+      border: 1px solid rgba(15,23,42,0.14); background: #fff; color: #184f95; cursor: pointer; font-family: inherit;
+    }
+    .btn-tiny:hover { background: #eef3fa; }
+    .btn-tiny-primary { background: #2a78d6; color: #fff; border-color: #2a78d6; }
+    .btn-tiny-primary:hover { background: #184f95; }
+    .edit-hint { font-size: 11px; color: #d03b3b; margin-top: 4px; min-height: 14px; }
   </style>
 </head>
 <body>
@@ -56,7 +79,8 @@
 
       <div class="warn-box">
         ⚠️ หน้านี้แสดง <b>ชื่อบัญชีจริง</b> จากประวัติการนำเข้า AMR ในเครื่องนี้ (import_log_local.csv) รวมกับทะเบียนลูกค้า (customers_local.csv ถ้ามี) —
-        ใช้ดูในเครื่องนี้เท่านั้น ไม่ถูกบันทึกเข้า repo สาธารณะ<br>
+        ใช้ดูในเครื่องนี้เท่านั้น ไม่ถูกบันทึกเข้า repo สาธารณะ (ตัดแถวข้อมูลสมมติ/DEMO ออกให้แล้ว)<br>
+        ✏️ กด "แก้ไข" ที่แถวไหนก็ได้เพื่อแก้ประเภทธุรกิจ/รหัสอัตรา/สถานะ Solar — บันทึกแล้วมีผลกับทั้งระบบทันที (เขียนลง customers_local.csv ซึ่งหน้าค้นหา/พยากรณ์อื่นๆ อ่านค่าเดียวกันนี้) ต้องใส่รหัสผ่านก่อนถึงจะบันทึกได้ทุกครั้งที่เปิดหน้านี้ใหม่<br>
         ℹ️ คอลัมน์ "ก่อตั้งเมื่อไหร่" ยังไม่มีแหล่งข้อมูลนี้ในระบบเลย (ไม่มีตรงไหนเก็บวันจดทะเบียน/ก่อตั้งของบริษัทไว้) จึงแสดงเป็น "ไม่มีข้อมูล" ไปก่อน — ถ้าต้องการให้เพิ่มช่องกรอกเองสำหรับข้อมูลนี้ แจ้งได้เลย
       </div>
 
@@ -67,6 +91,11 @@
 
       <div class="card table-card">
         <table class="overview-table">
+          <colgroup>
+            <col style="width:19%"><col style="width:18%"><col style="width:17%">
+            <col style="width:8%"><col style="width:9%"><col style="width:9%">
+            <col style="width:8%"><col style="width:12%">
+          </colgroup>
           <thead>
             <tr>
               <th>ชื่อ</th>
@@ -76,6 +105,7 @@
               <th>ก่อตั้งเมื่อไหร่</th>
               <th>ติด Solar รึยัง</th>
               <th>มี AMR จริงหรือยัง</th>
+              <th>จัดการ</th>
             </tr>
           </thead>
           <tbody id="overview-tbody"></tbody>

@@ -308,6 +308,48 @@ def _load_customers(path: Path) -> List[Customer]:
     return customers
 
 
+_CUSTOMER_FIELDNAMES = ["account_no", "name", "business_type_code", "rate_code", "contract_kva", "has_amr", "has_solar"]
+
+
+def load_customers_local(path: Path) -> List[Customer]:
+    """โหลด customers_local.csv ตรงๆ (ไม่รวมกับ customers.csv) — ใช้ตอนจะแก้ไข/upsert แถวเดียว
+    ต้องอ่านของเดิมทั้งหมดมาก่อนเขียนทับ คืน list ว่างถ้ายังไม่มีไฟล์"""
+
+    return _load_customers(path)
+
+
+def save_customers_local(customers: List[Customer], path: Path) -> None:
+    """เขียนทับ customers_local.csv ทั้งไฟล์ (ไฟล์นี้อยู่ใน .gitignore แล้ว ห้าม commit เด็ดขาด)"""
+
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=_CUSTOMER_FIELDNAMES, lineterminator="\n")
+        writer.writeheader()
+        for c in customers:
+            writer.writerow(
+                {
+                    "account_no": c.account_no,
+                    "name": c.name,
+                    "business_type_code": c.business_type_code or "",
+                    "rate_code": c.rate_code or "",
+                    "contract_kva": "" if c.contract_kva is None else c.contract_kva,
+                    "has_amr": "true" if c.has_amr else "false",
+                    "has_solar": "" if c.has_solar is None else ("true" if c.has_solar else "false"),
+                }
+            )
+
+
+def upsert_customer_local(path: Path, updated: Customer) -> List[Customer]:
+    """แทนที่/เพิ่มลูกค้า 1 รายตาม account_no ใน customers_local.csv (เขียนทับทั้งไฟล์) คืนรายชื่อ
+    ทั้งหมดหลังอัปเดต — ใช้ตอนแก้ไขประเภทธุรกิจ/รหัสอัตรา/Solar ของบัญชีหนึ่งจากหน้า Admin แล้ว
+    ต้องการให้ทั้งระบบ (หน้าค้นหา/พยากรณ์ ซึ่งอ่านทะเบียนนี้) เห็นค่าใหม่ทันที"""
+
+    customers = load_customers_local(path)
+    customers = [c for c in customers if c.account_no != updated.account_no]
+    customers.append(updated)
+    save_customers_local(customers, path)
+    return customers
+
+
 _LOAD_PROFILE_FIELDNAMES = [
     "business_type_code",
     "rate_code",

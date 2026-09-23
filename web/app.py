@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import dataclasses
+import hmac
 import io
 import os
 import sys
@@ -45,6 +46,7 @@ from amr_mapping.keyword_classify import guess_tsic_division
 from amr_mapping.loader import (
     DEFAULT_DATA_DIR,
     append_pending_amr_local,
+    load_customers_local,
     load_import_log_local,
     load_pending_amr_local,
     load_site_curves_local,
@@ -56,6 +58,7 @@ from amr_mapping.loader import (
     save_load_curves,
     save_load_profiles,
     upsert_business_type,
+    upsert_customer_local,
 )
 from amr_mapping.mapping import UNKNOWN_RATE_CODE, MatchLevel, find_load_curve
 from amr_mapping.models import BusinessType, Customer
@@ -316,6 +319,77 @@ def api_delete_import_log_local_entry():
     if not removed:
         return jsonify({"error": "not_found", "message": "ไม่พบรายการนี้ในประวัติ"}), 404
     return jsonify({"ok": True})
+
+
+@app.route("/api/admin/overview-entry", methods=["PATCH"])
+def api_update_overview_entry():
+    """แก้ไขประเภทธุรกิจ/รหัสอัตรา/KVA/Solar ของบัญชีหนึ่งจากหน้า "ภาพรวมลูกค้าทั้งหมด"
+    (/overview) โดยตรง — เขียนลง customers_local.csv (upsert ตาม account_no) ซึ่งเป็นไฟล์ที่
+    get_reference()/load_reference_data() ใช้ override ทะเบียนลูกค้าเสมอ (ดู
+    load_reference_data ใน loader.py) จึงมีผลกับทั้งระบบทันที (หน้าค้นหา/พยากรณ์ที่อ่านทะเบียน
+    นี้จะเห็นค่าใหม่โดยไม่ต้อง restart เซิร์ฟเวอร์)
+
+    ต้องตั้งค่า environment variable ADMIN_EDIT_PASSWORD ไว้ก่อนถึงจะแก้ไขผ่าน endpoint นี้ได้
+    เลย (ดู .env.example) — ถ้ายังไม่ตั้งไว้ ปิดการแก้ไขทั้งหมด (ไม่มีรหัสผ่าน default เพราะ
+    โค้ดส่วนนี้อยู่ใน public repo ตั้ง default ไว้จะไม่ปลอดภัยเลย) เทียบรหัสผ่านด้วย
+    hmac.compare_digest กัน timing attack"""
+
+    configured_password = os.environ.get("ADMIN_EDIT_PASSWORD")
+    if not configured_password:
+        return jsonify(
+            {
+                "error": "edit_disabled",
+                "message": "ยังไม่ได้ตั้งรหัสผ่านสำหรับแก้ไขข้อมูลในเครื่องนี้ — ตั้งค่า environment "
+                "variable ADMIN_EDIT_PASSWORD ก่อน (ดูตัวอย่างใน .env.example) ถึงจะแก้ไขได้",
+            }
+        ), 503
+
+    body = request.get_json(silent=True) or {}
+    password = body.get("password") or ""
+    if not hmac.compare_digest(str(password), configured_password):
+        return jsonify({"error": "wrong_password", "message": "รหัสผ่านไม่ถูกต้อง"}), 403
+
+    account_no = (body.get("account_no") or "").strip()
+    if not account_no:
+        return jsonify({"error": "invalid_request", "message": "ต้องระบุเลขบัญชี"}), 400
+
+    # เอาค่าปัจจุบัน (จากทะเบียนที่ merge แล้ว) มาเป็นฐาน — ฟิลด์ไหนไม่ได้ส่งมาแก้ ให้คงค่าเดิมไว้
+    current = next((c for c in get_reference().customers if c.account_no == account_no), None)
+
+    name = body.get("name", current.name if current else "") or (current.name if current else account_no)
+    business_type_code = body.get(
+        "business_type_code", current.business_type_code if current else None
+    )
+    rate_code = body.get("rate_code", current.rate_code if current else None)
+    contract_kva_raw = body.get("contract_kva", current.contract_kva if current else None)
+    try:
+        contract_kva = float(contract_kva_raw) if contract_kva_raw not in (None, "") else None
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid_request", "message": "KVA ตามสัญญาต้องเป็นตัวเลข"}), 400
+    has_solar = body.get("has_solar", current.has_solar if current else None)
+
+    # has_amr ต้องเช็คทั้งทะเบียน (customers.csv/customers_local.csv) และประวัติการนำเข้าจริง
+    # (import_log_local.csv) — บัญชีที่มาจากการนำเข้า AMR ล้วนๆ (ยังไม่เคยอยู่ในทะเบียนมาก่อนเลย)
+    # จะมี current เป็น None ถ้าเช็คแค่ current.has_amr เพียวๆ จะเขียนทับเป็น False ผิดๆ ตอน
+    # upsert ครั้งแรก (แถวหายจาก "มี AMR จริงหรือยัง" ในหน้า /overview ทั้งที่จริงมีอยู่แล้ว)
+    has_amr_in_registry = current.has_amr if current else False
+    has_amr_in_import_log = any(
+        e.get("account_no") == account_no
+        for e in load_import_log_local(DEFAULT_DATA_DIR / "import_log_local.csv")
+    )
+
+    updated = Customer(
+        account_no=account_no,
+        name=(name or account_no).strip(),
+        business_type_code=(business_type_code or "").strip() or None,
+        rate_code=(rate_code or "").strip() or None,
+        contract_kva=contract_kva,
+        has_amr=has_amr_in_registry or has_amr_in_import_log,
+        has_solar=has_solar if has_solar is None else bool(has_solar),
+    )
+
+    upsert_customer_local(DEFAULT_DATA_DIR / "customers_local.csv", updated)
+    return jsonify(_customer_to_dict(updated))
 
 
 @app.route("/api/admin/site-curve/<account_no>")

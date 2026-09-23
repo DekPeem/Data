@@ -7,23 +7,34 @@
 //      ข้อมูลจริงที่นำเข้าไปแล้วเลย (เจอปัญหานี้จริงตอนทดสอบ — เห็นแต่ DEMO)
 // ถ้าบัญชีเดียวกันมีทั้ง 2 แหล่ง ใช้ข้อมูลจาก import log (ใหม่กว่า/เป็นของจริงที่เพิ่งนำเข้า) ทับ
 // ทะเบียนลูกค้า — import log อาจมีหลายแถวต่อบัญชี (นำเข้าซ้ำหลายรอบ) เอาแถวล่าสุดต่อบัญชี
-// (API คืนใหม่สุดก่อนอยู่แล้ว) ไม่มี endpoint ใหม่ ใช้ของที่มีอยู่แล้วทั้งหมด
+// (API คืนใหม่สุดก่อนอยู่แล้ว) ไม่มี endpoint ใหม่สำหรับอ่าน ใช้ของที่มีอยู่แล้วทั้งหมด
+//
+// แถว DEMO (customers.csv สาธิต — account_no ขึ้นต้นด้วย "DEMO-" เสมอตามธรรมเนียมของ repo นี้)
+// ถูกกรองทิ้งไม่ให้ขึ้นในตารางนี้ เพราะเป็นข้อมูลสมมติ ไม่ใช่ลูกค้าจริง
 //
 // "ก่อตั้งเมื่อไหร่" ไม่มีอยู่ในตารางนี้ เพราะไม่มีแหล่งข้อมูลนี้เก็บไว้ที่ไหนในระบบเลย (ดู
 // customers.csv/customers_local.csv และ dbd_lookup.py — ไม่มีฟิลด์วันจดทะเบียน/ก่อตั้ง)
+//
+// แก้ไขได้ในตาราง (ปุ่ม "แก้ไข" ต่อแถว) — บันทึกผ่าน PATCH /api/admin/overview-entry ซึ่งเขียนลง
+// customers_local.csv (upsert ตาม account_no) มีผลกับทั้งระบบทันที ต้องใส่รหัสผ่านก่อนบันทึกได้
+// (รหัสผ่านตั้งค่าไว้ที่เครื่อง server ผ่าน env var ADMIN_EDIT_PASSWORD — ดู .env.example) แคช
+// รหัสผ่านที่พิมพ์ถูกไว้ใน sessionStorage เพื่อไม่ต้องพิมพ์ซ้ำทุกแถวในเซสชันเดียวกัน
 
 const tbody = document.getElementById("overview-tbody");
 const emptyState = document.getElementById("overview-empty");
 const countEl = document.getElementById("overview-count");
 const searchBox = document.getElementById("search-box");
 
+const SESSION_PASSWORD_KEY = "overviewEditPassword";
+
 let customers = [];
 let businessTypeByCode = {};
+let editingAccountNo = null;
 
 function mergeCustomersWithImportLog(registryCustomers, importLogEntries) {
   const byAccount = new Map();
   for (const c of registryCustomers) {
-    if (c.account_no) byAccount.set(c.account_no, { ...c });
+    if (c.account_no && !c.account_no.startsWith("DEMO-")) byAccount.set(c.account_no, { ...c });
   }
 
   // importLogEntries มาจาก /api/import-log-local ซึ่งเรียงใหม่สุดก่อนอยู่แล้ว — ใช้ Set กันไม่ให้
@@ -58,53 +69,200 @@ function solarCell(hasSolar) {
   return `<span class="pill-unknown">ไม่ทราบ</span>`;
 }
 
+function businessLabelOf(c) {
+  const bt = businessTypeByCode[c.business_type_code];
+  return bt ? bt.name_th : c.business_type_code ? c.business_type_code : "ยังไม่ระบุ";
+}
+
+function sectionLabelOf(c) {
+  const bt = businessTypeByCode[c.business_type_code];
+  return bt && bt.section_name_th ? `${bt.section_code} · ${bt.section_name_th}` : "-";
+}
+
+function renderViewRow(c) {
+  const rateCell = c.rate_code ? escapeHtml(c.rate_code) : `<span class="pill-muted">ยังไม่มี</span>`;
+  const amrCell = c.has_amr ? `<span class="pill-yes">✅ มีแล้ว</span>` : `<span class="pill-muted">ยังไม่มี</span>`;
+
+  return `
+    <td>
+      ${escapeHtml(c.name) || "(ไม่ทราบชื่อ)"}
+      <div class="cell-sub">บัญชี ${escapeHtml(c.account_no) || "-"}</div>
+    </td>
+    <td>${escapeHtml(businessLabelOf(c))}</td>
+    <td>${escapeHtml(sectionLabelOf(c))}</td>
+    <td>${rateCell}</td>
+    <td><span class="pill-muted" title="ยังไม่มีแหล่งข้อมูลนี้ในระบบ">ไม่มีข้อมูล</span></td>
+    <td>${solarCell(c.has_solar)}</td>
+    <td>${amrCell}</td>
+    <td>
+      <div class="row-actions">
+        <button type="button" class="btn-tiny" data-action="edit" data-account="${escapeHtml(c.account_no)}">แก้ไข</button>
+      </div>
+    </td>
+  `;
+}
+
+function renderEditRow(c) {
+  const resolvedLabel = businessLabelOf(c);
+  const solarValue = c.has_solar === true ? "true" : c.has_solar === false ? "false" : "";
+
+  return `
+    <td>
+      <input type="text" class="edit-input" data-field="name" value="${escapeHtml(c.name)}">
+      <div class="cell-sub">บัญชี ${escapeHtml(c.account_no) || "-"}</div>
+    </td>
+    <td>
+      <input type="text" class="edit-input" data-field="business_type_code" value="${escapeHtml(c.business_type_code || "")}" placeholder="เช่น 26109">
+      <div class="edit-resolved-label" data-role="resolved-business">${escapeHtml(resolvedLabel)}</div>
+    </td>
+    <td>${escapeHtml(sectionLabelOf(c))}</td>
+    <td><input type="text" class="edit-input" data-field="rate_code" value="${escapeHtml(c.rate_code || "")}" placeholder="เช่น 50"></td>
+    <td><span class="pill-muted">ไม่มีข้อมูล</span></td>
+    <td>
+      <select class="edit-input" data-field="has_solar">
+        <option value="" ${solarValue === "" ? "selected" : ""}>ไม่ทราบ</option>
+        <option value="true" ${solarValue === "true" ? "selected" : ""}>ติดแล้ว</option>
+        <option value="false" ${solarValue === "false" ? "selected" : ""}>ยังไม่ติด</option>
+      </select>
+    </td>
+    <td>${c.has_amr ? `<span class="pill-yes">✅ มีแล้ว</span>` : `<span class="pill-muted">ยังไม่มี</span>`}</td>
+    <td>
+      <div class="row-actions">
+        <button type="button" class="btn-tiny btn-tiny-primary" data-action="save" data-account="${escapeHtml(c.account_no)}">บันทึก</button>
+        <button type="button" class="btn-tiny" data-action="cancel" data-account="${escapeHtml(c.account_no)}">ยกเลิก</button>
+      </div>
+      <div class="edit-hint" data-role="edit-hint"></div>
+    </td>
+  `;
+}
+
 function renderRows(list) {
   tbody.innerHTML = "";
   emptyState.style.display = list.length === 0 ? "flex" : "none";
   countEl.textContent = `ทั้งหมด ${list.length} ราย`;
 
   for (const c of list) {
-    const bt = businessTypeByCode[c.business_type_code];
-    const businessLabel = bt ? escapeHtml(bt.name_th) : c.business_type_code ? escapeHtml(c.business_type_code) : "ยังไม่ระบุ";
-    const sectionLabel = bt && bt.section_name_th ? `${bt.section_code} · ${escapeHtml(bt.section_name_th)}` : "-";
-    const rateCell = c.rate_code
-      ? `${escapeHtml(c.rate_code)}`
-      : `<span class="pill-muted">ยังไม่มี</span>`;
-    const amrCell = c.has_amr ? `<span class="pill-yes">✅ มีแล้ว</span>` : `<span class="pill-muted">ยังไม่มี</span>`;
-
     const tr = document.createElement("tr");
-    tr.innerHTML = `
-      <td>
-        ${escapeHtml(c.name) || "(ไม่ทราบชื่อ)"}
-        <div class="cell-sub">บัญชี ${escapeHtml(c.account_no) || "-"}</div>
-      </td>
-      <td>${businessLabel}</td>
-      <td>${sectionLabel}</td>
-      <td>${rateCell}</td>
-      <td><span class="pill-muted" title="ยังไม่มีแหล่งข้อมูลนี้ในระบบ">ไม่มีข้อมูล</span></td>
-      <td>${solarCell(c.has_solar)}</td>
-      <td>${amrCell}</td>
-    `;
+    tr.dataset.account = c.account_no || "";
+    tr.innerHTML = c.account_no && c.account_no === editingAccountNo ? renderEditRow(c) : renderViewRow(c);
     tbody.appendChild(tr);
+  }
+
+  if (editingAccountNo) {
+    const input = tbody.querySelector(`tr[data-account="${CSS.escape(editingAccountNo)}"] input[data-field="business_type_code"]`);
+    if (input) {
+      input.addEventListener("input", () => {
+        const bt = businessTypeByCode[input.value.trim()];
+        const label = tbody.querySelector(`tr[data-account="${CSS.escape(editingAccountNo)}"] [data-role="resolved-business"]`);
+        if (label) label.textContent = bt ? bt.name_th : input.value.trim() ? "ไม่พบรหัสนี้ในระบบ" : "ยังไม่ระบุ";
+      });
+    }
   }
 }
 
-function applyFilter() {
+function currentFilteredList() {
   const q = searchBox.value.trim().toLowerCase();
-  if (!q) {
-    renderRows(customers);
-    return;
-  }
-  const filtered = customers.filter((c) => {
-    const bt = businessTypeByCode[c.business_type_code];
-    const haystack = [c.name, c.account_no, c.business_type_code, bt && bt.name_th, bt && bt.section_name_th]
+  if (!q) return customers;
+  return customers.filter((c) => {
+    const haystack = [c.name, c.account_no, c.business_type_code, businessLabelOf(c), sectionLabelOf(c)]
       .filter(Boolean)
       .join(" ")
       .toLowerCase();
     return haystack.includes(q);
   });
-  renderRows(filtered);
 }
+
+function applyFilter() {
+  renderRows(currentFilteredList());
+}
+
+async function saveEdit(accountNo, row) {
+  const hintEl = row.querySelector('[data-role="edit-hint"]');
+  const setHint = (msg) => {
+    if (hintEl) hintEl.textContent = msg || "";
+  };
+
+  let password = sessionStorage.getItem(SESSION_PASSWORD_KEY);
+  if (!password) {
+    password = window.prompt("ใส่รหัสผ่านเพื่อยืนยันการแก้ไข (ตั้งค่าไว้ที่เครื่อง server ผ่าน ADMIN_EDIT_PASSWORD)") || "";
+    if (!password) return;
+  }
+
+  const name = row.querySelector('input[data-field="name"]').value.trim();
+  const businessTypeCode = row.querySelector('input[data-field="business_type_code"]').value.trim();
+  const rateCode = row.querySelector('input[data-field="rate_code"]').value.trim();
+  const solarRaw = row.querySelector('select[data-field="has_solar"]').value;
+  const hasSolar = solarRaw === "" ? null : solarRaw === "true";
+
+  const saveBtn = row.querySelector('[data-action="save"]');
+  saveBtn.disabled = true;
+  setHint("กำลังบันทึก...");
+
+  try {
+    const res = await fetch("/api/admin/overview-entry", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        account_no: accountNo,
+        password,
+        name,
+        business_type_code: businessTypeCode,
+        rate_code: rateCode,
+        has_solar: hasSolar,
+      }),
+    });
+    const data = await res.json();
+
+    if (res.status === 403) {
+      sessionStorage.removeItem(SESSION_PASSWORD_KEY);
+      setHint(data.message || "รหัสผ่านไม่ถูกต้อง");
+      saveBtn.disabled = false;
+      return;
+    }
+    if (res.status === 503) {
+      setHint(data.message || "ยังไม่เปิดใช้งานการแก้ไข");
+      saveBtn.disabled = false;
+      return;
+    }
+    if (!res.ok) {
+      setHint(data.message || "บันทึกไม่สำเร็จ");
+      saveBtn.disabled = false;
+      return;
+    }
+
+    sessionStorage.setItem(SESSION_PASSWORD_KEY, password);
+
+    const idx = customers.findIndex((c) => c.account_no === accountNo);
+    const updated = { ...(idx >= 0 ? customers[idx] : {}), ...data };
+    if (idx >= 0) customers[idx] = updated;
+    else customers.push(updated);
+
+    editingAccountNo = null;
+    applyFilter();
+  } catch (err) {
+    console.error("บันทึกไม่สำเร็จ", err);
+    setHint("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ");
+    saveBtn.disabled = false;
+  }
+}
+
+tbody.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-action]");
+  if (!btn) return;
+  const accountNo = btn.dataset.account;
+  const action = btn.dataset.action;
+
+  if (action === "edit") {
+    editingAccountNo = accountNo;
+    applyFilter();
+  } else if (action === "cancel") {
+    editingAccountNo = null;
+    applyFilter();
+  } else if (action === "save") {
+    const row = btn.closest("tr");
+    saveEdit(accountNo, row);
+  }
+});
 
 async function load() {
   try {
