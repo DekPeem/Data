@@ -148,6 +148,89 @@ def test_find_load_profile_division_fallback_requires_known_division_on_target()
     assert match.level == MatchLevel.DEFAULT
 
 
+def test_find_load_profile_matches_exact_across_alias_codes():
+    """86101 (TSIC ปัจจุบัน) เป็น alias ของ 93311 (รหัสเก่า) — ลูกค้าระบุ 86101 มา แต่โปรไฟล์จริง
+    บันทึกไว้เป็น 93311 ต้องได้ EXACT (ไม่ใช่ DIVISION_ONLY) เพราะเป็นธุรกิจเดียวกันเป๊ะๆ"""
+
+    business_types = {
+        "86101": BusinessType(code="86101", name_th="กิจกรรมโรงพยาบาล", category="manual", alias_of="93311"),
+        "93311": BusinessType(code="93311", name_th="โรงพยาบาลทั่วไป", category="auto"),
+    }
+    profiles = [
+        LoadProfile(
+            business_type_code="93311", rate_code="30", billing_method="TOU",
+            demand_kw={"P": 1, "OP": 1, "H": 1}, energy_kwh={"P": 1, "OP": 1, "H": 1},
+        ),
+        LoadProfile(
+            business_type_code="DEFAULT", rate_code="DEFAULT", billing_method="TOU",
+            demand_kw={"P": 0, "OP": 0, "H": 0}, energy_kwh={"P": 0, "OP": 0, "H": 0},
+        ),
+    ]
+
+    match = find_load_profile(profiles, business_type_code="86101", rate_code="30", business_types=business_types)
+    assert match.level == MatchLevel.EXACT
+    assert match.profile.business_type_code == "93311"
+
+
+def test_find_load_profile_matches_exact_across_alias_codes_reverse_direction():
+    """ทิศตรงข้าม — ลูกค้าระบุรหัสเก่า 93311 มา แต่โปรไฟล์จริงบันทึกไว้เป็นรหัสปัจจุบัน 86101
+    (alias ต้องใช้ได้ 2 ทิศทาง ไม่ใช่แค่จาก alias ไปหา canonical เท่านั้น)"""
+
+    business_types = {
+        "86101": BusinessType(code="86101", name_th="กิจกรรมโรงพยาบาล", category="manual", alias_of="93311"),
+        "93311": BusinessType(code="93311", name_th="โรงพยาบาลทั่วไป", category="auto"),
+    }
+    profiles = [
+        LoadProfile(
+            business_type_code="86101", rate_code="30", billing_method="TOU",
+            demand_kw={"P": 1, "OP": 1, "H": 1}, energy_kwh={"P": 1, "OP": 1, "H": 1},
+        ),
+    ]
+
+    match = find_load_profile(profiles, business_type_code="93311", rate_code="30", business_types=business_types)
+    assert match.level == MatchLevel.EXACT
+    assert match.profile.business_type_code == "86101"
+
+
+def test_find_load_profile_alias_reaches_business_only_tier_too():
+    """ตรงประเภทธุรกิจ (ผ่าน alias) แต่ไม่ตรงอัตรา — ต้องได้ BUSINESS_ONLY ไม่ใช่ตกไป DEFAULT"""
+
+    business_types = {
+        "86101": BusinessType(code="86101", name_th="กิจกรรมโรงพยาบาล", category="manual", alias_of="93311"),
+        "93311": BusinessType(code="93311", name_th="โรงพยาบาลทั่วไป", category="auto"),
+    }
+    profiles = [
+        LoadProfile(
+            business_type_code="93311", rate_code="30", billing_method="TOU",
+            demand_kw={"P": 1, "OP": 1, "H": 1}, energy_kwh={"P": 1, "OP": 1, "H": 1},
+        ),
+    ]
+
+    match = find_load_profile(profiles, business_type_code="86101", rate_code="999", business_types=business_types)
+    assert match.level == MatchLevel.BUSINESS_ONLY
+    assert match.profile.business_type_code == "93311"
+
+
+def test_find_load_profile_alias_ignored_without_business_types_dict():
+    """ไม่ส่ง business_types มาเลย — ต้องไม่ apply alias (backward compatible) ตกไป DEFAULT
+    (ใช้ rate_code ที่ไม่ตรงกับโปรไฟล์ไหนเลยด้วย กันตกไปที่ชั้น RATE_ONLY แทน ซึ่งจะบังผลลัพธ์
+    ที่ต้องการทดสอบจริงๆ คือชั้น EXACT/BUSINESS_ONLY ข้าม alias ไม่ได้)"""
+
+    profiles = [
+        LoadProfile(
+            business_type_code="93311", rate_code="30", billing_method="TOU",
+            demand_kw={"P": 1, "OP": 1, "H": 1}, energy_kwh={"P": 1, "OP": 1, "H": 1},
+        ),
+        LoadProfile(
+            business_type_code="DEFAULT", rate_code="DEFAULT", billing_method="TOU",
+            demand_kw={"P": 0, "OP": 0, "H": 0}, energy_kwh={"P": 0, "OP": 0, "H": 0},
+        ),
+    ]
+
+    match = find_load_profile(profiles, business_type_code="86101", rate_code="999")
+    assert match.level == MatchLevel.DEFAULT
+
+
 def test_find_load_curve_exact_match_only_no_fallback():
     curves = [
         LoadCurve(business_type_code="63201", rate_code="50", hours={"all": [1.0] * 24}),

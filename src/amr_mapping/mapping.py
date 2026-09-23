@@ -40,6 +40,28 @@ DEFAULT_RATE_CODE = "DEFAULT"
 UNKNOWN_RATE_CODE = "UNKNOWN"
 
 
+def _equivalent_codes(business_type_code: str, business_types: Optional[Dict[str, BusinessType]]) -> set:
+    """คืนชุดรหัสธุรกิจทั้งหมดที่ถือว่า "เรื่องเดียวกัน" กับ business_type_code (ตัวเอง + คู่
+    alias ทุกทิศทาง) — ใช้ยกระดับชั้น EXACT/BUSINESS_ONLY ให้ข้ามไปมาระหว่างรหัสที่เป็น alias
+    กันได้ (เช่น TSIC ปัจจุบัน 86101 กับรหัสเก่า 93311 ของ "โรงพยาบาลทั่วไป") แทนที่จะตกไปชั้น
+    DIVISION_ONLY ซึ่งเป็นแค่การประมาณการจากกลุ่มอุตสาหกรรมใกล้เคียง ไม่ใช่ธุรกิจเดียวกันจริงๆ
+
+    ไม่ต้องมี business_types ก็ได้ (คืนแค่ {business_type_code} เฉยๆ — พฤติกรรมเดิมก่อนมี
+    alias_of)"""
+
+    codes = {business_type_code}
+    if not business_types:
+        return codes
+
+    target_bt = business_types.get(business_type_code)
+    canonical = target_bt.alias_of if target_bt and target_bt.alias_of else business_type_code
+    codes.add(canonical)
+    for code, bt in business_types.items():
+        if code == canonical or bt.alias_of == canonical:
+            codes.add(code)
+    return codes
+
+
 def _pick_by_solar(candidates: List[LoadProfile], has_solar: Optional[bool]) -> tuple:
     """เลือกโปรไฟล์ที่เหมาะกับสถานะ Solar ที่สุดจากรายการที่ตรงธุรกิจ+อัตราแล้ว (candidates
     ต้องไม่ว่าง) คืน (โปรไฟล์ที่เลือก, ตรงสถานะ Solar หรือไม่) — ใช้ตัดสิน EXACT vs SOLAR_MISMATCH
@@ -68,25 +90,32 @@ def find_load_profile(
 ) -> MatchResult:
     """จับคู่โปรไฟล์ที่เหมาะสมที่สุดตามลำดับความสำคัญ (ดู docstring ของโมดูล)
 
-    business_types (ถ้าระบุ) ใช้สำหรับชั้น DIVISION_ONLY เท่านั้น — เป็น dict เดียวกับ
-    ReferenceData.business_types (code -> BusinessType) เพื่อดู section_code/division_code
+    business_types (ถ้าระบุ) ใช้ 2 อย่าง: (1) ชั้น DIVISION_ONLY — ดู section_code/division_code
+    (2) ยกระดับชั้น EXACT/BUSINESS_ONLY ให้ข้ามไปมาระหว่างรหัสที่เป็น alias กันได้ (ดู
+    BusinessType.alias_of/_equivalent_codes) เช่น business_type_code ที่ลูกค้าระบุมาคือ 86101
+    (TSIC ปัจจุบัน) แต่โปรไฟล์จริงในระบบบันทึกไว้เป็น 93311 (รหัสเก่า alias กัน) จะยังจับคู่ที่
+    EXACT ได้เลย ไม่ต้องตกไป DIVISION_ONLY
 
     has_solar (ถ้าระบุ — True/False) ใช้กรองเฉพาะชั้น EXACT เท่านั้น ปล่อยเป็น None ถ้าไม่ทราบ
     สถานะ Solar ของลูกค้า (พฤติกรรมเดิมก่อนมีมิตินี้)
     """
 
     profiles = list(profiles)
+    # รหัสธุรกิจที่ถือว่าเรื่องเดียวกัน (ตัวเอง + คู่ alias เช่น TSIC ปัจจุบัน/รหัสเก่า) — ใช้แทน
+    # การเทียบ business_type_code ตรงๆ ในชั้น EXACT/BUSINESS_ONLY ทั้งหมดด้านล่าง คืนแค่
+    # {business_type_code} เฉยๆ ถ้าไม่มี business_types หรือไม่มี alias (พฤติกรรมเดิม)
+    equivalent_codes = _equivalent_codes(business_type_code, business_types) if business_type_code else set()
 
     if business_type_code and rate_code:
         exact_candidates = [
-            p for p in profiles if p.business_type_code == business_type_code and p.rate_code == rate_code
+            p for p in profiles if p.business_type_code in equivalent_codes and p.rate_code == rate_code
         ]
         if exact_candidates:
             chosen, solar_ok = _pick_by_solar(exact_candidates, has_solar)
             return MatchResult(chosen, MatchLevel.EXACT if solar_ok else MatchLevel.SOLAR_MISMATCH)
 
     if business_type_code:
-        candidates = [p for p in profiles if p.business_type_code == business_type_code]
+        candidates = [p for p in profiles if p.business_type_code in equivalent_codes]
         if candidates:
             # ถ้าทราบอัตราด้วย ให้เลือกตัวที่ billing_method ตรงกันก่อน (รองลงมาจาก exact)
             if rate_code:

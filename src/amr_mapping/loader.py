@@ -40,6 +40,9 @@ def _load_business_types(path: Path) -> Dict[str, BusinessType]:
             # คอลัมน์นี้เลย (row.get คืน None) ต้องโหลดได้ตามปกติ ไม่ error
             section_code = (row.get("section_code") or "").strip() or None
             division_code = (row.get("division_code") or "").strip() or None
+            # alias_of เป็นคอลัมน์ที่เพิ่มเข้ามาทีหลังเหมือนกัน — ไฟล์เก่าที่ยังไม่มีคอลัมน์นี้
+            # ต้องโหลดได้ตามปกติ (ไม่มี alias เลย)
+            alias_of = (row.get("alias_of") or "").strip() or None
             bt = BusinessType(
                 code=row["code"].strip(),
                 name_th=row["name_th"].strip(),
@@ -49,6 +52,7 @@ def _load_business_types(path: Path) -> Dict[str, BusinessType]:
                 section_name_th=(row.get("section_name_th") or "").strip(),
                 division_code=division_code,
                 division_name_th=(row.get("division_name_th") or "").strip(),
+                alias_of=alias_of,
             )
             result[bt.code] = bt
     return result
@@ -63,6 +67,7 @@ _BUSINESS_TYPE_FIELDNAMES = [
     "section_name_th",
     "division_code",
     "division_name_th",
+    "alias_of",
 ]
 
 
@@ -83,6 +88,7 @@ def save_business_types(business_types: Dict[str, BusinessType], path: Path) -> 
                     "section_name_th": bt.section_name_th,
                     "division_code": bt.division_code or "",
                     "division_name_th": bt.division_name_th,
+                    "alias_of": bt.alias_of or "",
                 }
             )
 

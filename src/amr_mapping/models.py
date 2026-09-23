@@ -32,7 +32,13 @@ class BusinessType:
     ปล่อยว่าง (None) ได้ถ้ายังไม่ได้ตรวจสอบว่า code นี้ตรงกับ TSIC จริงแค่ไหน (โค้ดที่ scrape
     มาจากหน้า PEA เช่น "34111" ไม่ใช่รูปแบบ TSIC มาตรฐานเสมอไป — ดู notes ของแต่ละแถวใน
     business_types.csv)
-    """
+
+    alias_of (ถ้าทราบ) คือรหัส TSIC อีกรหัสหนึ่งที่ "เรื่องเดียวกัน" กับ code นี้เป๊ะๆ ในแง่ความ
+    หมายทางธุรกิจ แค่คนละเวอร์ชันมาตรฐาน/คนละยุคที่ประกาศใช้ (เช่น 86101 ปัจจุบัน vs 93311
+    รหัสเก่าของ "โรงพยาบาลทั่วไป") — ต่างจาก division_code ตรงที่ division เป็นแค่ "กลุ่ม
+    อุตสาหกรรมใกล้เคียงกัน" (ใช้จับคู่แบบประมาณการ DIVISION_ONLY) ส่วน alias_of คือ "เหมือนกัน
+    ทุกประการ" ใช้ให้ mapping.find_load_profile จับคู่ที่ระดับ EXACT/BUSINESS_ONLY ข้ามไปมาระหว่าง
+    รหัสคู่นี้ได้เลย ไม่ต้องลดชั้นไป DIVISION_ONLY ดู mapping._equivalent_codes"""
 
     code: str
     name_th: str
@@ -42,6 +48,7 @@ class BusinessType:
     section_name_th: str = ""
     division_code: Optional[str] = None
     division_name_th: str = ""
+    alias_of: Optional[str] = None
 
 
 @dataclass(frozen=True)

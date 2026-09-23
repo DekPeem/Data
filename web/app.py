@@ -229,6 +229,10 @@ def api_create_business_type():
     if code in reference.business_types:
         return jsonify({"error": "duplicate", "message": f"มีรหัส {code} อยู่แล้วในระบบ — ถ้าต้องการแก้ Section/Division ใช้ช่องแก้ไขของรหัสเดิมแทน"}), 409
 
+    alias_of = (body.get("alias_of") or "").strip() or None
+    if alias_of and alias_of not in reference.business_types:
+        return jsonify({"error": "invalid_request", "message": f"ไม่พบรหัส {alias_of} ที่จะตั้งเป็น alias เป้าหมาย"}), 400
+
     new_bt = BusinessType(
         code=code,
         name_th=name_th,
@@ -238,6 +242,7 @@ def api_create_business_type():
         section_name_th=(body.get("section_name_th") or "").strip(),
         division_code=(body.get("division_code") or "").strip() or None,
         division_name_th=(body.get("division_name_th") or "").strip(),
+        alias_of=alias_of,
     )
     updated_bts = upsert_business_type(reference.business_types, new_bt)
     save_business_types(updated_bts, DEFAULT_DATA_DIR / "business_types.csv")
@@ -285,6 +290,7 @@ def api_list_business_types_full():
                 "section_name_th": bt.section_name_th,
                 "division_code": bt.division_code,
                 "division_name_th": bt.division_name_th,
+                "alias_of": bt.alias_of,
                 "profiles": profiles_by_business.get(bt.code, []),
             }
             for bt in reference.business_types.values()
