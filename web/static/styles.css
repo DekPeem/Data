@@ -136,7 +136,11 @@ a:hover { color: #184f95; }
 .charts-grid { display: grid; grid-template-columns: repeat(2, minmax(280px, 1fr)); gap: 20px; }
 .chart-card { padding: 24px; display: flex; flex-direction: column; gap: 20px; }
 .chart-title { font-size: 14px; font-weight: 700; }
-.chart-bars { display: flex; align-items: flex-end; gap: 20px; height: 180px; border-bottom: 1px solid #e1e0d9; padding: 0 8px; }
+/* height ต้องเผื่อพอสำหรับ bar สูงสุด (160px ตาม JS ใน renderBarChart) บวกตัวเลขค่า + label
+   P/OP/H ด้านบน/ล่างของมันด้วย — เดิมตั้งไว้แค่ 180px (พอดีกับ bar อย่างเดียว ไม่เผื่อข้อความเลย)
+   ทำให้แท่งที่สูงสุด (ค่ามากสุดในกราฟนั้นเสมอ อย่างน้อย 1 แท่ง) ดันตัวเลขค่าล้นขึ้นไปทับหัวข้อ
+   กราฟด้านบน อ่านไม่ออก */
+.chart-bars { display: flex; align-items: flex-end; gap: 20px; height: 230px; border-bottom: 1px solid #e1e0d9; padding: 0 8px; }
 .bar-col { display: flex; flex-direction: column; align-items: center; gap: 8px; flex: 1; }
 .bar-value { font-size: 13px; font-weight: 600; }
 .bar { width: 24px; border-radius: 4px 4px 0 0; }
