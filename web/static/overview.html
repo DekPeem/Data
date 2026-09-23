@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ภาพรวมลูกค้าทั้งหมด — No AMR</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .warn-box {
+      background: #fff7e6; border: 1px solid rgba(250, 178, 25, 0.4); border-radius: 10px;
+      padding: 14px 18px; font-size: 13px; color: #7a5a00; line-height: 1.6;
+    }
+    .overview-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; }
+    .overview-count { font-size: 13px; color: #8996ab; }
+    .overview-search {
+      height: 40px; min-width: 260px; border-radius: 10px; border: 1px solid rgba(15,23,42,0.14);
+      padding: 0 14px; font-size: 13.5px; font-family: inherit; background: #fff; color: #0f1b2d;
+    }
+    .overview-search:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.12); }
+    .table-card { padding: 0; overflow-x: auto; }
+    table.overview-table { width: 100%; border-collapse: collapse; font-size: 13.5px; white-space: nowrap; }
+    table.overview-table th {
+      position: sticky; top: 0; background: #fff; text-align: left; font-size: 12px; font-weight: 600;
+      color: #8996ab; padding: 12px 16px; border-bottom: 1px solid rgba(15,23,42,0.1);
+    }
+    table.overview-table td { padding: 12px 16px; border-bottom: 1px solid rgba(15,23,42,0.06); color: #0f1b2d; }
+    table.overview-table tbody tr:hover { background: #f7f9fc; }
+    .cell-sub { font-size: 12px; color: #8996ab; margin-top: 2px; }
+    .pill-muted { display: inline-block; font-size: 12px; color: #8996ab; }
+    .pill-yes { display: inline-flex; align-items: center; gap: 4px; font-size: 12.5px; color: #006300; font-weight: 600; }
+    .pill-no { display: inline-block; font-size: 12.5px; color: #a01818; }
+    .pill-unknown { display: inline-block; font-size: 12.5px; color: #8996ab; }
+  </style>
+</head>
+<body>
+  <div class="root">
+
+    <header class="header">
+      <div class="header-brand">
+        <div class="logo-mark">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>
+        </div>
+        <div class="header-titles">
+          <div class="header-title">ภาพรวมลูกค้าทั้งหมด</div>
+          <div class="header-subtitle">รวมทุกบัญชีในทะเบียน — ชื่อ ประเภทธุรกิจ หมวด TSIC รหัสอัตรา และสถานะ Solar ในตารางเดียว</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:16px;align-items:center;">
+        <a href="/pending-amr" style="font-size:13px;color:#2a78d6;text-decoration:none;">📋 รอทราบอัตรา →</a>
+        <a href="/admin" style="font-size:13px;color:#2a78d6;text-decoration:none;">← กลับหน้านำเข้า AMR</a>
+      </div>
+    </header>
+
+    <main class="body-wrap">
+
+      <div class="warn-box">
+        ⚠️ หน้านี้อาจแสดง <b>ชื่อบัญชีจริง</b> ถ้าทะเบียนลูกค้าในเครื่องนี้ (customers_local.csv) มีชื่อจริงบันทึกไว้ —
+        ใช้ดูในเครื่องนี้เท่านั้น ไม่ถูกบันทึกเข้า repo สาธารณะ<br>
+        ℹ️ คอลัมน์ "ก่อตั้งเมื่อไหร่" ยังไม่มีแหล่งข้อมูลนี้ในระบบเลย (ไม่มีตรงไหนเก็บวันจดทะเบียน/ก่อตั้งของบริษัทไว้) จึงแสดงเป็น "ไม่มีข้อมูล" ไปก่อน — ถ้าต้องการให้เพิ่มช่องกรอกเองสำหรับข้อมูลนี้ แจ้งได้เลย
+      </div>
+
+      <div class="overview-toolbar">
+        <input id="search-box" class="overview-search" type="text" placeholder="ค้นหาชื่อ / เลขบัญชี / ประเภทธุรกิจ...">
+        <div id="overview-count" class="overview-count"></div>
+      </div>
+
+      <div class="card table-card">
+        <table class="overview-table">
+          <thead>
+            <tr>
+              <th>ชื่อ</th>
+              <th>ธุรกิจอะไร</th>
+              <th>อยู่หมวดไหน (TSIC)</th>
+              <th>มีอัตราไหม</th>
+              <th>ก่อตั้งเมื่อไหร่</th>
+              <th>ติด Solar รึยัง</th>
+              <th>มี AMR จริงหรือยัง</th>
+            </tr>
+          </thead>
+          <tbody id="overview-tbody"></tbody>
+        </table>
+        <div id="overview-empty" class="empty-state" style="display:none;">ยังไม่มีข้อมูลลูกค้าในทะเบียนเลย</div>
+      </div>
+
+    </main>
+  </div>
+
+  <script src="overview.js"></script>
+</body>
+</html>
