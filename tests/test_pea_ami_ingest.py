@@ -125,3 +125,75 @@ def test_pea_ingest_parse_interval_report_dispatches_to_ami_parser_for_xlsx(tmp_
     readings = parse_interval_report(path)
 
     assert IntervalReading(timestamp="01/09/2025 09.30", period="P", kwh=30.0) in readings
+
+
+# โครงสร้างจริงอีกแบบหนึ่ง (ยืนยันจากไฟล์จริงที่ผู้ใช้ส่งมาอีกรอบ) — ไฟล์ AMI ไม่ได้มีโครงสร้าง
+# เดียวกันเป๊ะทุกไฟล์: หัวรายงานอยู่ Sheet1 (ป้ายไม่มีคำว่า "ไฟฟ้า" ต่อท้าย ต่างจากไฟล์แบบแรก)
+# ตารางข้อมูลราย 15 นาทีอยู่ Sheet2 ต่างหาก (แต่ละ Rate มี 2 คอลัมน์ซ้ำค่ากัน) และปีในคอลัมน์
+# เวลาเป็น ค.ศ. อยู่แล้ว (ไม่ใช่ พ.ศ. เหมือนไฟล์แบบแรก)
+def _write_synthetic_multisheet_ami_workbook(path, account_no="0199000001", company_name="บริษัท หลายชีต จำกัด"):
+    wb = openpyxl.Workbook()
+    ws1 = wb.active
+    ws1.title = "Sheet1"
+    ws1["A2"] = "รายงานข้อมูลกิโลวัตต์แบบช่วงเวลา"
+    ws1["A3"] = "[ระหว่างวันที่ : 01 สิงหาคม 2568 - 31 สิงหาคม 2568]"
+    ws1["A4"] = "บัญชีผู้ใช้ไฟ :"
+    ws1["B4"] = account_no
+    ws1["C4"] = "ชื่อผู้ใช้ไฟ :"
+    ws1["D4"] = company_name
+    ws1["A5"] = "หมายเลขมิเตอร์ :"
+    ws1["B5"] = "1234567"
+    ws1["C5"] = "Tariff :"
+    ws1["D5"] = "TOU"
+    ws1["A6"] = "CT Ratio :"
+    ws1["B6"] = "100:5 A."
+    ws1["C6"] = "VT Ratio :"
+    ws1["D6"] = "115000:115 V."
+
+    ws2 = wb.create_sheet("Sheet2")
+    ws2["B2"] = "RATE A"
+    ws2["C2"] = "RATE A"
+    ws2["D2"] = "RATE B"
+    ws2["E2"] = "RATE B"
+    ws2["F2"] = "RATE C"
+    ws2["G2"] = "RATE C"
+    ws2["A3"] = "01/08/2025 00.15"
+    ws2["D3"] = "3580.000"
+    ws2["E3"] = "3580.000"
+    ws2["A4"] = "01/08/2025 09.30"
+    ws2["B4"] = "40.000"
+    ws2["C4"] = "40.000"
+    ws2["A5"] = "01/08/2025 22.15"
+    ws2["F5"] = "15.000"
+    ws2["G5"] = "15.000"
+    ws2["A6"] = "กิโลวัตต์ต่ำสุด"
+    ws2["B6"] = "20.000"
+
+    ws3 = wb.create_sheet("Sheet3")
+    ws3["A1"] = "***ค่าที่แสดงอาจไม่ตรงกับใบแจ้งค่าไฟฟ้า..."
+    ws3["A3"] = "พิมพ์โดย : ทดสอบ"
+
+    wb.save(path)
+
+
+def test_parse_ami_interval_report_finds_rate_table_on_a_different_sheet_than_header(tmp_path):
+    path = tmp_path / "multisheet.xlsx"
+    _write_synthetic_multisheet_ami_workbook(path)
+
+    readings = parse_ami_interval_report(path)
+
+    # ปีในไฟล์นี้เป็น ค.ศ. อยู่แล้ว (ไม่ใช่ พ.ศ.) ต้องไม่ถูกลบ 543 ซ้ำอีก (จะกลายเป็นปี 1482 ผิด)
+    assert IntervalReading(timestamp="01/08/2025 00.15", period="OP", kwh=3580.0) in readings
+    assert IntervalReading(timestamp="01/08/2025 09.30", period="P", kwh=40.0) in readings
+    assert IntervalReading(timestamp="01/08/2025 22.15", period="H", kwh=15.0) in readings
+    assert len(readings) == 3
+
+
+def test_parse_ami_report_header_finds_labels_when_not_on_first_sheet(tmp_path):
+    path = tmp_path / "multisheet.xlsx"
+    _write_synthetic_multisheet_ami_workbook(path, account_no="0277777777", company_name="บริษัท หลายชีต จำกัด")
+
+    info = parse_ami_report_header(path)
+
+    assert info["บัญชีผู้ใช้ไฟ"] == "0277777777"
+    assert info["ชื่อผู้ใช้ไฟ"] == "บริษัท หลายชีต จำกัด"

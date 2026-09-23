@@ -41,76 +41,106 @@ _KNOWN_LABELS = {"บัญชีผู้ใช้ไฟ", "ชื่อผู�
 _TIMESTAMP_RE = re.compile(r"^(\d{2})/(\d{2})/(\d{4})(\s.*)$")
 
 
+# ปีที่มากกว่านี้ถือว่าเป็น พ.ศ. แน่นอน (ไฟล์ AMR ทั้งหมดเป็นข้อมูลปัจจุบัน ไม่มีทางเป็นปี ค.ศ.
+# เกิน 2100 ไปได้จริงๆ) — ไฟล์ AMI ที่เจอมาไม่ได้ใช้ พ.ศ. เสมอไป (บางไฟล์ใช้ ค.ศ. อยู่แล้วเหมือน
+# ไฟล์ AMRWEB) เลยต้องเช็คก่อนแปลง ไม่ใช่ลบ 543 ทื่อๆ ทุกไฟล์
+_BE_YEAR_THRESHOLD = 2100
+
+
 def _convert_be_to_ce_timestamp(timestamp: str) -> str:
-    """แปลงปี พ.ศ. เป็น ค.ศ. ในสตริง timestamp ดิบ (เช่น "01/09/2568 00.15" ->
-    "01/09/2025 00.15") — ไฟล์ AMI ใช้ปี พ.ศ. ต่างจากไฟล์ AMRWEB ที่ใช้ปี ค.ศ. อยู่แล้ว
-    ถ้า parse ไม่ได้ (รูปแบบไม่ตรง) คืนค่าเดิมโดยไม่แตะต้อง"""
+    """แปลงปี พ.ศ. เป็น ค.ศ. ในสตริง timestamp ดิบ ถ้าเป็น พ.ศ. จริง (เช่น "01/09/2568 00.15"
+    -> "01/09/2025 00.15") — ไฟล์ AMI บางไฟล์ใช้ พ.ศ. บางไฟล์ใช้ ค.ศ. อยู่แล้วไม่แน่นอน จึงต้อง
+    เช็คตัวเลขปีก่อนแปลง (ดู _BE_YEAR_THRESHOLD) ถ้า parse ไม่ได้ หรือเป็น ค.ศ. อยู่แล้ว
+    คืนค่าเดิมโดยไม่แตะต้อง"""
 
     m = _TIMESTAMP_RE.match(timestamp.strip())
     if not m:
         return timestamp
-    day, month, year_be, rest = m.groups()
-    year_ce = int(year_be) - 543
-    return f"{day}/{month}/{year_ce}{rest}"
+    day, month, year, rest = m.groups()
+    year_int = int(year)
+    if year_int <= _BE_YEAR_THRESHOLD:
+        return timestamp
+    return f"{day}/{month}/{year_int - 543}{rest}"
 
 
 def parse_ami_report_header(path: Union[str, Path]) -> dict:
     """อ่านหัวรายงาน (บัญชีผู้ใช้ไฟ/ชื่อผู้ใช้ไฟ/หมายเลขมิเตอร์/Tariff/CT-VT Ratio) จากไฟล์
     AMI .xlsx — คืน dict คีย์แบบเดียวกับ pea_ingest.parse_report_header (ดู _LABEL_ALIASES)
-    เพื่อให้ผู้เรียกใช้ key เดียวกันได้โดยไม่ต้องรู้ว่าไฟล์เป็นรูปแบบไหน สแกนทุกเซลล์แทนการอิง
-    ตำแหน่งแถว/คอลัมน์ตายตัว เผื่อ layout ต่างกันเล็กน้อยระหว่างไฟล์"""
+    เพื่อให้ผู้เรียกใช้ key เดียวกันได้โดยไม่ต้องรู้ว่าไฟล์เป็นรูปแบบไหน สแกนทุกเซลล์ของทุก
+    sheet ในไฟล์ (ไม่ใช่แค่ sheet แรก) แทนการอิงตำแหน่งแถว/คอลัมน์/sheet ตายตัว — พบว่าไฟล์ AMI
+    บางไฟล์แบ่งหัวรายงาน/ตารางข้อมูลราย 15 นาที/สรุปท้ายตาราง ไว้คนละ sheet กัน (Sheet1/2/3)
+    ไม่ได้รวมอยู่ใน sheet เดียวเสมอไปแบบที่เจอไฟล์แรก"""
 
     wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
     try:
-        ws = wb[wb.sheetnames[0]]
         info: dict = {}
-        for row in ws.iter_rows(min_row=1, max_row=30):
-            for i, cell in enumerate(row):
-                value = cell.value
-                if not isinstance(value, str):
-                    continue
-                cleaned = value.strip().rstrip(":").strip()
-                label = _LABEL_ALIASES.get(cleaned, cleaned)
-                if label not in _KNOWN_LABELS or label in info:
-                    continue
-                next_cell = row[i + 1] if i + 1 < len(row) else None
-                next_value = next_cell.value if next_cell is not None else None
-                info[label] = str(next_value).strip() if next_value is not None else ""
+        for ws in wb.worksheets:
+            for row in ws.iter_rows(min_row=1, max_row=30):
+                for i, cell in enumerate(row):
+                    value = cell.value
+                    if not isinstance(value, str):
+                        continue
+                    cleaned = value.strip().rstrip(":").strip()
+                    label = _LABEL_ALIASES.get(cleaned, cleaned)
+                    if label not in _KNOWN_LABELS or label in info:
+                        continue
+                    next_cell = row[i + 1] if i + 1 < len(row) else None
+                    next_value = next_cell.value if next_cell is not None else None
+                    info[label] = str(next_value).strip() if next_value is not None else ""
         return info
     finally:
         wb.close()
+
+
+def _find_rate_columns(ws) -> tuple:
+    """หาแถวหัวตาราง Rate A/B/C ใน sheet ที่ระบุ — คืน (เลขแถว, {period: col_idx}) หรือ
+    (None, {}) ถ้าไม่เจอใน sheet นี้ (ให้ผู้เรียกลอง sheet อื่นต่อ) ถ้า Rate หนึ่งมีมากกว่า 1
+    คอลัมน์ (เจอในบางไฟล์ — คอลัมน์ซ้ำค่าเดียวกัน) ใช้คอลัมน์สุดท้ายที่เจอ ซึ่งยังมีค่าอยู่เสมอ
+
+    นับเลขแถวเองด้วย enumerate (ไม่ใช้ cell.row) เพราะโหมด read_only ของ openpyxl คืน
+    EmptyCell ให้คอลัมน์แรกของแถวถ้าคอลัมน์นั้นไม่เคยมีค่าเลย ซึ่งไม่มี .row attribute"""
+
+    for row_idx, row in enumerate(ws.iter_rows(min_row=1, max_row=40), start=1):
+        cells_upper = [(str(c.value).strip().upper() if c.value is not None else "") for c in row]
+        if sum(1 for c in cells_upper if "RATE" in c) < 2:
+            continue
+        rate_col_idx: dict = {}
+        for i, c in enumerate(cells_upper):
+            for suffix, period in (("A", "P"), ("B", "OP"), ("C", "H")):
+                if c == f"RATE {suffix}":
+                    rate_col_idx[period] = i
+        if len(rate_col_idx) >= 2:
+            return row_idx, rate_col_idx
+    return None, {}
 
 
 def parse_ami_interval_report(path: Union[str, Path]) -> List[IntervalReading]:
     """อ่านตารางข้อมูลราย 15 นาทีจากไฟล์ AMI .xlsx — โครงสร้างข้อมูลเหมือน
     pea_ingest.parse_interval_report ทุกอย่าง (คอลัมน์ Rate A/B/C, 1 ค่าต่อแถวต่อคอลัมน์)
     แค่เป็นคอลัมน์ Excel จริงแทน <td> ของ HTML และปีในคอลัมน์เวลาเป็น พ.ศ. (แปลงเป็น ค.ศ.
-    ก่อนคืนค่า — ดู _convert_be_to_ce_timestamp)"""
+    ก่อนคืนค่า — ดู _convert_be_to_ce_timestamp)
+
+    ค้นหาตาราง Rate A/B/C ในทุก sheet ของไฟล์ (ไม่ใช่แค่ sheet แรก) — พบไฟล์จริงที่แบ่งหัว
+    รายงานไว้ sheet หนึ่ง (Sheet1) แต่ตารางข้อมูลราย 15 นาทีอยู่อีก sheet หนึ่ง (Sheet2)"""
 
     wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
     try:
-        ws = wb[wb.sheetnames[0]]
-
+        target_ws = None
         header_row_idx = None
-        rate_col_idx: dict = {}  # {"P": col_idx, "OP": col_idx, "H": col_idx} (0-indexed)
-        for row in ws.iter_rows(min_row=1, max_row=40):
-            cells_upper = [(str(c.value).strip().upper() if c.value is not None else "") for c in row]
-            if sum(1 for c in cells_upper if "RATE" in c) < 2:
-                continue
-            header_row_idx = row[0].row
-            for i, c in enumerate(cells_upper):
-                for suffix, period in (("A", "P"), ("B", "OP"), ("C", "H")):
-                    if c == f"RATE {suffix}":
-                        rate_col_idx[period] = i
-            break
+        rate_col_idx: dict = {}
+        for ws in wb.worksheets:
+            header_row_idx, rate_col_idx = _find_rate_columns(ws)
+            if header_row_idx is not None:
+                target_ws = ws
+                break
 
-        if header_row_idx is None or len(rate_col_idx) < 2:
+        if target_ws is None:
             raise ValueError(
                 f"ไม่พบตารางรายงานราย 15 นาที (header ต้องมีคอลัมน์ Rate A/B/C) ในไฟล์ {path}"
             )
 
         readings: List[IntervalReading] = []
-        for row in ws.iter_rows(min_row=header_row_idx + 1):
+        for row in target_ws.iter_rows(min_row=header_row_idx + 1):
             timestamp_cell = row[0].value if len(row) else None
             timestamp = str(timestamp_cell).strip() if timestamp_cell is not None else ""
             if not _TIMESTAMP_RE.match(timestamp):
