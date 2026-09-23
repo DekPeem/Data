@@ -58,7 +58,7 @@ from amr_mapping.loader import (
     upsert_business_type,
 )
 from amr_mapping.mapping import UNKNOWN_RATE_CODE, MatchLevel, find_load_curve
-from amr_mapping.models import Customer
+from amr_mapping.models import BusinessType, Customer
 from amr_mapping.wikipedia_lookup import search_wikipedia_company
 
 app = Flask(__name__, static_folder="static", static_url_path="")
@@ -205,6 +205,41 @@ def api_list_business_types():
             for bt in get_reference().business_types.values()
         ]
     )
+
+
+@app.route("/api/business-types", methods=["POST"])
+def api_create_business_type():
+    """เพิ่มประเภทธุรกิจใหม่เอง (self-service) — ให้ผู้ใช้เพิ่มรหัส TSIC ที่ค้นเจอเองได้ทันทีตอน
+    เจอบริษัทที่ยังไม่มีในระบบ ไม่ต้องรอให้แก้ business_types.csv ให้ทุกครั้ง
+
+    code ต้องไม่ซ้ำกับที่มีอยู่แล้ว (ใช้ /api/business-types/<code>/hierarchy ถ้าจะแก้ Section/
+    Division ของรหัสที่มีอยู่แล้วแทน) — เป็นแค่รหัส/ชื่อหมวดธุรกิจสาธารณะ commit เข้า repo ได้
+    ไม่มีชื่อบริษัทเกี่ยวข้องเลย เหมือน /api/business-types/<code>/hierarchy"""
+
+    body = request.get_json(force=True, silent=True) or {}
+    code = (body.get("code") or "").strip()
+    name_th = (body.get("name_th") or "").strip()
+    if not code or not name_th:
+        return jsonify({"error": "invalid_request", "message": "กรุณากรอกรหัสและชื่อประเภทธุรกิจให้ครบ"}), 400
+
+    reference = get_reference()
+    if code in reference.business_types:
+        return jsonify({"error": "duplicate", "message": f"มีรหัส {code} อยู่แล้วในระบบ — ถ้าต้องการแก้ Section/Division ใช้ช่องแก้ไขของรหัสเดิมแทน"}), 409
+
+    new_bt = BusinessType(
+        code=code,
+        name_th=name_th,
+        category=(body.get("category") or "manual").strip(),
+        notes=(body.get("notes") or "").strip(),
+        section_code=(body.get("section_code") or "").strip() or None,
+        section_name_th=(body.get("section_name_th") or "").strip(),
+        division_code=(body.get("division_code") or "").strip() or None,
+        division_name_th=(body.get("division_name_th") or "").strip(),
+    )
+    updated_bts = upsert_business_type(reference.business_types, new_bt)
+    save_business_types(updated_bts, DEFAULT_DATA_DIR / "business_types.csv")
+
+    return jsonify({"code": new_bt.code, "name_th": new_bt.name_th}), 201
 
 
 @app.route("/api/business-types-full")

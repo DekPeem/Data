@@ -513,6 +513,70 @@ def test_business_type_hierarchy_update_unknown_code_404(client, monkeypatch, tm
     assert res.status_code == 404
 
 
+def test_create_business_type_success(client, monkeypatch, tmp_path):
+    import shutil
+
+    from amr_mapping.loader import DEFAULT_DATA_DIR as REAL_DATA_DIR, _load_business_types
+
+    tmp_data_dir = tmp_path / "reference"
+    tmp_data_dir.mkdir()
+    shutil.copy(REAL_DATA_DIR / "business_types.csv", tmp_data_dir / "business_types.csv")
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_data_dir)
+
+    res = client.post(
+        "/api/business-types",
+        json={
+            "code": "99999",
+            "name_th": "ธุรกิจทดสอบ",
+            "section_code": "C",
+            "section_name_th": "การผลิต",
+            "division_code": "10",
+            "division_name_th": "การผลิตอาหาร",
+            "notes": "เพิ่มระหว่างทดสอบ",
+        },
+    )
+    assert res.status_code == 201
+    assert res.get_json() == {"code": "99999", "name_th": "ธุรกิจทดสอบ"}
+
+    updated_bts = _load_business_types(tmp_data_dir / "business_types.csv")
+    assert updated_bts["99999"].name_th == "ธุรกิจทดสอบ"
+    assert updated_bts["99999"].section_code == "C"
+    assert updated_bts["99999"].division_code == "10"
+    # ต้องไม่กระทบประเภทธุรกิจอื่นที่มีอยู่แล้ว
+    assert "34111" in updated_bts
+
+
+def test_create_business_type_missing_fields_returns_400(client, monkeypatch, tmp_path):
+    import shutil
+
+    from amr_mapping.loader import DEFAULT_DATA_DIR as REAL_DATA_DIR
+
+    tmp_data_dir = tmp_path / "reference"
+    tmp_data_dir.mkdir()
+    shutil.copy(REAL_DATA_DIR / "business_types.csv", tmp_data_dir / "business_types.csv")
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_data_dir)
+
+    res = client.post("/api/business-types", json={"code": "99999"})
+    assert res.status_code == 400
+
+    res2 = client.post("/api/business-types", json={"name_th": "ไม่มีรหัส"})
+    assert res2.status_code == 400
+
+
+def test_create_business_type_duplicate_code_returns_409(client, monkeypatch, tmp_path):
+    import shutil
+
+    from amr_mapping.loader import DEFAULT_DATA_DIR as REAL_DATA_DIR
+
+    tmp_data_dir = tmp_path / "reference"
+    tmp_data_dir.mkdir()
+    shutil.copy(REAL_DATA_DIR / "business_types.csv", tmp_data_dir / "business_types.csv")
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_data_dir)
+
+    res = client.post("/api/business-types", json={"code": "34111", "name_th": "ชื่อใหม่"})
+    assert res.status_code == 409
+
+
 def test_start_import_missing_credentials(client, monkeypatch):
     monkeypatch.delenv("PEA_AMR_USERNAME", raising=False)
     monkeypatch.delenv("PEA_AMR_PASSWORD", raising=False)

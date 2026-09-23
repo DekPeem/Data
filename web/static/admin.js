@@ -523,6 +523,91 @@ function renderBusinessTypesSections(allTypes) {
 
 businessTypesRefreshBtn.addEventListener("click", loadBusinessTypesTable);
 
+// ── เพิ่มประเภทธุรกิจใหม่เอง (self-service) — แทนที่ต้องขอให้แก้ business_types.csv ให้ทุกครั้ง
+//    ที่เจอบริษัทที่ยังไม่มีรหัส TSIC ในระบบ ──
+
+const addBtToggleBtn = document.getElementById("add-business-type-toggle-btn");
+const addBtPanel = document.getElementById("add-business-type-panel");
+const addBtCodeInput = document.getElementById("new-bt-code");
+const addBtNameInput = document.getElementById("new-bt-name");
+const addBtSectionSelect = document.getElementById("new-bt-section");
+const addBtDivisionCodeInput = document.getElementById("new-bt-division-code");
+const addBtDivisionNameInput = document.getElementById("new-bt-division-name");
+const addBtNotesInput = document.getElementById("new-bt-notes");
+const addBtSubmitBtn = document.getElementById("add-business-type-submit-btn");
+const addBtCancelBtn = document.getElementById("add-business-type-cancel-btn");
+const addBtHint = document.getElementById("add-business-type-hint");
+
+addBtSectionSelect.innerHTML =
+  `<option value="">-- ไม่ระบุ --</option>` +
+  TSIC_SECTIONS.map((s) => `<option value="${s.code}">${s.code} · ${s.name_th}</option>`).join("");
+
+function resetAddBusinessTypeForm() {
+  addBtCodeInput.value = "";
+  addBtNameInput.value = "";
+  addBtSectionSelect.value = "";
+  addBtDivisionCodeInput.value = "";
+  addBtDivisionNameInput.value = "";
+  addBtNotesInput.value = "";
+  addBtHint.textContent = "";
+}
+
+addBtToggleBtn.addEventListener("click", () => {
+  const showing = addBtPanel.style.display === "flex";
+  addBtPanel.style.display = showing ? "none" : "flex";
+  if (!showing) addBtCodeInput.focus();
+});
+
+addBtCancelBtn.addEventListener("click", () => {
+  addBtPanel.style.display = "none";
+  resetAddBusinessTypeForm();
+});
+
+addBtSubmitBtn.addEventListener("click", async () => {
+  addBtHint.textContent = "";
+  const code = addBtCodeInput.value.trim();
+  const name_th = addBtNameInput.value.trim();
+  if (!code || !name_th) {
+    addBtHint.textContent = "กรุณากรอกรหัสและชื่อประเภทธุรกิจ";
+    return;
+  }
+
+  const sectionCode = addBtSectionSelect.value;
+  const section = TSIC_SECTIONS.find((s) => s.code === sectionCode);
+
+  addBtSubmitBtn.disabled = true;
+  try {
+    const res = await fetch("/api/business-types", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        code,
+        name_th,
+        section_code: sectionCode || "",
+        section_name_th: section ? section.name_th : "",
+        division_code: addBtDivisionCodeInput.value.trim(),
+        division_name_th: addBtDivisionNameInput.value.trim(),
+        notes: addBtNotesInput.value.trim(),
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      addBtHint.textContent = data.message || "บันทึกไม่สำเร็จ";
+      addBtSubmitBtn.disabled = false;
+      return;
+    }
+    addBtPanel.style.display = "none";
+    resetAddBusinessTypeForm();
+    await loadBusinessTypes(); // รีเฟรช dropdown อื่นๆ ในหน้านี้ที่ cache รายชื่อไว้ (โหมดนำเข้า)
+    loadBusinessTypesTable();
+  } catch (err) {
+    addBtHint.textContent = "เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ";
+    console.error(err);
+  } finally {
+    addBtSubmitBtn.disabled = false;
+  }
+});
+
 // ลบโปรไฟล์+เส้นโค้งอ้างอิงของคู่ประเภทธุรกิจ+อัตราหนึ่งคู่ทิ้ง — ใช้ตอนนำเข้าผิดบัญชี/ผิดประเภท
 // ธุรกิจไปแล้ว (เช่นเลือกประเภทธุรกิจผิดตอน resolve รายการรอทราบอัตรา) ไฟล์ AMR ดิบเดิมไม่ได้ถูก
 // ลบไปด้วย ยังนำเข้าใหม่ให้ถูกต้องได้ทีหลัง

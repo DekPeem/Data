@@ -312,8 +312,47 @@
               <a target="_blank" rel="noopener" href="/manual#business-types-grouping">อ่านรายละเอียดในคู่มือ →</a>
             </div>
           </div>
-          <button type="button" id="business-types-refresh-btn" class="day-type-btn">🔄 รีเฟรช</button>
+          <div style="display:flex;gap:8px;">
+            <button type="button" id="add-business-type-toggle-btn" class="day-type-btn">➕ เพิ่มประเภทธุรกิจใหม่</button>
+            <button type="button" id="business-types-refresh-btn" class="day-type-btn">🔄 รีเฟรช</button>
+          </div>
         </div>
+
+        <div id="add-business-type-panel" class="warn-box" style="display:none;flex-direction:column;gap:12px;">
+          <div style="font-weight:700;">เพิ่มประเภทธุรกิจใหม่ (รหัส TSIC ที่ยังไม่มีในระบบ)</div>
+          <div class="form-grid">
+            <div class="form-field">
+              <label for="new-bt-code">รหัส (TSIC 5 หลัก หรือรหัสภายใน กฟภ.)</label>
+              <input id="new-bt-code" type="text" placeholder="เช่น 10773">
+            </div>
+            <div class="form-field">
+              <label for="new-bt-name">ชื่อประเภทธุรกิจ (ภาษาไทย)</label>
+              <input id="new-bt-name" type="text" placeholder="เช่น การผลิตซีอิ๊ว และเครื่องปรุงรส">
+            </div>
+            <div class="form-field">
+              <label for="new-bt-section">Section (TSIC) — ไม่บังคับ</label>
+              <select id="new-bt-section"></select>
+            </div>
+            <div class="form-field">
+              <label for="new-bt-division-code">Division (2 หลัก) — ไม่บังคับ</label>
+              <input id="new-bt-division-code" type="text" placeholder="เช่น 10" maxlength="2">
+            </div>
+            <div class="form-field" style="grid-column: 1 / -1;">
+              <label for="new-bt-division-name">ชื่อ Division (ภาษาไทย) — ไม่บังคับ</label>
+              <input id="new-bt-division-name" type="text" placeholder="เช่น การผลิตอาหาร">
+            </div>
+            <div class="form-field" style="grid-column: 1 / -1;">
+              <label for="new-bt-notes">หมายเหตุ (ที่มา/แหล่งอ้างอิง) — ไม่บังคับ</label>
+              <input id="new-bt-notes" type="text" placeholder="เช่น ยืนยันจากผลค้นหาสาธารณะ">
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <button type="button" id="add-business-type-submit-btn" class="search-button">บันทึก</button>
+            <button type="button" id="add-business-type-cancel-btn" class="day-type-btn">ยกเลิก</button>
+            <div id="add-business-type-hint" class="search-hint" style="min-height:auto;"></div>
+          </div>
+        </div>
+
         <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#55647a;cursor:pointer;">
           <input type="checkbox" id="hide-no-curve-checkbox" checked>
           แสดงเฉพาะประเภทธุรกิจที่มีกราฟจาก AMR จริงแล้ว (ซ่อนแถว placeholder/ยังไม่มีข้อมูลรายชั่วโมง)
