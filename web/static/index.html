@@ -41,6 +41,40 @@
       font-size: 12.5px; font-weight: 600; font-family: inherit; cursor: pointer; white-space: nowrap;
     }
     .lookup-pick-btn:hover { background: #184f95; }
+
+    /* ค้นหา Section (TSIC) ก่อน แล้วค่อยค้นหาประเภทธุรกิจย่อยเฉพาะในกลุ่มนั้น — เหมือนหน้า
+       Admin/รอทราบอัตรา (section-combobox + biz-type-combobox ใช้ CSS ร่วมกัน ต่างแค่ wrapper
+       class) แทน native <select> เดิม เพราะ dropdown ของ native select เปิดขึ้นด้านบนเองเวลา
+       พื้นที่ด้านล่างไม่พอ (พฤติกรรมเบราว์เซอร์ บังคับทิศทางไม่ได้เลย) กล่องนี้ควบคุมทิศทางเองได้
+       (เปิดลงด้านล่างเสมอ + เลื่อนดูในกรอบสูงจำกัดแทนการดันเปิดขึ้นบน) */
+    .section-combobox, .biz-type-combobox { position: relative; }
+    .biz-type-search-input {
+      width: 100%; box-sizing: border-box; height: 44px; padding: 0 14px; border: 1px solid rgba(15,23,42,0.14);
+      border-radius: 10px; font-size: 14px; font-family: inherit; background: #fff; color: #0f1b2d;
+    }
+    .biz-type-search-input:disabled { background: #f0f2f6; color: #8996ab; }
+    .biz-type-search-input:focus {
+      outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
+    }
+    .biz-type-dropdown {
+      display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+      background: #fff; border: 1px solid #dbe1ea; border-radius: 10px;
+      box-shadow: 0 10px 24px rgba(15,23,42,0.1); max-height: 260px; overflow-y: auto;
+      z-index: 30; padding: 4px;
+    }
+    .section-combobox.open .biz-type-dropdown, .biz-type-combobox.open .biz-type-dropdown { display: block; }
+    .biz-type-dropdown-item {
+      display: block; width: 100%; text-align: left; border: none; background: none;
+      cursor: pointer; font-family: inherit; font-size: 12.5px; font-weight: 600;
+      color: #184f95; padding: 7px 10px; border-radius: 6px;
+    }
+    .biz-type-dropdown-item:hover { background: #eef3fa; }
+    .biz-type-dropdown-empty { padding: 8px 10px; font-size: 12.5px; color: #8996ab; }
+    .biz-type-clear-btn {
+      align-self: flex-start; font-size: 12px; color: #8996ab; background: none; border: none;
+      font-family: inherit; cursor: pointer; padding: 0; text-decoration: underline;
+    }
+    .biz-type-clear-btn:hover { color: #d03b3b; }
   </style>
 </head>
 <body>
@@ -92,8 +126,17 @@
           </div>
 
           <div class="form-field">
-            <label for="f-business-type">ประเภทธุรกิจ</label>
-            <select id="f-business-type"></select>
+            <label>ประเภทธุรกิจ</label>
+            <input type="hidden" id="f-business-type">
+            <div id="f-business-type-section" class="section-combobox">
+              <input type="text" class="biz-type-search-input" placeholder="🔍 เลือก Section (TSIC) ก่อน..." autocomplete="off">
+              <div class="biz-type-dropdown"></div>
+            </div>
+            <div id="f-business-type-biz" class="biz-type-combobox">
+              <input type="text" class="biz-type-search-input" placeholder="เลือก Section ก่อน..." autocomplete="off" disabled>
+              <div class="biz-type-dropdown"></div>
+            </div>
+            <button type="button" id="f-business-type-clear" class="biz-type-clear-btn" style="display:none;">✕ ล้างประเภทธุรกิจ (ไม่ระบุ — จับคู่จากอัตราอย่างเดียว)</button>
             <div class="hint">แสดงเฉพาะประเภทที่มีโปรไฟล์อ้างอิงจริงรองรับแล้วเท่านั้น</div>
           </div>
 

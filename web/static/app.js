@@ -124,6 +124,11 @@ searchInput.addEventListener("keydown", (e) => {
 // คือยังไม่มีข้อมูลของคู่นั้นให้จับแบบตรงเป๊ะได้ตั้งแต่แรก
 
 const nameInput = document.getElementById("f-name");
+// ค่าจริงเก็บใน hidden input ตัวนี้เหมือน native <select> เดิมทุกจุด (.value อ่าน/เขียนได้แบบ
+// เดิม) — ส่วน UI ที่มองเห็น/คลิกได้คือ section-combobox + biz-type-combobox ด้านล่าง (ดู
+// setupBusinessTypeCombobox) แยกออกจาก native <select> เพราะ dropdown ของ native select เปิด
+// ขึ้นด้านบนเองเวลาพื้นที่ด้านล่างจอไม่พอ (ผู้ใช้แจ้งว่าเปิดขึ้นบนแล้วเห็นตัวเลือกไม่ครบ) ซึ่งเป็น
+// พฤติกรรมเบราว์เซอร์ล้วนๆ บังคับทิศทางไม่ได้เลยถ้ายังใช้ native select อยู่
 const businessTypeSelect = document.getElementById("f-business-type");
 const rateCodeSelect = document.getElementById("f-rate-code");
 const kvaInput = document.getElementById("f-kva");
@@ -134,18 +139,22 @@ const adhocFormHint = document.getElementById("adhoc-form-hint");
 
 let PROFILE_KEYS = []; // [{business_type_code, rate_code, sample_size}, ...]
 let BUSINESS_TYPE_NAMES = {}; // code -> name_th
+let BUSINESS_TYPE_GROUPS = new Map(); // section_code (หรือ "UNVERIFIED") -> [{code, bt}, ...]
 
 function escapeHtml(s) {
   return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+function sectionGroupLabel(key, items) {
+  if (key === "UNVERIFIED") return "ยังไม่ตรวจสอบ TSIC";
+  const name = items[0] && items[0].bt ? items[0].bt.section_name_th : "";
+  return `${key} · ${name}`;
+}
+
 // ใช้ /api/business-types-full (มี section_code/section_name_th) แทน /api/business-types แบบ
-// เดิม เพื่อจัดกลุ่มตัวเลือกด้วย <optgroup> ตาม TSIC Section (A, B, C, ...) — รายการยาวขึ้นเรื่อยๆ
-// ตามจำนวนประเภทธุรกิจที่มีโปรไฟล์จริงในระบบ ถ้าโชว์เป็นลิสต์แบนยาวๆ ไม่จัดกลุ่มจะเลื่อนหายาก
-// (ผู้ใช้แจ้งว่าอ่านยาก) — ใช้ <optgroup> ของ <select> เองแทนการเขียน custom dropdown widget
-// ใหม่ทั้งหมด (แบบที่ใช้ในหน้า Admin/รอทราบอัตรา) เพราะเป็นแค่ตัวเลือกครั้งเดียวไม่ได้ค้นหาบ่อย
-// เหมือนหน้านั้น ยังคง businessTypeSelect เป็น native <select> เหมือนเดิมทุกจุด (โค้ดอื่นที่อ่าน/
-// เขียน .value ที่มีอยู่แล้วไม่ต้องแก้อะไรเพิ่ม)
+// เดิม เพื่อจัดกลุ่มตัวเลือกตาม TSIC Section (A, B, C, ...) — รายการยาวขึ้นเรื่อยๆ ตามจำนวน
+// ประเภทธุรกิจที่มีโปรไฟล์จริงในระบบ กรองเฉพาะรหัสที่มีข้อมูลจริงรองรับ (businessCodesWithData)
+// เหมือนเดิมทุกประการ แค่เปลี่ยนวิธีแสดงผลจาก native <select> เป็น 2-step combobox
 async function loadBusinessTypesAndKeys() {
   try {
     const [typesRes, keysRes] = await Promise.all([fetch("/api/business-types-full"), fetch("/api/load-profile-keys")]);
@@ -163,31 +172,137 @@ async function loadBusinessTypesAndKeys() {
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push({ code, bt });
     }
-    const sortedKeys = [...groups.keys()].sort((a, b) => {
-      if (a === "UNVERIFIED") return 1;
-      if (b === "UNVERIFIED") return -1;
-      return a.localeCompare(b);
-    });
+    for (const items of groups.values()) {
+      items.sort((a, b) => (a.bt ? a.bt.name_th : a.code).localeCompare(b.bt ? b.bt.name_th : b.code, "th"));
+    }
+    BUSINESS_TYPE_GROUPS = groups;
 
-    const optgroupsHtml = sortedKeys
-      .map((key) => {
-        const items = groups
-          .get(key)
-          .sort((a, b) => (a.bt ? a.bt.name_th : a.code).localeCompare(b.bt ? b.bt.name_th : b.code, "th"));
-        const label = key === "UNVERIFIED" ? "ยังไม่ตรวจสอบ TSIC" : `${key} · ${items[0].bt ? items[0].bt.section_name_th : ""}`;
-        const optionsHtml = items
-          .map(({ code, bt }) => `<option value="${escapeHtml(code)}">${escapeHtml(bt ? bt.name_th : code)} · ${escapeHtml(code)}</option>`)
-          .join("");
-        return `<optgroup label="${escapeHtml(label)}">${optionsHtml}</optgroup>`;
-      })
-      .join("");
-
-    businessTypeSelect.innerHTML = `<option value="">-- ไม่ระบุ (จับคู่จากอัตราอย่างเดียว) --</option>` + optgroupsHtml;
-
+    setupBusinessTypeCombobox();
     updateRateCodeOptions();
   } catch (err) {
     console.warn("โหลดประเภทธุรกิจ/รหัสอัตราที่มีข้อมูลจริงไม่สำเร็จ", err);
   }
+}
+
+// ── Section-first 2-ขั้น combobox สำหรับเลือกประเภทธุรกิจ (เหมือนหน้า Admin/รอทราบอัตรา) ──
+
+function filterComboboxList(input, wrap) {
+  const query = input.value.trim().toLowerCase();
+  const items = wrap.querySelectorAll(".biz-type-dropdown-item");
+  let anyVisible = false;
+  items.forEach((item) => {
+    const match = !query || item.textContent.toLowerCase().includes(query);
+    item.style.display = match ? "" : "none";
+    if (match) anyVisible = true;
+  });
+  const emptyMsg = wrap.querySelector(".biz-type-dropdown-empty");
+  if (emptyMsg) emptyMsg.style.display = anyVisible ? "none" : "block";
+}
+
+// ตั้งค่าประเภทธุรกิจที่เลือก (ทั้ง hidden input ที่โค้ดส่วนอื่นอ่าน .value และข้อความที่แสดงใน
+// กล่องค้นหาทั้ง 2 ขั้น) — dispatchChange=true เฉพาะตอนผู้ใช้คลิกเลือกเองในกล่อง (จำลอง
+// พฤติกรรม native <select> เดิมที่ยิง "change" เมื่อผู้ใช้เลือกเอง แต่ไม่ยิงตอนโค้ดตั้งค่าให้เอง
+// ผ่าน .value = ... ตรงๆ เช่น applyBusinessTypeToForm ซึ่งจัดการเรียก updateRateCodeOptions/
+// runForecast เองอยู่แล้ว ยิงซ้ำจะเบิ้ล)
+function setBusinessType(code, { dispatchChange = false } = {}) {
+  businessTypeSelect.value = code || "";
+  const sectionInput = document.querySelector("#f-business-type-section .biz-type-search-input");
+  const bizInput = document.querySelector("#f-business-type-biz .biz-type-search-input");
+  const clearBtn = document.getElementById("f-business-type-clear");
+
+  const bt = code ? [...BUSINESS_TYPE_GROUPS.values()].flat().find((t) => t.code === code) : null;
+  if (bt) {
+    const key = bt.bt && bt.bt.section_code ? bt.bt.section_code : "UNVERIFIED";
+    sectionInput.value = sectionGroupLabel(key, [bt]);
+    bizInput.disabled = false;
+    bizInput.value = `${bt.bt ? bt.bt.name_th : bt.code} · ${bt.code}`;
+    clearBtn.style.display = "";
+  } else {
+    sectionInput.value = "";
+    bizInput.value = "";
+    bizInput.disabled = true;
+    bizInput.placeholder = "เลือก Section ก่อน...";
+    clearBtn.style.display = "none";
+  }
+
+  if (dispatchChange) businessTypeSelect.dispatchEvent(new Event("change"));
+}
+
+let businessTypeComboboxReady = false;
+
+function setupBusinessTypeCombobox() {
+  const sectionWrap = document.getElementById("f-business-type-section");
+  const sectionInput = sectionWrap.querySelector(".biz-type-search-input");
+  const sectionDropdown = sectionWrap.querySelector(".biz-type-dropdown");
+  const bizWrap = document.getElementById("f-business-type-biz");
+  const bizInput = bizWrap.querySelector(".biz-type-search-input");
+  const bizDropdown = bizWrap.querySelector(".biz-type-dropdown");
+  const clearBtn = document.getElementById("f-business-type-clear");
+
+  const sortedKeys = [...BUSINESS_TYPE_GROUPS.keys()].sort((a, b) => {
+    if (a === "UNVERIFIED") return 1;
+    if (b === "UNVERIFIED") return -1;
+    return a.localeCompare(b);
+  });
+
+  sectionDropdown.innerHTML =
+    sortedKeys
+      .map((key) => {
+        const items = BUSINESS_TYPE_GROUPS.get(key);
+        return `<button type="button" class="biz-type-dropdown-item" data-section="${escapeHtml(key)}">${escapeHtml(sectionGroupLabel(key, items))} (${items.length})</button>`;
+      })
+      .join("") + `<div class="biz-type-dropdown-empty" style="display:none;">ไม่พบ Section ที่ตรงกับคำค้นหา</div>`;
+
+  sectionDropdown.querySelectorAll(".biz-type-dropdown-item").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation(); // กัน biz-type-combobox ที่เพิ่งเปิดต่อโดนปิดทันทีจาก click-outside ด้านล่าง
+      const key = btn.dataset.section;
+      const items = BUSINESS_TYPE_GROUPS.get(key) || [];
+      sectionInput.value = sectionGroupLabel(key, items);
+      sectionWrap.classList.remove("open");
+
+      // เปลี่ยน Section แล้วล้างประเภทธุรกิจที่เคยเลือกไว้ (อาจไม่อยู่กลุ่มใหม่แล้ว) — ล้างแค่
+      // hidden value ตรงๆ ไม่เรียก setBusinessType("") เพราะฟังก์ชันนั้นจะรีเซ็ต sectionInput.value
+      // ที่เพิ่งตั้งไว้ข้างบนทิ้งไปด้วย (กรณี "ไม่มีอะไรเลือกเลย" ต่างจากกรณีนี้ที่เลือก Section
+      // ไว้แล้ว แค่ยังไม่เลือกประเภทธุรกิจย่อย)
+      businessTypeSelect.value = "";
+      clearBtn.style.display = "none";
+      bizInput.disabled = false;
+      bizInput.value = "";
+      bizInput.placeholder = `🔍 ค้นหาประเภทธุรกิจ (${items.length} รายการ)...`;
+      bizDropdown.innerHTML =
+        items.map(({ code, bt }) => `<button type="button" class="biz-type-dropdown-item" data-code="${escapeHtml(code)}">${escapeHtml(bt ? bt.name_th : code)} · ${escapeHtml(code)}</button>`).join("") +
+        `<div class="biz-type-dropdown-empty" style="display:none;">ไม่พบประเภทธุรกิจที่ตรงกับคำค้นหา</div>`;
+      bizDropdown.querySelectorAll(".biz-type-dropdown-item").forEach((itemBtn) => {
+        itemBtn.addEventListener("click", () => {
+          setBusinessType(itemBtn.dataset.code, { dispatchChange: true });
+          bizWrap.classList.remove("open");
+        });
+      });
+      bizWrap.classList.add("open");
+      bizInput.focus();
+    });
+  });
+
+  clearBtn.addEventListener("click", () => {
+    setBusinessType("", { dispatchChange: true });
+  });
+
+  if (businessTypeComboboxReady) return; // event listener ต่อไปนี้ผูกครั้งเดียวพอ ไม่งั้นซ้ำซ้อนทุกครั้งที่โหลดข้อมูลใหม่
+  businessTypeComboboxReady = true;
+
+  sectionInput.addEventListener("focus", () => sectionWrap.classList.add("open"));
+  sectionInput.addEventListener("input", () => filterComboboxList(sectionInput, sectionWrap));
+  bizInput.addEventListener("focus", () => {
+    if (!bizInput.disabled) bizWrap.classList.add("open");
+  });
+  bizInput.addEventListener("input", () => filterComboboxList(bizInput, bizWrap));
+
+  document.addEventListener("click", (e) => {
+    document.querySelectorAll(".section-combobox.open, .biz-type-combobox.open").forEach((box) => {
+      if (!box.contains(e.target)) box.classList.remove("open");
+    });
+  });
 }
 
 function updateRateCodeOptions() {
@@ -235,7 +350,7 @@ const lookupStatus = document.getElementById("business-type-lookup-status");
 // และ buildKeywordGuessMessage (เดาจากคำสำคัญใน Wikipedia) เรียกใช้ร่วมกันได้ คืนค่า true ถ้า
 // พยากรณ์ให้อัตโนมัติจริง (มีรหัสอัตรา default ให้ใช้)
 function applyBusinessTypeToForm(businessTypeCode) {
-  businessTypeSelect.value = businessTypeCode;
+  setBusinessType(businessTypeCode);
   updateRateCodeOptions();
 
   const autoForecasted = Boolean(rateCodeSelect.value);
