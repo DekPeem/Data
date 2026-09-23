@@ -286,17 +286,16 @@ sectionFilterBar.addEventListener("click", (e) => {
   applyFilter();
 });
 
-async function saveEdit(accountNo, row) {
+// ไม่ถามรหัสผ่านล่วงหน้าอีกต่อไป — ลองบันทึกเลยด้วยรหัสผ่านที่แคชไว้ (ถ้ามี) หรือค่าว่าง ถ้า
+// server ไม่ได้ตั้ง ADMIN_EDIT_PASSWORD ไว้เลยจะบันทึกผ่านทันทีไม่ต้องถามอะไร (ค่าเริ่มต้น) —
+// ถามรหัสผ่านก็ต่อเมื่อ server ตอบกลับมาว่ารหัสผ่านไม่ถูกต้อง/ไม่ได้ใส่มา (403) เท่านั้น
+async function saveEdit(accountNo, row, passwordOverride) {
   const hintEl = row.querySelector('[data-role="edit-hint"]');
   const setHint = (msg) => {
     if (hintEl) hintEl.textContent = msg || "";
   };
 
-  let password = sessionStorage.getItem(SESSION_PASSWORD_KEY);
-  if (!password) {
-    password = window.prompt("ใส่รหัสผ่านเพื่อยืนยันการแก้ไข (ตั้งค่าไว้ที่เครื่อง server ผ่าน ADMIN_EDIT_PASSWORD)") || "";
-    if (!password) return;
-  }
+  const password = passwordOverride !== undefined ? passwordOverride : sessionStorage.getItem(SESSION_PASSWORD_KEY) || "";
 
   const name = row.querySelector('input[data-field="name"]').value.trim();
   const businessTypeCode = row.querySelector('input[data-field="business_type_code"]').value.trim();
@@ -325,8 +324,13 @@ async function saveEdit(accountNo, row) {
 
     if (res.status === 403) {
       sessionStorage.removeItem(SESSION_PASSWORD_KEY);
-      setHint(data.message || "รหัสผ่านไม่ถูกต้อง");
+      const retryPassword = window.prompt(data.message ? `${data.message} — ใส่รหัสผ่านที่ถูกต้อง` : "ใส่รหัสผ่านเพื่อยืนยันการแก้ไข") || "";
       saveBtn.disabled = false;
+      if (!retryPassword) {
+        setHint(data.message || "รหัสผ่านไม่ถูกต้อง");
+        return;
+      }
+      await saveEdit(accountNo, row, retryPassword);
       return;
     }
     if (res.status === 503) {
@@ -340,7 +344,7 @@ async function saveEdit(accountNo, row) {
       return;
     }
 
-    sessionStorage.setItem(SESSION_PASSWORD_KEY, password);
+    if (password) sessionStorage.setItem(SESSION_PASSWORD_KEY, password);
 
     const idx = customers.findIndex((c) => c.account_no === accountNo);
     const updated = { ...(idx >= 0 ? customers[idx] : {}), ...data };

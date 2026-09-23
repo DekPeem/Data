@@ -335,32 +335,26 @@ def api_update_overview_entry():
     load_reference_data ใน loader.py) จึงมีผลกับทั้งระบบทันที (หน้าค้นหา/พยากรณ์ที่อ่านทะเบียน
     นี้จะเห็นค่าใหม่โดยไม่ต้อง restart เซิร์ฟเวอร์)
 
-    ต้องตั้งค่า environment variable ADMIN_EDIT_PASSWORD ไว้ก่อนถึงจะแก้ไขผ่าน endpoint นี้ได้
-    เลย (ดู .env.example) — ถ้ายังไม่ตั้งไว้ ปิดการแก้ไขทั้งหมด (ไม่มีรหัสผ่าน default เพราะ
-    โค้ดส่วนนี้อยู่ใน public repo ตั้ง default ไว้จะไม่ปลอดภัยเลย) เทียบรหัสผ่านด้วย
-    hmac.compare_digest กัน timing attack"""
+    ถ้าตั้งค่า environment variable ADMIN_EDIT_PASSWORD ไว้ (ดู .env.example) จะต้องกรอกรหัสผ่าน
+    ให้ตรงถึงจะแก้ไขได้ (เทียบด้วย hmac.compare_digest กัน timing attack) — แต่ถ้า "ไม่ได้ตั้งค่า
+    นี้เลย" (ค่าเริ่มต้น) จะแก้ไขได้อิสระโดยไม่ต้องใส่รหัสผ่าน (ยังตั้งค่าเปิดใช้งานทีหลังได้เสมอ
+    เมื่อพร้อม) เพราะเครื่องมือนี้ใช้ในเครื่องตัวเอง (127.0.0.1) คนเดียวเป็นหลัก ไม่ได้เปิดออก
+    เครือข่ายสาธารณะ — ความสะดวกสำคัญกว่าความปลอดภัยเข้มงวดสำหรับ use case นี้"""
 
     # .strip() กันปัญหาที่เจอจริง: Windows cmd.exe เก็บช่องว่างท้ายค่าไว้ตรงๆ ถ้าพิมพ์
     # `set ADMIN_EDIT_PASSWORD=123456 ` (มีเว้นวรรคเกินก่อน Enter) — ตัวแปรจะเป็น "123456 " ทำให้
     # เทียบกับรหัสผ่านที่พิมพ์ในกล่อง prompt ("123456" ไม่มีเว้นวรรค) ไม่ตรงกันทั้งที่ผู้ใช้มองว่า
     # เป็นรหัสเดียวกัน ไม่มีใครตั้งใจใช้ช่องว่างนำ/ตามหลังเป็นส่วนหนึ่งของรหัสผ่านจริงๆ อยู่แล้ว
     configured_password = (os.environ.get("ADMIN_EDIT_PASSWORD") or "").strip()
-    if not configured_password:
-        return jsonify(
-            {
-                "error": "edit_disabled",
-                "message": "ยังไม่ได้ตั้งรหัสผ่านสำหรับแก้ไขข้อมูลในเครื่องนี้ — ตั้งค่า environment "
-                "variable ADMIN_EDIT_PASSWORD ก่อน (ดูตัวอย่างใน .env.example) ถึงจะแก้ไขได้",
-            }
-        ), 503
 
     body = request.get_json(silent=True) or {}
-    password = (body.get("password") or "").strip()
-    # hmac.compare_digest แบบ str ต้องเป็น ASCII ล้วนทั้งคู่เท่านั้น (raise TypeError ถ้ามีอักขระ
-    # นอก ASCII แม้แต่ตัวเดียวในฝั่งไหนก็ตาม) — เข้ารหัสเป็น UTF-8 bytes ก่อนเทียบเสมอ กันพังกรณี
-    # ตั้งรหัสผ่าน/พิมพ์รหัสผ่านเป็นภาษาไทยหรือมีอักขระพิเศษปน
-    if not hmac.compare_digest(password.encode("utf-8"), configured_password.encode("utf-8")):
-        return jsonify({"error": "wrong_password", "message": "รหัสผ่านไม่ถูกต้อง"}), 403
+    if configured_password:
+        password = (body.get("password") or "").strip()
+        # hmac.compare_digest แบบ str ต้องเป็น ASCII ล้วนทั้งคู่เท่านั้น (raise TypeError ถ้ามี
+        # อักขระนอก ASCII แม้แต่ตัวเดียวในฝั่งไหนก็ตาม) — เข้ารหัสเป็น UTF-8 bytes ก่อนเทียบเสมอ
+        # กันพังกรณีตั้งรหัสผ่าน/พิมพ์รหัสผ่านเป็นภาษาไทยหรือมีอักขระพิเศษปน
+        if not hmac.compare_digest(password.encode("utf-8"), configured_password.encode("utf-8")):
+            return jsonify({"error": "wrong_password", "message": "รหัสผ่านไม่ถูกต้อง"}), 403
 
     account_no = (body.get("account_no") or "").strip()
     if not account_no:
