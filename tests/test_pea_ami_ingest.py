@@ -197,3 +197,77 @@ def test_parse_ami_report_header_finds_labels_when_not_on_first_sheet(tmp_path):
 
     assert info["บัญชีผู้ใช้ไฟ"] == "0277777777"
     assert info["ชื่อผู้ใช้ไฟ"] == "บริษัท หลายชีต จำกัด"
+
+
+# ── "Custom kW Report" — ไม่มีคอลัมน์ Rate A/B/C เลย (ยืนยันจากไฟล์จริงที่ผู้ใช้ส่งมา) ──
+
+
+def _write_synthetic_custom_kw_report(path, account_no="0299999999", meter_no="1112223"):
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Report"
+    ws["B3"] = "Provincial Electricity Authority Advanced Metering Infrastructure (AMI) "
+    ws["B6"] = "Custom kW Report"
+    ws["B7"] = "Between 01 July 2025 - 31 July 2025"
+    ws["B9"] = "Contact Account : "
+    ws["C9"] = account_no
+    ws["B10"] = "Meter No. : "
+    ws["C10"] = meter_no
+
+    ws["A28"] = "Time"
+    ws["B28"] = "kW"
+    # วันอังคารที่ 01/07/2025 09:30 -> วันทำการ ช่วง Peak (09-22)
+    ws["A29"] = "01/07/2025 09.30"
+    ws["B29"] = 100
+    # เวลา 23:00 วันเดียวกัน -> วันทำการ ช่วง Off-Peak (22:00-09:00)
+    ws["A30"] = "01/07/2025 23.00"
+    ws["B30"] = 40
+    # "24.00" ของวันที่ 01/07/2025 หมายถึงเที่ยงคืนของวันถัดไป (02/07/2025 00:00) ไม่ใช่ของวันเดิม
+    ws["A31"] = "01/07/2025 24.00"
+    ws["B31"] = 60
+
+    wb.save(path)
+
+
+def test_is_ami_xlsx_true_for_custom_kw_report(tmp_path):
+    path = tmp_path / "kw_report.xlsx"
+    _write_synthetic_custom_kw_report(path)
+    assert is_ami_xlsx(path) is True
+
+
+def test_parse_ami_report_header_reads_english_labels_from_custom_kw_report(tmp_path):
+    path = tmp_path / "kw_report.xlsx"
+    _write_synthetic_custom_kw_report(path, account_no="0288888888", meter_no="5556667")
+
+    info = parse_ami_report_header(path)
+
+    # ป้ายภาษาอังกฤษ ("Contact Account :", "Meter No. :") ต้องถูกแปลงให้ตรงกับ key มาตรฐาน
+    # เดียวกับไฟล์อื่นๆ ไม่งั้นโค้ดฝั่งเรียกใช้ (amr_import.py) จะหาบัญชีผู้ใช้ไฟไม่เจอ
+    assert info["บัญชีผู้ใช้ไฟ"] == "0288888888"
+    assert info["หมายเลขมิเตอร์"] == "5556667"
+    # ไฟล์รูปแบบนี้ไม่มีชื่อบริษัทให้เลย
+    assert "ชื่อผู้ใช้ไฟ" not in info
+
+
+def test_parse_ami_interval_report_derives_tou_period_from_timestamp_when_no_rate_columns(tmp_path):
+    path = tmp_path / "kw_report.xlsx"
+    _write_synthetic_custom_kw_report(path)
+
+    readings = parse_ami_interval_report(path)
+
+    # ไม่มีคอลัมน์ Rate A/B/C ให้เลย ต้องคำนวณช่วง P/OP/H เองจาก timestamp แล้วแปลง kW เป็น kWh
+    # ของช่วง 15 นาที (kW x 0.25)
+    assert IntervalReading(timestamp="01/07/2025 09.30", period="P", kwh=25.0) in readings
+    assert IntervalReading(timestamp="01/07/2025 23.00", period="OP", kwh=10.0) in readings
+
+
+def test_parse_ami_interval_report_handles_24_00_as_start_of_next_day(tmp_path):
+    path = tmp_path / "kw_report.xlsx"
+    _write_synthetic_custom_kw_report(path)
+
+    readings = parse_ami_interval_report(path)
+
+    # "01/07/2025 24.00" ต้องถูกเลื่อนเป็น "02/07/2025 00.00" (datetime.strptime ปกติ parse
+    # ชั่วโมง 24 ไม่ได้ จะ error ถ้าไม่จัดการเป็นพิเศษ)
+    assert IntervalReading(timestamp="02/07/2025 00.00", period="OP", kwh=15.0) in readings
+    assert not any(r.timestamp.startswith("01/07/2025 24") for r in readings)

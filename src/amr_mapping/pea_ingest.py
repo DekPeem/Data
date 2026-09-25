@@ -39,6 +39,23 @@ except ImportError as exc:  # pragma: no cover
 RATE_TO_PERIOD = {"a": "P", "b": "OP", "c": "H"}
 
 
+def classify_tou_period(dt: _dt.datetime) -> str:
+    """จัดช่วง TOU (P/OP/H) จาก datetime ตามกฎเดียวกับ RATE_TO_PERIOD ด้านบน — ใช้กับไฟล์รายงาน
+    ที่ไม่มีคอลัมน์ Rate A/B/C ให้พร้อมใช้เลย (เช่นรายงาน "Custom kW Report" ของ PEA AMI เองบาง
+    แบบ หรือรายงานจากอุปกรณ์วัด/บันทึกข้อมูลอื่นที่ไม่ใช่ของ กฟภ. โดยตรง — ดู pea_meter_log_ingest.py)
+    ต้องคำนวณเองจาก timestamp ของแต่ละจุดข้อมูลแทน
+
+    ⚠️ ข้อจำกัด: ไม่ได้เช็ควันหยุดนักขัตฤกษ์ (Thai public holiday) เลย — วันหยุดราชการที่ตรงกับวัน
+    ธรรมดา (จันทร์-ศุกร์) จะถูกคำนวณผิดเป็น Peak/Off-Peak แทนที่จะเป็น Holiday ผลกระทบเล็กน้อย
+    เพราะมีแค่ไม่กี่วันต่อปี เทียบกับข้อมูลทั้งเดือน (~20 วันทำการ)"""
+
+    if dt.weekday() >= 5:  # 5=เสาร์, 6=อาทิตย์
+        return "H"
+    if 9 <= dt.hour < 22:
+        return "P"
+    return "OP"
+
+
 def _read_html(path: Union[str, Path]) -> BeautifulSoup:
     with open(path, encoding="utf-8", errors="replace") as f:
         content = f.read()

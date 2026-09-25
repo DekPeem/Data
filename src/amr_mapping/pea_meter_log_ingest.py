@@ -34,7 +34,7 @@ except ImportError as exc:  # pragma: no cover
         "ต้องติดตั้ง xlrd ก่อนใช้งาน pea_meter_log_ingest: pip install xlrd"
     ) from exc
 
-from .pea_ingest import IntervalReading
+from .pea_ingest import IntervalReading, classify_tou_period
 
 # magic bytes ของ OLE2 Compound File (BIFF .xls แท้) — ต่างจากไฟล์ HTML แฝงเป็น .xls (เริ่มด้วย
 # ตัวอักษรอ่านได้) และไฟล์ .xlsx แท้ (ZIP, เริ่มด้วย "PK" — ดู pea_ingest.is_ami_xlsx)
@@ -58,17 +58,6 @@ def is_meter_log_xls(path: Union[str, Path]) -> bool:
         return False
 
 
-def _period_for(dt: _dt.datetime) -> str:
-    """จัดช่วง TOU (P/OP/H) จาก timestamp ตามกฎเดียวกับ pea_ingest.RATE_TO_PERIOD — ดูข้อจำกัด
-    เรื่องวันหยุดนักขัตฤกษ์ใน docstring ของโมดูลนี้"""
-
-    if dt.weekday() >= 5:  # 5=เสาร์, 6=อาทิตย์
-        return "H"
-    if 9 <= dt.hour < 22:
-        return "P"
-    return "OP"
-
-
 def parse_meter_log_header(path: Union[str, Path]) -> dict:
     """อ่านหัวรายงาน — มีแค่ "หมายเลขมิเตอร์" ให้เท่านั้น (ไม่มีเลขบัญชี/ชื่อบริษัทในไฟล์นี้เลย)
     คืน dict ว่างถ้าอ่านหัวรายงานไม่ได้ (ไม่ error — ดู pea_ingest.parse_report_header)"""
@@ -86,7 +75,8 @@ def parse_meter_log_header(path: Union[str, Path]) -> dict:
 def parse_meter_log_interval_report(path: Union[str, Path]) -> List[IntervalReading]:
     """อ่านตารางข้อมูลราย 15 นาทีจากไฟล์รูปแบบนี้ — คอลัมน์ [วันที่/เวลา, kW, (kVAR)] แปลง kW
     (กำลังไฟฟ้าขณะนั้น) เป็น kWh ของช่วง 15 นาทีนั้น (kW x 0.25) แล้วจัดช่วง P/OP/H เองจาก
-    timestamp (ดู _period_for) เพราะไฟล์นี้ไม่มีคอลัมน์ Rate A/B/C ให้เหมือนไฟล์ AMRWEB/AMI"""
+    timestamp (ดู pea_ingest.classify_tou_period) เพราะไฟล์นี้ไม่มีคอลัมน์ Rate A/B/C ให้เหมือน
+    ไฟล์ AMRWEB/AMI"""
 
     wb = xlrd.open_workbook(path)
     sheet = wb.sheet_by_index(0)
@@ -123,7 +113,7 @@ def parse_meter_log_interval_report(path: Union[str, Path]) -> List[IntervalRead
         if not isinstance(kw_value, (int, float)):
             continue
 
-        period = _period_for(dt)
+        period = classify_tou_period(dt)
         kwh = round(float(kw_value) * 0.25, 4)
         timestamp = dt.strftime("%d/%m/%Y %H.%M")
         readings.append(IntervalReading(timestamp=timestamp, period=period, kwh=kwh))

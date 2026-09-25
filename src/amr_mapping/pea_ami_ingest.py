@@ -1,13 +1,20 @@
 """ตัวอ่านไฟล์ export จากระบบ "AMI" ของ PEA (โครงการติดตั้งระบบมิเตอร์อัจฉริยะ) — ต่างจาก
 pea_ingest.py (ไฟล์ HTML แฝงเป็น .xls จากเว็บ AMRWEB) เพราะไฟล์นี้เป็น Excel (.xlsx) แท้ๆ
 (ZIP/OOXML) ตรวจพบครั้งแรกจากไฟล์จริงที่ผู้ใช้ส่งมา (ชื่อไฟล์ขึ้นต้นด้วย "kW" หัวรายงานระบุ
-"โครงการติดตั้งระบบมิเตอร์อัจฉริยะ (AMI)" รายงาน "ข้อมูลกิโลวัตต์รายเดือน")
+"โครงการติดตั้งระบบมิเตอร์อัจฉริยะ (AMI)")
 
-โครงสร้างข้อมูลราย 15 นาทีเหมือน pea_ingest ทุกอย่าง (คอลัมน์ Rate A/B/C ตามรอบ TOU
-เดียวกัน — ดู pea_ingest.RATE_TO_PERIOD) ต่างแค่ container format (Excel จริง ไม่ใช่ HTML)
-ป้ายชื่อหัวรายงาน (มีคำว่า "ไฟฟ้า" ต่อท้าย เช่น "บัญชีผู้ใช้ไฟฟ้า" แทน "บัญชีผู้ใช้ไฟ") และ
-ปีในคอลัมน์เวลาเป็นปี พ.ศ. (ต้องแปลงเป็น ค.ศ. ก่อน เพื่อให้ pea_ingest._parse_interval_timestamp
-คำนวณวันในสัปดาห์ถูกต้อง)
+รองรับ 2 รูปแบบตาราง (ทั้งคู่หัวรายงานขึ้นต้นด้วย "โครงการติดตั้งระบบมิเตอร์อัจฉริยะ (AMI)"
+เหมือนกัน แยกกันแค่โครงสร้างตารางข้อมูลราย 15 นาที):
+
+  1. "ข้อมูลกิโลวัตต์รายเดือน" — คอลัมน์ Rate A/B/C ตามรอบ TOU เดียวกับ pea_ingest (ดู
+     pea_ingest.RATE_TO_PERIOD) ป้ายชื่อหัวรายงานมีคำว่า "ไฟฟ้า" ต่อท้าย (เช่น "บัญชีผู้ใช้ไฟฟ้า"
+     แทน "บัญชีผู้ใช้ไฟ") และปีในคอลัมน์เวลาเป็นปี พ.ศ. (ต้องแปลงเป็น ค.ศ. ก่อน)
+
+  2. "Custom kW Report" — ไม่มีคอลัมน์ Rate A/B/C เลย มีแค่ [Time, kW] เท่านั้น (ต้องคำนวณช่วง
+     P/OP/H เองจาก timestamp ผ่าน pea_ingest.classify_tou_period แล้วแปลง kW เป็น kWh ของช่วง
+     15 นาที คือ kW x 0.25 — เหมือนหลักการเดียวกับ pea_meter_log_ingest.py) ป้ายชื่อหัวรายงาน
+     เป็นภาษาอังกฤษ ("Contact Account :", "Meter No. :") และปีในคอลัมน์เวลาเป็น ค.ศ. อยู่แล้ว
+     (ไม่ต้องแปลง พ.ศ.)
 
 ⚠️ หลักการความปลอดภัยเดียวกับ pea_ingest.py: ไฟล์ดิบมีข้อมูลระบุตัวตนลูกค้า อ่านเฉพาะตัวเลข
 การใช้ไฟฟ้าเพื่อคำนวณค่าเฉลี่ยแบบ anonymized เท่านั้น ไม่ควร commit ไฟล์ดิบเข้า repo public
@@ -15,6 +22,7 @@ pea_ingest.py (ไฟล์ HTML แฝงเป็น .xls จากเว็�
 
 from __future__ import annotations
 
+import datetime as _dt
 import re
 from pathlib import Path
 from typing import List, Union
@@ -26,15 +34,17 @@ except ImportError as exc:  # pragma: no cover
         "ต้องติดตั้ง openpyxl ก่อนใช้งาน pea_ami_ingest: pip install openpyxl"
     ) from exc
 
-from .pea_ingest import IntervalReading, _to_float, is_ami_xlsx  # noqa: F401 (re-exported for callers)
+from .pea_ingest import IntervalReading, _to_float, classify_tou_period, is_ami_xlsx  # noqa: F401 (re-exported for callers)
 
-# ป้ายชื่อหัวรายงานที่ต้องการอ่าน — คีย์ฝั่งซ้ายคือคำที่ปรากฏจริงในไฟล์ AMI (มี "ไฟฟ้า" ต่อท้าย)
-# คีย์ฝั่งขวาคือชื่อมาตรฐานเดียวกับที่ pea_ingest.parse_report_header ใช้ (ไม่มี "ไฟฟ้า" ต่อท้าย)
-# แปลงให้ตรงกันเพื่อให้โค้ดฝั่งเรียกใช้ (amr_import.py) ใช้ key เดียวกันได้ไม่ต้องรู้ว่าไฟล์เป็น
-# รูปแบบไหน
+# ป้ายชื่อหัวรายงานที่ต้องการอ่าน — คีย์ฝั่งซ้ายคือคำที่ปรากฏจริงในไฟล์ AMI (รูปแบบ "ข้อมูลกิโลวัตต์
+# รายเดือน" มี "ไฟฟ้า" ต่อท้าย, รูปแบบ "Custom kW Report" เป็นภาษาอังกฤษ) คีย์ฝั่งขวาคือชื่อ
+# มาตรฐานเดียวกับที่ pea_ingest.parse_report_header ใช้ แปลงให้ตรงกันเพื่อให้โค้ดฝั่งเรียกใช้
+# (amr_import.py) ใช้ key เดียวกันได้ไม่ต้องรู้ว่าไฟล์เป็นรูปแบบไหน
 _LABEL_ALIASES = {
     "บัญชีผู้ใช้ไฟฟ้า": "บัญชีผู้ใช้ไฟ",
     "ชื่อผู้ใช้ไฟฟ้า": "ชื่อผู้ใช้ไฟ",
+    "Contact Account": "บัญชีผู้ใช้ไฟ",
+    "Meter No.": "หมายเลขมิเตอร์",
 }
 _KNOWN_LABELS = {"บัญชีผู้ใช้ไฟ", "ชื่อผู้ใช้ไฟ", "หมายเลขมิเตอร์", "Tariff", "CT Ratio", "VT Ratio"}
 
@@ -114,14 +124,48 @@ def _find_rate_columns(ws) -> tuple:
     return None, {}
 
 
-def parse_ami_interval_report(path: Union[str, Path]) -> List[IntervalReading]:
-    """อ่านตารางข้อมูลราย 15 นาทีจากไฟล์ AMI .xlsx — โครงสร้างข้อมูลเหมือน
-    pea_ingest.parse_interval_report ทุกอย่าง (คอลัมน์ Rate A/B/C, 1 ค่าต่อแถวต่อคอลัมน์)
-    แค่เป็นคอลัมน์ Excel จริงแทน <td> ของ HTML และปีในคอลัมน์เวลาเป็น พ.ศ. (แปลงเป็น ค.ศ.
-    ก่อนคืนค่า — ดู _convert_be_to_ce_timestamp)
+def _parse_ddmmyyyy_hm(timestamp: str):
+    """แปลง "DD/MM/YYYY HH.MM" (ค.ศ. แล้ว) เป็น datetime — บางไฟล์ "Custom kW Report" ใช้
+    "24.00" แทนเที่ยงคืนของ "วันถัดไป" ไม่ใช่ 00:00 ของวันเดียวกัน (พบจากไฟล์จริงที่ผู้ใช้ส่งมา)
+    ซึ่ง datetime.strptime ปกติ parse ไม่ได้ (ชั่วโมงเกิน 23) — เลื่อนไปเป็นวันถัดไป 00:00 แทนเสมอ
+    คืน None ถ้า parse ไม่ได้จริงๆ (กันไฟล์แปลกๆ ไม่ให้ทำให้ทั้งการคำนวณพัง)"""
 
-    ค้นหาตาราง Rate A/B/C ในทุก sheet ของไฟล์ (ไม่ใช่แค่ sheet แรก) — พบไฟล์จริงที่แบ่งหัว
-    รายงานไว้ sheet หนึ่ง (Sheet1) แต่ตารางข้อมูลราย 15 นาทีอยู่อีก sheet หนึ่ง (Sheet2)"""
+    try:
+        return _dt.datetime.strptime(timestamp, "%d/%m/%Y %H.%M")
+    except ValueError:
+        if timestamp.endswith(" 24.00"):
+            try:
+                base = _dt.datetime.strptime(timestamp[: -len(" 24.00")], "%d/%m/%Y")
+            except ValueError:
+                return None
+            return base + _dt.timedelta(days=1)
+        return None
+
+
+def _find_time_kw_columns(ws) -> tuple:
+    """หาแถวหัวตาราง "Time"/"kW" ใน sheet ที่ระบุ (รายงานแบบ "Custom kW Report" ที่ไม่มีคอลัมน์
+    Rate A/B/C ให้เลย — ดู docstring ของโมดูล) คืน (เลขแถว, คอลัมน์ Time, คอลัมน์ kW) หรือ
+    (None, None, None) ถ้าไม่เจอใน sheet นี้ (ให้ผู้เรียกลอง sheet อื่นต่อ)"""
+
+    for row_idx, row in enumerate(ws.iter_rows(min_row=1, max_row=40), start=1):
+        cells_upper = [(str(c.value).strip().upper() if c.value is not None else "") for c in row]
+        if "TIME" in cells_upper and "KW" in cells_upper:
+            return row_idx, cells_upper.index("TIME"), cells_upper.index("KW")
+    return None, None, None
+
+
+def parse_ami_interval_report(path: Union[str, Path]) -> List[IntervalReading]:
+    """อ่านตารางข้อมูลราย 15 นาทีจากไฟล์ AMI .xlsx — คอลัมน์ Excel จริงแทน <td> ของ HTML
+    รองรับ 2 โครงสร้างตาราง (ดู docstring ของโมดูล):
+
+      1. Rate A/B/C — ปีในคอลัมน์เวลาเป็น พ.ศ. (แปลงเป็น ค.ศ. ก่อนคืนค่า — ดู
+         _convert_be_to_ce_timestamp)
+      2. Time/kW (ไม่มี Rate columns) — คำนวณช่วง P/OP/H เองจาก timestamp ผ่าน
+         pea_ingest.classify_tou_period แล้วแปลง kW เป็น kWh ของช่วง 15 นาที (kW x 0.25)
+
+    ค้นหาตารางในทุก sheet ของไฟล์ (ไม่ใช่แค่ sheet แรก) — พบไฟล์จริงที่แบ่งหัวรายงานไว้ sheet
+    หนึ่ง (Sheet1) แต่ตารางข้อมูลราย 15 นาทีอยู่อีก sheet หนึ่ง (Sheet2) ลองหาตาราง Rate A/B/C
+    ก่อนเสมอ ถ้าไม่เจอเลยสักคอลัมน์ในทุก sheet ถึงจะลองหาตาราง Time/kW แทน"""
 
     wb = openpyxl.load_workbook(path, data_only=True, read_only=True)
     try:
@@ -134,25 +178,52 @@ def parse_ami_interval_report(path: Union[str, Path]) -> List[IntervalReading]:
                 target_ws = ws
                 break
 
+        if target_ws is not None:
+            readings: List[IntervalReading] = []
+            for row in target_ws.iter_rows(min_row=header_row_idx + 1):
+                timestamp_cell = row[0].value if len(row) else None
+                timestamp = str(timestamp_cell).strip() if timestamp_cell is not None else ""
+                if not _TIMESTAMP_RE.match(timestamp):
+                    continue  # ข้ามแถวสรุปท้ายตาราง (กิโลวัตต์สูงสุด/คำอธิบาย/พิมพ์โดย ฯลฯ)
+                timestamp = _convert_be_to_ce_timestamp(timestamp)
+                for period, col_idx in rate_col_idx.items():
+                    if col_idx >= len(row):
+                        continue
+                    raw = row[col_idx].value
+                    val = _to_float(str(raw)) if raw is not None else None
+                    if val is not None:
+                        readings.append(IntervalReading(timestamp=timestamp, period=period, kwh=val))
+            return readings
+
+        time_col = kw_col = None
+        for ws in wb.worksheets:
+            header_row_idx, time_col, kw_col = _find_time_kw_columns(ws)
+            if header_row_idx is not None:
+                target_ws = ws
+                break
+
         if target_ws is None:
             raise ValueError(
-                f"ไม่พบตารางรายงานราย 15 นาที (header ต้องมีคอลัมน์ Rate A/B/C) ในไฟล์ {path}"
+                f'ไม่พบตารางรายงานราย 15 นาที (header ต้องมีคอลัมน์ Rate A/B/C หรือ "Time"/"kW") ในไฟล์ {path}'
             )
 
-        readings: List[IntervalReading] = []
+        readings = []
         for row in target_ws.iter_rows(min_row=header_row_idx + 1):
-            timestamp_cell = row[0].value if len(row) else None
+            timestamp_cell = row[time_col].value if time_col < len(row) else None
             timestamp = str(timestamp_cell).strip() if timestamp_cell is not None else ""
             if not _TIMESTAMP_RE.match(timestamp):
-                continue  # ข้ามแถวสรุปท้ายตาราง (กิโลวัตต์สูงสุด/คำอธิบาย/พิมพ์โดย ฯลฯ)
+                continue
             timestamp = _convert_be_to_ce_timestamp(timestamp)
-            for period, col_idx in rate_col_idx.items():
-                if col_idx >= len(row):
-                    continue
-                raw = row[col_idx].value
-                val = _to_float(str(raw)) if raw is not None else None
-                if val is not None:
-                    readings.append(IntervalReading(timestamp=timestamp, period=period, kwh=val))
+            dt = _parse_ddmmyyyy_hm(timestamp)
+            if dt is None:
+                continue
+            timestamp = dt.strftime("%d/%m/%Y %H.%M")
+
+            raw = row[kw_col].value if kw_col < len(row) else None
+            val = _to_float(str(raw)) if raw is not None else None
+            if val is None:
+                continue
+            readings.append(IntervalReading(timestamp=timestamp, period=classify_tou_period(dt), kwh=round(val * 0.25, 4)))
         return readings
     finally:
         wb.close()
