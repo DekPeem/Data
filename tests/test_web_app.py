@@ -2403,3 +2403,51 @@ def test_start_import_bulk_no_recognized_amr_files_returns_400(client, monkeypat
     )
     assert res.status_code == 400
     assert res.get_json()["error"] == "invalid_request"
+
+
+def test_start_import_bulk_allows_more_files_than_single_file_mode_limit(client, monkeypatch, tmp_path):
+    """โหมดนำเข้าหลายบริษัทพร้อมกันต้องรองรับจำนวนไฟล์มากกว่าโหมดไฟล์เดี่ยวมาก (เจอจริง: ผู้ใช้
+    ดาวน์โหลดทั้งโฟลเดอร์ Google Drive มาได้ zip ที่มี 4,505 ไฟล์ ซึ่งเกินขีดจำกัดของโหมดไฟล์เดี่ยว
+    (1000 ไฟล์) ไปมาก — ต้องไม่โดนบล็อกด้วยขีดจำกัดเดียวกัน"""
+    import io
+    import zipfile
+
+    monkeypatch.setattr(app_module, "DEFAULT_DOWNLOAD_DIR", tmp_path / "amr_downloads")
+
+    def fake_import_amr_from_files(**kwargs):
+        from amr_mapping.models import LoadProfile
+
+        if kwargs.get("on_profile"):
+            kwargs["on_profile"]({"name": "บริษัททดสอบ", "account_no": "0199000001", "meter_no": ""})
+        return LoadProfile(
+            business_type_code="63201", rate_code="50", billing_method="TOU",
+            demand_kw={"P": 1, "OP": 1, "H": 1}, energy_kwh={"P": 1, "OP": 1, "H": 1},
+            contract_kva_ref=None, sample_size=1, notes="fake",
+        )
+
+    monkeypatch.setattr(app_module, "import_amr_from_files", fake_import_amr_from_files)
+
+    # มากกว่า _MAX_ZIP_MEMBERS (1000) ของโหมดไฟล์เดี่ยวหลายเท่า แต่ยังไม่เกิน _MAX_BULK_ZIP_MEMBERS
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zf:
+        for i in range(1500):
+            zf.writestr(f"company_A/report_{i}.xls", "<html></html>")
+    zip_buffer.seek(0)
+
+    res = client.post(
+        "/api/admin/import-bulk",
+        data={"files": (zip_buffer, "bundle.zip")},
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 200
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/import/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    assert status["result"]["success"] == 1

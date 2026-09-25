@@ -1503,9 +1503,17 @@ def _run_import_bulk_job(job_id: str, groups: Dict[str, List[str]], params: dict
 _AMR_FILE_EXTENSIONS = (".xls", ".xlsx", ".html", ".htm")
 
 # กันไฟล์ .zip ที่แนบมาใหญ่เกินจริงหลังแตกไฟล์ (zip bomb) — รายงาน AMR จริงไม่ควรใหญ่ขนาดนี้เลย
-# แม้จะแนบมาหลายสิบเดือนรวมกันก็ตาม ตัวเลขนี้เผื่อไว้กว้างๆ พอสมควร
+# แม้จะแนบมาหลายสิบเดือนรวมกันก็ตาม ตัวเลขนี้เผื่อไว้กว้างๆ พอสมควร (ใช้กับโหมดไฟล์เดี่ยว —
+# _save_uploaded_amr_files — ที่ควรเป็นแค่ "1 บริษัท หลายเดือน" เท่านั้น)
 _MAX_ZIP_EXTRACTED_BYTES = 300 * 1024 * 1024  # 300 MB
 _MAX_ZIP_MEMBERS = 1000
+
+# ขีดจำกัดแบบเดียวกันแต่สำหรับโหมดนำเข้าหลายบริษัทพร้อมกัน (_extract_bulk_amr_zip) — ตั้งใจให้
+# กว้างกว่าโหมดไฟล์เดี่ยวมาก เพราะ 1 ซิปที่นี่คือ "หลายสิบบริษัท x หลายเดือน" รวมกัน (เจอจริงจาก
+# ผู้ใช้: 500 MB / 4,500+ ไฟล์ จากการดาวน์โหลดทั้งโฟลเดอร์ Google Drive มาทีเดียว) ยังกันไว้ไม่ให้
+# กว้างจนไม่มีความหมายเลย (zip bomb แท้ๆ จะยังโดนบล็อกอยู่)
+_MAX_BULK_ZIP_EXTRACTED_BYTES = 4 * 1024 * 1024 * 1024  # 4 GB
+_MAX_BULK_ZIP_MEMBERS = 20000
 
 
 def _save_uploaded_amr_files(files, upload_dir: Path) -> List[str]:
@@ -1587,10 +1595,10 @@ def _extract_bulk_amr_zip(zip_path: Path, upload_dir: Path) -> Dict[str, List[st
 
     with zipfile.ZipFile(zip_path) as zf:
         members = [m for m in zf.infolist() if not m.is_dir()]
-        if len(members) > _MAX_ZIP_MEMBERS:
+        if len(members) > _MAX_BULK_ZIP_MEMBERS:
             raise ValueError(f"ไฟล์ zip มีไฟล์ข้างในเยอะเกินไป ({len(members)} ไฟล์)")
         total_size = sum(m.file_size for m in members)
-        if total_size > _MAX_ZIP_EXTRACTED_BYTES:
+        if total_size > _MAX_BULK_ZIP_EXTRACTED_BYTES:
             raise ValueError("ไฟล์ zip ขนาดหลังแตกไฟล์ใหญ่เกินไป")
 
         for i, member in enumerate(members):
