@@ -96,7 +96,8 @@ MATCH_LEVEL_LABEL_TH = {
     MatchLevel.EXACT: "ตรงตามธุรกิจและอัตรา (Exact Match)",
     MatchLevel.SOLAR_MISMATCH: "ตรงตามธุรกิจและอัตรา แต่ไม่มีข้อมูลของสถานะ Solar ที่ตรงกัน",
     MatchLevel.BUSINESS_ONLY: "ตรงตามประเภทธุรกิจ (ไม่ทราบ/ไม่ตรงอัตรา)",
-    MatchLevel.DIVISION_ONLY: "ไม่มีข้อมูลธุรกิจนี้ตรงๆ แต่อยู่ในกลุ่มอุตสาหกรรม (TSIC) เดียวกับที่มีข้อมูล",
+    MatchLevel.DIVISION_ONLY: "ไม่มีข้อมูลธุรกิจนี้ตรงๆ แต่อยู่ในกลุ่มอุตสาหกรรม (TSIC Division) เดียวกับที่มีข้อมูล",
+    MatchLevel.SECTION_ONLY: "ไม่มีข้อมูลในกลุ่มอุตสาหกรรมเดียวกันเลย แต่อยู่ในหมวดใหญ่ (TSIC Section) เดียวกับที่มีข้อมูล",
     MatchLevel.RATE_ONLY: "ตรงตามประเภทอัตรา (ยังไม่จัดประเภทธุรกิจ)",
     MatchLevel.DEFAULT: "ไม่พบข้อมูลที่ตรงกัน (ใช้ค่ากลาง)",
 }

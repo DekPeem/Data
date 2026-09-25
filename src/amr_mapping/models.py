@@ -114,6 +114,9 @@ class MatchLevel(str, Enum):
     # ที่ไม่ติด Solar) — ยังดีกว่า fallback ไปประเภทธุรกิจอื่น
     BUSINESS_ONLY = "business_type_only"
     DIVISION_ONLY = "same_tsic_division"  # ธุรกิจไม่ตรงเป๊ะ แต่อยู่ TSIC division เดียวกัน
+    SECTION_ONLY = "same_tsic_section"  # ไม่มีข้อมูลใน division เดียวกันเลย แต่อยู่ TSIC
+    # section (หมวดใหญ่ เช่น C=การผลิต) เดียวกัน — ประมาณการกว้างกว่า DIVISION_ONLY แต่ยังดีกว่า
+    # RATE_ONLY/DEFAULT ที่ไม่สนใจประเภทธุรกิจเลย
     RATE_ONLY = "rate_only"
     DEFAULT = "default_fallback"
 

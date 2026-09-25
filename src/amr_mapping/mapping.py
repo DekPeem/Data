@@ -10,6 +10,9 @@
                        division เดียวกัน (ต้องทราบ division ของทั้งสองฝั่งจาก business_types.csv)
                        — เช่น ยังไม่มีโปรไฟล์ AMR จริงของธุรกิจนี้ แต่มีของธุรกิจอื่นในกลุ่ม
                        อุตสาหกรรมเดียวกัน (เช่น การผลิตกระดาษ) ก็ยังดีกว่าตกไปที่ DEFAULT เปล่าๆ
+    3b. SECTION_ONLY   ไม่มีโปรไฟล์ใน division เดียวกันเลย แต่มีโปรไฟล์ของธุรกิจอื่นใน TSIC
+                       section (หมวดใหญ่ เช่น C=การผลิต, G=ขายส่ง/ปลีก) เดียวกัน — กว้างกว่า
+                       DIVISION_ONLY แต่ยังดีกว่า RATE_ONLY/DEFAULT ที่ไม่สนใจประเภทธุรกิจเลย
     4. RATE_ONLY       ไม่ทราบ/ไม่ตรงประเภทธุรกิจ แต่ตรงประเภทอัตรา
     5. DEFAULT         ไม่พบข้อมูลที่ตรงกันเลย ใช้ค่ากลาง (business_type_code == "DEFAULT")
 
@@ -197,6 +200,24 @@ def find_load_profile(
                             return MatchResult(averaged, MatchLevel.DIVISION_ONLY, preferred)
                     averaged = _weighted_average_profile(division_candidates, business_type_code, rate_code)
                     return MatchResult(averaged, MatchLevel.DIVISION_ONLY, division_candidates)
+
+            # ไม่มีโปรไฟล์ใน division เดียวกันเลย — ลองหมวดใหญ่กว่า (TSIC section เช่น
+            # C=การผลิต) แทน ก่อนตกไปที่ RATE_ONLY/DEFAULT ที่ไม่สนใจประเภทธุรกิจเลย
+            if target_bt and target_bt.section_code:
+                section_candidates = [
+                    p
+                    for p in profiles
+                    if business_types.get(p.business_type_code) is not None
+                    and business_types[p.business_type_code].section_code == target_bt.section_code
+                ]
+                if section_candidates:
+                    if rate_code:
+                        preferred = [p for p in section_candidates if p.rate_code == rate_code]
+                        if preferred:
+                            averaged = _weighted_average_profile(preferred, business_type_code, rate_code)
+                            return MatchResult(averaged, MatchLevel.SECTION_ONLY, preferred)
+                    averaged = _weighted_average_profile(section_candidates, business_type_code, rate_code)
+                    return MatchResult(averaged, MatchLevel.SECTION_ONLY, section_candidates)
 
     if rate_code:
         candidates = [p for p in profiles if p.rate_code == rate_code]
