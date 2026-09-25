@@ -16,13 +16,21 @@
        ใช้กับบัญชีนั้นจากประวัติมา "นำเข้าจริง" ให้ (ข้อมูลใหม่จะถูกถ่วงน้ำหนักรวมกับของเดิมอัตโนมัติ
        ผ่าน upsert_load_profile/upsert_load_curve เหมือนนำเข้าปกติ) แล้วค่อยลบออกจากคิวรอ
 
-โดยดีฟอลต์ (ไม่ใส่ flag ใดเลย) แค่ "แสดงรายการทั้ง 2 กลุ่ม" ให้ดูก่อนเฉยๆ ไม่ทำอะไรจริง
+    3. "ชื่อตรงกับที่มีอยู่แล้ว แต่ไม่มีเลขบัญชีให้ยืนยัน" (--delete-name-matches) — ⚠️ เสี่ยงสุด
+       ในสามกลุ่ม ต้องเช็คเองก่อนเสมอ: รายการที่อ่านเลขบัญชีจากไฟล์ไม่ได้เลย (ใช้ชื่อโฟลเดอร์แทน)
+       แต่ชื่อไปตรงกับชื่อลูกค้าที่มีอยู่แล้วในทะเบียนพอดี — เทียบด้วย "ชื่อ" เท่านั้น (ไม่มีเลขบัญชี
+       ให้ยืนยันแบบกลุ่มที่ 1) อาจเป็นบริษัทคนละรายที่ชื่อพ้องกันก็ได้ หรือไฟล์อาจเป็นเดือนใหม่จริงๆ
+       ก็ได้ — ให้ "แสดงให้ดูเฉยๆ" เป็นค่าเริ่มต้นเสมอ (ไม่ถูกลบพร้อมกลุ่ม 1/2 แม้ใส่ --delete-safe
+       ก็ตาม) ต้องใส่ --delete-name-matches แยกต่างหากอย่างตั้งใจเท่านั้นถึงจะลบ
+
+โดยดีฟอลต์ (ไม่ใส่ flag ใดเลย) แค่ "แสดงรายการทั้ง 3 กลุ่ม" ให้ดูก่อนเฉยๆ ไม่ทำอะไรจริง
 
 ตัวอย่างการใช้งาน:
-    python scripts/dedupe_pending_amr.py                        # ดูรายการทั้ง 2 กลุ่มก่อน (ไม่ทำอะไร)
+    python scripts/dedupe_pending_amr.py                        # ดูรายการทั้ง 3 กลุ่มก่อน (ไม่ทำอะไร)
     python scripts/dedupe_pending_amr.py --delete-safe           # ลบเฉพาะกลุ่มที่ 1 (ปลอดภัย ไม่มีไฟล์ใหม่)
     python scripts/dedupe_pending_amr.py --auto-resolve          # นำเข้ากลุ่มที่ 2 จริง (ไม่ลบเฉยๆ)
-    python scripts/dedupe_pending_amr.py --delete-safe --auto-resolve   # ทำทั้งคู่
+    python scripts/dedupe_pending_amr.py --delete-name-matches   # ลบกลุ่มที่ 3 (เช็คเองให้แน่ใจก่อน!)
+    python scripts/dedupe_pending_amr.py --delete-safe --auto-resolve   # ทำ 1+2 พร้อมกัน
 """
 
 from __future__ import annotations
@@ -120,6 +128,36 @@ def find_resolvable_entries(data_dir: Path) -> List[Tuple[dict, str, str]]:
     return resolvable
 
 
+def _normalize_name(name: str) -> str:
+    return " ".join((name or "").strip().split()).lower()
+
+
+def find_name_match_candidates(data_dir: Path) -> List[Tuple[dict, "object"]]:
+    """คืน list ของ (entry, ลูกค้าที่มีอยู่แล้วในทะเบียน) ที่ "ชื่อตรงกัน" สำหรับรายการ pending ที่
+    ไม่มีเลขบัญชีเลย (เทียบเลขบัญชีแบบกลุ่มที่ 1/2 ไม่ได้) — เทียบชื่อแบบตัดช่องว่างซ้ำ/พิมพ์เล็ก
+    หมดก่อนเทียบ (กัน "บริษัท เอ" vs "บริษัท เอ " หรือตัวพิมพ์ใหญ่-เล็กต่างกันไม่ตรงกันเฉยๆ) แต่ก็ยัง
+    เป็นแค่การเทียบชื่อ ไม่ใช่เลขบัญชี — อาจมีบริษัทคนละรายชื่อพ้องกันได้ ⚠️ ต้องเช็คเองก่อนลบเสมอ
+    (ดู docstring ของโมดูล กลุ่มที่ 3)"""
+
+    reference = load_reference_data(data_dir)
+    customers_by_name = {_normalize_name(c.name): c for c in reference.customers if c.name}
+
+    pending_entries = load_pending_amr_local(data_dir / "pending_amr_local.csv")
+
+    matches: List[Tuple[dict, object]] = []
+    for entry in pending_entries:
+        if (entry.get("account_no") or "").strip():
+            continue  # มีเลขบัญชีอยู่แล้ว ให้กลุ่มที่ 1/2 (เทียบด้วยเลขบัญชี แม่นกว่า) จัดการไป
+        company_name = _normalize_name(entry.get("company_name") or "")
+        if not company_name:
+            continue
+        customer = customers_by_name.get(company_name)
+        if customer:
+            matches.append((entry, customer))
+
+    return matches
+
+
 def resolve_entry(entry: dict, business_type_code: str, rate_code: str, data_dir: Path, log=print) -> bool:
     """นำเข้าไฟล์ AMR ของรายการ pending 1 รายการจริงๆ ด้วยประเภทธุรกิจ/อัตราที่ระบุ (เหมือนกด
     "แก้ไข" ที่หน้า /pending-amr ในเว็บทุกอย่าง) แล้วลบออกจากคิวรอเมื่อสำเร็จ — คืน True ถ้าสำเร็จ"""
@@ -162,12 +200,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--delete-safe", action="store_true", help="ลบกลุ่มที่ 1 ออกจริง (ปลอดภัย ไม่มีไฟล์ใหม่ให้เสีย)")
     parser.add_argument("--auto-resolve", action="store_true", help="นำเข้ากลุ่มที่ 2 จริง (ไม่ใช่แค่ลบ — ข้อมูลใหม่จะถูกรวมเข้าไปด้วย)")
+    parser.add_argument(
+        "--delete-name-matches",
+        action="store_true",
+        help="ลบกลุ่มที่ 3 ออกจริง (⚠️ เทียบด้วยชื่อเท่านั้น ไม่มีเลขบัญชียืนยัน เช็คเองให้แน่ใจก่อนเสมอ)",
+    )
     args = parser.parse_args()
 
     data_dir = DEFAULT_DATA_DIR
 
     deletable = find_deletable_entries(data_dir)
     resolvable = find_resolvable_entries(data_dir)
+    name_matches = find_name_match_candidates(data_dir)
 
     print(f"กลุ่มที่ 1 — ลบได้เลย (ไม่มีไฟล์ใหม่ให้เสีย): {len(deletable)} รายการ")
     for entry, reason in deletable:
@@ -179,8 +223,20 @@ def main() -> None:
         label = entry.get("company_name") or entry.get("account_no") or "(ไม่ทราบชื่อ)"
         print(f"  - {label} (บัญชี {entry.get('account_no') or '-'}) — จะนำเข้าด้วย {business_type_code}/{rate_code}")
 
-    if not args.delete_safe and not args.auto_resolve:
-        print("\n(นี่แค่แสดงให้ดูก่อนเฉยๆ ยังไม่ได้ทำอะไร — ใส่ --delete-safe และ/หรือ --auto-resolve เพื่อดำเนินการจริง)")
+    print(f"\nกลุ่มที่ 3 — ชื่อตรงกับที่มีอยู่แล้ว แต่ไม่มีเลขบัญชียืนยัน (⚠️ เช็คเองก่อนลบเสมอ): {len(name_matches)} รายการ")
+    for entry, customer in name_matches:
+        label = entry.get("company_name") or "(ไม่ทราบชื่อ)"
+        known_rate = customer.rate_code or "ไม่ทราบอัตรา"
+        print(
+            f"  - {label} — ชื่อตรงกับบัญชี {customer.account_no} ที่มีอยู่แล้ว "
+            f"({customer.business_type_code or '?'}/{known_rate}) — อาจเป็นบริษัทเดียวกันจริง หรือชื่อพ้องกันก็ได้"
+        )
+
+    if not args.delete_safe and not args.auto_resolve and not args.delete_name_matches:
+        print(
+            "\n(นี่แค่แสดงให้ดูก่อนเฉยๆ ยังไม่ได้ทำอะไร — ใส่ --delete-safe / --auto-resolve / "
+            "--delete-name-matches เพื่อดำเนินการจริง)"
+        )
         return
 
     if args.delete_safe and deletable:
@@ -199,6 +255,13 @@ def main() -> None:
             if resolve_entry(entry, business_type_code, rate_code, data_dir, log=lambda m: print(f"  {m}")):
                 succeeded += 1
         print(f"\n✅ นำเข้ากลุ่มที่ 2 สำเร็จ {succeeded}/{len(resolvable)} รายการ")
+
+    if args.delete_name_matches and name_matches:
+        removed = 0
+        for entry, _customer in name_matches:
+            if remove_pending_amr_local(entry["pending_id"], data_dir / "pending_amr_local.csv"):
+                removed += 1
+        print(f"\n✅ ลบกลุ่มที่ 3 ไปแล้ว {removed} รายการ")
 
 
 if __name__ == "__main__":

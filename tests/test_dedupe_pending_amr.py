@@ -12,7 +12,12 @@ from amr_mapping.loader import (
     load_pending_amr_local,
     load_reference_data,
 )
-from dedupe_pending_amr import find_deletable_entries, find_resolvable_entries, resolve_entry
+from dedupe_pending_amr import (
+    find_deletable_entries,
+    find_name_match_candidates,
+    find_resolvable_entries,
+    resolve_entry,
+)
 
 # เหมือน _SYNTHETIC_INTERVAL_HTML ใน tests/test_amr_import.py — ไฟล์ AMR export จำลองที่
 # parse_interval_report อ่านได้จริง (ใช้ทดสอบ resolve_entry ซึ่งเรียก import_amr_from_files จริง)
@@ -203,3 +208,50 @@ def test_resolve_entry_returns_false_and_keeps_pending_when_files_missing(data_d
     assert ok is False
     # ไม่ถูกลบออกจากคิว เพราะยังนำเข้าไม่สำเร็จ
     assert len(load_pending_amr_local(data_dir / "pending_amr_local.csv")) == 1
+
+
+# ── find_name_match_candidates (กลุ่มที่ 3 — ชื่อตรงกัน แต่ไม่มีเลขบัญชียืนยัน) ──
+
+
+def test_name_match_finds_pending_entry_whose_name_matches_existing_customer(data_dir):
+    (data_dir / "customers_local.csv").write_text(
+        "account_no,name,business_type_code,rate_code,contract_kva,has_amr,has_solar,business_type_code_raw\n"
+        "0199000001,บริษัท โนเบลเอ็นซี จำกัด,20113,UNKNOWN,,false,,\n",
+        encoding="utf-8",
+    )
+    _add_pending(data_dir, "pend01", "", "บริษัท โนเบลเอ็นซี จำกัด")
+
+    matches = find_name_match_candidates(data_dir)
+    assert len(matches) == 1
+    entry, customer = matches[0]
+    assert entry["pending_id"] == "pend01"
+    assert customer.account_no == "0199000001"
+
+
+def test_name_match_ignores_case_and_extra_whitespace(data_dir):
+    (data_dir / "customers_local.csv").write_text(
+        "account_no,name,business_type_code,rate_code,contract_kva,has_amr,has_solar,business_type_code_raw\n"
+        "0199000001,Some Company Ltd,20113,UNKNOWN,,false,,\n",
+        encoding="utf-8",
+    )
+    _add_pending(data_dir, "pend01", "", "  some   company ltd  ")
+
+    matches = find_name_match_candidates(data_dir)
+    assert len(matches) == 1
+
+
+def test_name_match_skips_entries_that_already_have_an_account_no(data_dir):
+    """มีเลขบัญชีอยู่แล้ว ให้กลุ่มที่ 1/2 (แม่นกว่า) จัดการแทน ไม่ต้องมาซ้ำในกลุ่มที่ 3"""
+    (data_dir / "customers_local.csv").write_text(
+        "account_no,name,business_type_code,rate_code,contract_kva,has_amr,has_solar,business_type_code_raw\n"
+        "0199000001,บริษัท เอ,20113,UNKNOWN,,false,,\n",
+        encoding="utf-8",
+    )
+    _add_pending(data_dir, "pend01", "0199000001", "บริษัท เอ")
+
+    assert find_name_match_candidates(data_dir) == []
+
+
+def test_name_match_empty_when_no_name_overlaps(data_dir):
+    _add_pending(data_dir, "pend01", "", "บริษัท ที่ไม่มีใครรู้จัก")
+    assert find_name_match_candidates(data_dir) == []
