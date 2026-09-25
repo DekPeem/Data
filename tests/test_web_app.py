@@ -2205,3 +2205,201 @@ def test_overview_entry_editing_unrelated_field_does_not_clobber_existing_raw_au
     assert data["business_type_code"] == "86101"
     assert data["business_type_code_raw"] == "93311"
     assert data["rate_code"] == "40"
+
+
+def test_start_import_bulk_rejects_when_not_exactly_one_zip(client):
+    import io
+
+    res = client.post(
+        "/api/admin/import-bulk",
+        data={"files": (io.BytesIO(b"<html></html>"), "a.xls")},  # ไม่ใช่ .zip
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+    res2 = client.post("/api/admin/import-bulk", data={}, content_type="multipart/form-data")
+    assert res2.status_code == 400
+
+
+def test_start_import_bulk_groups_files_by_folder_and_imports_each(client, monkeypatch, tmp_path):
+    """zip ที่มี 2 โฟลเดอร์ (2 บริษัท) ต้องแยกนำเข้าเป็น 2 กลุ่มอิสระ ไม่ปนกัน — แต่ละกลุ่มได้รับ
+    เฉพาะไฟล์ของโฟลเดอร์ตัวเอง และ site_label ตรงกับชื่อโฟลเดอร์"""
+    import io
+    import zipfile
+
+    monkeypatch.setattr(app_module, "DEFAULT_DOWNLOAD_DIR", tmp_path / "amr_downloads")
+
+    received_calls = []
+
+    def fake_import_amr_from_files(**kwargs):
+        received_calls.append(kwargs)
+        from amr_mapping.models import LoadProfile
+
+        if kwargs.get("on_profile"):
+            kwargs["on_profile"]({"name": f"บริษัท {len(received_calls)}", "account_no": f"01990000000{len(received_calls)}", "meter_no": ""})
+
+        return LoadProfile(
+            business_type_code="63201", rate_code="50", billing_method="TOU",
+            demand_kw={"P": 1, "OP": 1, "H": 1}, energy_kwh={"P": 1, "OP": 1, "H": 1},
+            contract_kva_ref=None, sample_size=1, notes="fake",
+        )
+
+    monkeypatch.setattr(app_module, "import_amr_from_files", fake_import_amr_from_files)
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zf:
+        zf.writestr("Load Profile/06_โรงแรมดิเอ็มเพรสเชียงใหม่/report.xls", "<html>โรงแรม</html>")
+        zf.writestr("Load Profile/07_โรงไม้นันทะ/report.xls", "<html>โรงไม้</html>")
+    zip_buffer.seek(0)
+
+    res = client.post(
+        "/api/admin/import-bulk",
+        data={"files": (zip_buffer, "Load Profile.zip")},
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 200
+    assert res.get_json()["group_count"] == 2
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/import/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    assert status["result"] == {"total": 2, "success": 2, "pending": 0, "error": 0}
+    groups = {g["folder"]: g for g in status["groups"]}
+    assert set(groups) == {"06_โรงแรมดิเอ็มเพรสเชียงใหม่", "07_โรงไม้นันทะ"}
+    assert all(g["status"] == "success" for g in groups.values())
+
+    # แต่ละกลุ่มต้องได้รับแค่ไฟล์ของโฟลเดอร์ตัวเอง ไม่ปนกับอีกกลุ่ม
+    assert len(received_calls) == 2
+    for call in received_calls:
+        assert len(call["file_paths"]) == 1
+    site_labels = {call["site_label"] for call in received_calls}
+    assert site_labels == {"06_โรงแรมดิเอ็มเพรสเชียงใหม่", "07_โรงไม้นันทะ"}
+
+
+def test_start_import_bulk_unknown_business_type_falls_back_to_folder_name(client, monkeypatch, tmp_path):
+    """กลุ่มที่อ่านเลขบัญชี/ชื่อบริษัทจากหัวรายงานไม่ได้เลย (on_profile ไม่ถูกเรียก หรือเรียกด้วยค่า
+    ว่าง) และไม่ทราบประเภทธุรกิจ — ต้องเข้าคิว "รอทราบอัตรา" โดยใช้ชื่อโฟลเดอร์เป็น company_name
+    แทน (ตามที่ผู้ใช้เลือกไว้) ไม่ใช่ปล่อยว่างเปล่าหรือทำให้ job ทั้งหมดพัง"""
+    import io
+    import zipfile
+
+    monkeypatch.setattr(app_module, "DEFAULT_DOWNLOAD_DIR", tmp_path / "amr_downloads")
+    pending_path = tmp_path / "pending_amr_local.csv"
+    monkeypatch.setattr(app_module, "PENDING_AMR_LOCAL_PATH", pending_path)
+
+    def fake_import_amr_from_files(**kwargs):
+        if kwargs.get("on_profile"):
+            kwargs["on_profile"]({"name": "", "account_no": "", "meter_no": ""})
+        raise RuntimeError("ไม่ทราบประเภทธุรกิจ/รหัสอัตราของบัญชีนี้ — กรุณากรอกประเภทธุรกิจและรหัสอัตราเอง")
+
+    monkeypatch.setattr(app_module, "import_amr_from_files", fake_import_amr_from_files)
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zf:
+        zf.writestr("08_Thai Mikami/report.xls", "<html>ไม่มีหัวรายงาน</html>")
+    zip_buffer.seek(0)
+
+    res = client.post(
+        "/api/admin/import-bulk",
+        data={"files": (zip_buffer, "bundle.zip")},
+        content_type="multipart/form-data",
+    )
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/import/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    assert status["result"] == {"total": 1, "success": 0, "pending": 1, "error": 0}
+    group = status["groups"][0]
+    assert group["status"] == "pending"
+    assert group["company_name"] == "08_Thai Mikami"
+    assert group["account_no"] == ""
+
+    from amr_mapping.loader import load_pending_amr_local
+
+    entries = load_pending_amr_local(app_module.PENDING_AMR_LOCAL_PATH)
+    assert len(entries) == 1
+    assert entries[0]["company_name"] == "08_Thai Mikami"
+    assert entries[0]["pending_id"] == group["pending_id"]
+
+
+def test_start_import_bulk_one_group_failing_does_not_stop_the_others(client, monkeypatch, tmp_path):
+    """กลุ่มหนึ่งพังด้วย error อื่นที่ไม่ใช่ "ไม่ทราบประเภทธุรกิจ" (เช่นไฟล์อ่านไม่ได้) — กลุ่มที่
+    เหลือต้องยังนำเข้าต่อไปได้ตามปกติ ไม่ใช่ทั้ง job หยุดไปด้วย"""
+    import io
+    import zipfile
+
+    monkeypatch.setattr(app_module, "DEFAULT_DOWNLOAD_DIR", tmp_path / "amr_downloads")
+
+    def fake_import_amr_from_files(**kwargs):
+        from amr_mapping.models import LoadProfile
+
+        if "broken" in kwargs["site_label"]:
+            raise RuntimeError("ไม่สามารถอ่านข้อมูลจากไฟล์ที่ดาวน์โหลดมาได้เลย")
+        if kwargs.get("on_profile"):
+            kwargs["on_profile"]({"name": "บริษัทปกติ", "account_no": "0199000001", "meter_no": ""})
+        return LoadProfile(
+            business_type_code="63201", rate_code="50", billing_method="TOU",
+            demand_kw={"P": 1, "OP": 1, "H": 1}, energy_kwh={"P": 1, "OP": 1, "H": 1},
+            contract_kva_ref=None, sample_size=1, notes="fake",
+        )
+
+    monkeypatch.setattr(app_module, "import_amr_from_files", fake_import_amr_from_files)
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zf:
+        zf.writestr("broken_company/report.xls", "<html>เสีย</html>")
+        zf.writestr("ok_company/report.xls", "<html>ปกติ</html>")
+    zip_buffer.seek(0)
+
+    res = client.post(
+        "/api/admin/import-bulk",
+        data={"files": (zip_buffer, "bundle.zip")},
+        content_type="multipart/form-data",
+    )
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/import/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    assert status["result"] == {"total": 2, "success": 1, "pending": 0, "error": 1}
+    groups = {g["folder"]: g for g in status["groups"]}
+    assert groups["broken_company"]["status"] == "error"
+    assert groups["ok_company"]["status"] == "success"
+
+
+def test_start_import_bulk_no_recognized_amr_files_returns_400(client, monkeypatch, tmp_path):
+    import io
+    import zipfile
+
+    monkeypatch.setattr(app_module, "DEFAULT_DOWNLOAD_DIR", tmp_path / "amr_downloads")
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zf:
+        zf.writestr("folder/readme.txt", "not an AMR file")
+    zip_buffer.seek(0)
+
+    res = client.post(
+        "/api/admin/import-bulk",
+        data={"files": (zip_buffer, "bundle.zip")},
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"

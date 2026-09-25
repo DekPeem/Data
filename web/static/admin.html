@@ -152,6 +152,7 @@
           <div style="display:flex;gap:8px;">
             <button type="button" class="day-type-btn import-mode-tab-btn active" data-mode="web">🌐 ดึงจากเว็บ PEA</button>
             <button type="button" class="day-type-btn import-mode-tab-btn" data-mode="file">📎 แนบไฟล์ที่มีอยู่แล้ว</button>
+            <button type="button" class="day-type-btn import-mode-tab-btn" data-mode="bulk">📦 นำเข้าหลายบริษัทพร้อมกัน</button>
           </div>
         </div>
 
@@ -278,6 +279,47 @@
 
           <div class="submit-row" style="margin-top: 20px;">
             <button id="submit-file-btn" class="search-button">นำเข้าจากไฟล์ที่แนบ</button>
+          </div>
+        </div>
+
+        <div id="import-mode-bulk" style="display:none;">
+          <div class="hint" style="margin-bottom: 16px;">
+            ใช้ตอนมีโฟลเดอร์รวมไฟล์ AMR ของ<b>หลายบริษัท/ไซต์</b>ไว้ด้วยกัน (เช่น โฟลเดอร์ที่แยกเป็น
+            โฟลเดอร์ย่อยทีละบริษัทใน Google Drive) — <b>คลิกขวาที่โฟลเดอร์นั้นใน Drive → Download</b>
+            จะได้ไฟล์ .zip เดียวที่รวมทุกโฟลเดอร์ย่อยไว้ แนบไฟล์นั้นตรงนี้ได้เลย ระบบจะถือว่าแต่ละ
+            โฟลเดอร์ย่อยชั้นแรกที่มีไฟล์ AMR อยู่ตรงๆ คือคนละบริษัท/ไซต์ แล้วอ่านเลขบัญชีจากหัวรายงาน
+            ของแต่ละไฟล์เองแยกกัน (ถ้าอ่านไม่ได้จะใช้ชื่อโฟลเดอร์แทน) — บริษัทไหนยังไม่ทราบประเภท
+            ธุรกิจจะเข้าคิว <a href="/pending-amr" target="_blank" rel="noopener">"รอทราบอัตรา"</a>
+            ให้อัตโนมัติ ไม่ทำให้บริษัทอื่นที่เหลือหยุดนำเข้าไปด้วย
+          </div>
+
+          <div class="form-grid">
+            <div class="form-field" style="grid-column: 1 / -1;">
+              <label for="f-bulk-zip">ไฟล์ .zip ที่รวมหลายโฟลเดอร์/บริษัท</label>
+              <input id="f-bulk-zip" type="file" accept=".zip">
+            </div>
+
+            <div class="form-field">
+              <label for="f-bulk-kva">KVA ตามสัญญา (ถ้าทราบ — ใช้ค่าเดียวกันทุกบริษัท)</label>
+              <input id="f-bulk-kva" type="number" min="0" step="any" placeholder="เว้นว่างได้ถ้าไม่ทราบ/ไม่เท่ากัน">
+            </div>
+
+            <div class="form-field">
+              <label for="f-bulk-source-label">คำอธิบายที่มา (ไม่บังคับ)</label>
+              <input id="f-bulk-source-label" type="text" placeholder="ห้ามใส่ชื่อ/เลขบัญชีลูกค้า">
+            </div>
+
+            <div class="form-field" style="grid-column: 1 / -1;">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                <input type="checkbox" id="f-bulk-has-solar">
+                ทุกบัญชีในซิปนี้ติดตั้ง Solar / Net Metering แล้ว
+              </label>
+              <div class="hint">ถ้าบางบริษัทติด บางบริษัทไม่ติด ให้นำเข้าแยกทีละบริษัทผ่านแท็บ "แนบไฟล์ที่มีอยู่แล้ว" แทน</div>
+            </div>
+          </div>
+
+          <div class="submit-row" style="margin-top: 20px;">
+            <button id="submit-bulk-btn" class="search-button">นำเข้าทั้งหมดในซิป</button>
           </div>
         </div>
 

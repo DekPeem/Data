@@ -16,14 +16,16 @@ const accountsInput = document.getElementById("f-accounts");
 
 const importModeWebEl = document.getElementById("import-mode-web");
 const importModeFileEl = document.getElementById("import-mode-file");
+const importModeBulkEl = document.getElementById("import-mode-bulk");
 
 document.querySelectorAll(".import-mode-tab-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
     document.querySelectorAll(".import-mode-tab-btn").forEach((b) => b.classList.remove("active"));
     btn.classList.add("active");
-    const isFileMode = btn.dataset.mode === "file";
-    importModeWebEl.style.display = isFileMode ? "none" : "block";
-    importModeFileEl.style.display = isFileMode ? "block" : "none";
+    const mode = btn.dataset.mode;
+    importModeWebEl.style.display = mode === "web" ? "block" : "none";
+    importModeFileEl.style.display = mode === "file" ? "block" : "none";
+    importModeBulkEl.style.display = mode === "bulk" ? "block" : "none";
     formHint.textContent = "";
   });
 });
@@ -1152,6 +1154,129 @@ async function startFileImport() {
 }
 
 submitFileBtn.addEventListener("click", startFileImport);
+
+// ── โหมดนำเข้าหลายบริษัทพร้อมกัน (ไฟล์ .zip เดียว รวมหลายโฟลเดอร์/บริษัท) ──
+
+const submitBulkBtn = document.getElementById("submit-bulk-btn");
+
+const BULK_GROUP_STATUS_TH = {
+  success: { text: "✅ สำเร็จ", color: "#006300" },
+  pending: { text: "📋 รอทราบอัตรา", color: "#8a6100" },
+  error: { text: "❌ ไม่สำเร็จ", color: "#a01818" },
+};
+
+function renderBulkResult(groups) {
+  if (!groups || groups.length === 0) {
+    jobResult.innerHTML = `<div class="search-hint" style="min-height:auto;">ไม่พบกลุ่ม/โฟลเดอร์ที่นำเข้าได้เลย</div>`;
+    return;
+  }
+
+  const rows = groups
+    .map((g) => {
+      const s = BULK_GROUP_STATUS_TH[g.status] || { text: g.status, color: "#55647a" };
+      const label = g.company_name || g.folder || "(ไม่ทราบชื่อโฟลเดอร์)";
+      const sub = g.account_no ? `บัญชี ${g.account_no}` : g.folder && g.folder !== label ? `โฟลเดอร์ ${g.folder}` : "";
+      const detail =
+        g.status === "success"
+          ? `ธุรกิจ ${g.business_type_code || "-"} · อัตรา ${g.rate_code || "-"} · ${g.sample_size ?? "-"} ไฟล์`
+          : g.status === "error"
+            ? g.error || ""
+            : "";
+      return `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid rgba(15,23,42,0.06);">
+          <div>
+            <div style="font-weight:600;">${label}</div>
+            ${sub ? `<div class="hint" style="margin-top:2px;">${sub}</div>` : ""}
+            ${detail ? `<div class="hint" style="margin-top:2px;">${detail}</div>` : ""}
+          </div>
+          <div style="color:${s.color};font-weight:600;white-space:nowrap;">${s.text}</div>
+        </div>`;
+    })
+    .join("");
+
+  const successCount = groups.filter((g) => g.status === "success").length;
+  const pendingCount = groups.filter((g) => g.status === "pending").length;
+  const errorCount = groups.filter((g) => g.status === "error").length;
+
+  jobResult.innerHTML = `
+    <div class="hint" style="margin-bottom:8px;">
+      รวม ${groups.length} กลุ่ม — สำเร็จ ${successCount}, รอทราบอัตรา ${pendingCount}, ไม่สำเร็จ ${errorCount}
+      ${pendingCount > 0 ? `· <a href="/pending-amr" target="_blank" rel="noopener">ไปกรอกประเภทธุรกิจของรายการที่รออยู่ →</a>` : ""}
+    </div>
+    <div>${rows}</div>`;
+}
+
+async function pollBulkJob(jobId, activeBtn) {
+  const res = await fetch(`/api/admin/import/${jobId}`);
+  const data = await res.json();
+
+  setStatusPill(data.status === "running" ? "running" : data.status === "success" ? "success" : "error");
+  jobLog.textContent = (data.logs || []).join("\n");
+  jobLog.scrollTop = jobLog.scrollHeight;
+
+  if (data.status === "running") {
+    setTimeout(() => pollBulkJob(jobId, activeBtn), 1000);
+    return;
+  }
+
+  activeBtn.disabled = false;
+
+  if (data.status === "success") {
+    renderBulkResult(data.groups);
+    loadImportLogLocal().then(loadBusinessTypesTable);
+  } else {
+    jobResult.innerHTML = `<div class="search-hint" style="min-height:auto;">${data.error || "เกิดข้อผิดพลาด"}</div>`;
+  }
+}
+
+async function startBulkImport() {
+  formHint.textContent = "";
+
+  const zipInput = document.getElementById("f-bulk-zip");
+  const files = zipInput.files;
+  const contract_kva = document.getElementById("f-bulk-kva").value;
+  const source_label = document.getElementById("f-bulk-source-label").value.trim();
+  const has_solar = document.getElementById("f-bulk-has-solar").checked;
+
+  if (!files || files.length !== 1) {
+    formHint.textContent = "กรุณาแนบไฟล์ .zip ไฟล์เดียว";
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("files", files[0]);
+  if (contract_kva) formData.append("contract_kva", contract_kva);
+  formData.append("source_label", source_label);
+  formData.append("has_solar", has_solar ? "true" : "false");
+
+  submitBulkBtn.disabled = true;
+  jobArea.style.display = "flex";
+  jobLog.textContent = "";
+  jobResult.innerHTML = "";
+  setStatusPill("running");
+
+  try {
+    const res = await fetch("/api/admin/import-bulk", { method: "POST", body: formData });
+    const data = await res.json();
+
+    if (!res.ok) {
+      submitBulkBtn.disabled = false;
+      setStatusPill("error");
+      jobLog.textContent = data.message || "เกิดข้อผิดพลาด";
+      return;
+    }
+
+    jobLog.textContent = `📦 พบ ${data.group_count} กลุ่ม/โฟลเดอร์ — กำลังนำเข้าทีละกลุ่ม...`;
+    pollBulkJob(data.job_id, submitBulkBtn);
+  } catch (err) {
+    submitBulkBtn.disabled = false;
+    formHint.textContent = "เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ";
+    console.error(err);
+  }
+}
+
+submitBulkBtn.addEventListener("click", startBulkImport);
+
 loadBusinessTypes();
 // ต้องโหลด import log ให้เสร็จก่อน (เติม importLogEntries) แล้วค่อยวาดการ์ดประเภทธุรกิจ ไม่งั้น
 // ชื่อบริษัทในการ์ดจะว่างเพราะ fetch สองอันแข่งกัน (race condition)

@@ -21,7 +21,7 @@ import uuid
 import zipfile
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -1395,6 +1395,107 @@ def _run_import_file_job(job_id: str, file_paths: List[str], params: dict) -> No
             _JOBS[job_id]["error"] = str(e)
 
 
+def _run_import_bulk_job(job_id: str, groups: Dict[str, List[str]], params: dict) -> None:
+    """นำเข้าทีละกลุ่ม (1 กลุ่ม = 1 โฟลเดอร์ = สันนิษฐานว่า 1 บริษัท/ไซต์) ต่อเนื่องกันไปจนครบ —
+    กลุ่มไหนพัง (ไม่ว่าจะเพราะไม่ทราบประเภทธุรกิจ/รหัสอัตรา หรือไฟล์อ่านไม่ได้) ต้องไม่ทำให้กลุ่ม
+    อื่นที่เหลือหยุดนำเข้าไปด้วย (ต่างจาก _run_import_file_job ที่มีแค่กลุ่มเดียว พังแล้วจบเลยได้)
+    บันทึกผลแต่ละกลุ่มไว้ใน _JOBS[job_id]["groups"] ให้ครบทุกกลุ่มเมื่อจบ job"""
+
+    def log(msg: str) -> None:
+        with _JOBS_LOCK:
+            _JOBS[job_id]["logs"].append(msg)
+
+    results: List[dict] = []
+
+    for folder_name, file_paths in groups.items():
+        group_label = folder_name or "(ไฟล์ที่ root ของ zip ไม่มีโฟลเดอร์ห่อ)"
+        profile_info: dict = {}
+
+        def on_profile(info: dict, _store=profile_info) -> None:
+            _store.update(info)
+
+        log(f"📂 กำลังนำเข้ากลุ่ม: {group_label} ({len(file_paths)} ไฟล์)")
+        try:
+            profile = import_amr_from_files(
+                file_paths=file_paths,
+                contract_kva=params.get("contract_kva"),
+                source_label=params.get("source_label", ""),
+                has_solar=params.get("has_solar", False),
+                on_profile=on_profile,
+                log=log,
+                site_label=folder_name,
+            )
+            results.append(
+                {
+                    "folder": folder_name,
+                    "status": "success",
+                    "account_no": profile_info.get("account_no") or "",
+                    "company_name": profile_info.get("name") or "",
+                    "business_type_code": profile.business_type_code,
+                    "rate_code": profile.rate_code,
+                    "sample_size": profile.sample_size,
+                }
+            )
+            log(f"✅ นำเข้ากลุ่ม {group_label} สำเร็จ")
+        except Exception as e:  # noqa: BLE001 — กลุ่มหนึ่งพังต้องไม่ทำให้กลุ่มอื่นหยุดนำเข้าไปด้วย
+            account_no = (profile_info.get("account_no") or "").strip()
+            # ไม่มีชื่อจากหัวรายงานเลย (อ่านไม่ได้/ไฟล์ไม่มีตารางหัวรายงาน) — ใช้ชื่อโฟลเดอร์แทน
+            # ตามที่ตกลงกันไว้ (ดีกว่าไม่มีชื่ออะไรให้แสดงเลย)
+            company_name = (profile_info.get("name") or "").strip() or folder_name or "(ไม่ทราบชื่อ)"
+
+            if _UNKNOWN_BUSINESS_TYPE_OR_RATE_ERROR in str(e):
+                pending_id = uuid.uuid4().hex
+                try:
+                    append_pending_amr_local(
+                        {
+                            "pending_id": pending_id,
+                            "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                            "account_no": account_no,
+                            "company_name": company_name,
+                            "meter_no": profile_info.get("meter_no") or "",
+                            "file_paths": "|".join(file_paths),
+                            "contract_kva": "" if params.get("contract_kva") is None else params["contract_kva"],
+                            "has_solar": "true" if params.get("has_solar") else "false",
+                            "source_label": params.get("source_label", ""),
+                        },
+                        PENDING_AMR_LOCAL_PATH,
+                    )
+                    results.append(
+                        {
+                            "folder": folder_name,
+                            "status": "pending",
+                            "pending_id": pending_id,
+                            "account_no": account_no,
+                            "company_name": company_name,
+                        }
+                    )
+                    log(f"📋 กลุ่ม {group_label} ยังไม่ทราบประเภทธุรกิจ/อัตรา — บันทึกไว้รอทราบอัตราแล้ว")
+                    continue
+                except OSError as save_err:
+                    log(f"⚠️ บันทึกรายการรอทราบอัตราของกลุ่ม {group_label} ไม่สำเร็จ: {save_err}")
+
+            results.append(
+                {
+                    "folder": folder_name,
+                    "status": "error",
+                    "error": str(e),
+                    "account_no": account_no,
+                    "company_name": company_name,
+                }
+            )
+            log(f"❌ กลุ่ม {group_label} นำเข้าไม่สำเร็จ: {e}")
+
+    with _JOBS_LOCK:
+        _JOBS[job_id]["status"] = "success"
+        _JOBS[job_id]["groups"] = results
+        _JOBS[job_id]["result"] = {
+            "total": len(results),
+            "success": sum(1 for r in results if r["status"] == "success"),
+            "pending": sum(1 for r in results if r["status"] == "pending"),
+            "error": sum(1 for r in results if r["status"] == "error"),
+        }
+
+
 # นามสกุลไฟล์ AMR ที่รองรับจริง (รูปแบบเดียวกับที่ pea_ingest.parse_interval_report อ่านได้) — ใช้
 # กรองทั้งตอนรับไฟล์แนบตรงๆ และตอนแตกไฟล์ .zip (ข้อ _save_uploaded_amr_files ด้านล่าง) เพื่อข้าม
 # ไฟล์แถม/ไฟล์ระบบที่มักติดมาใน .zip (เช่น __MACOSX/, .DS_Store, Thumbs.db) แทนที่จะพยายามอ่านแล้ว
@@ -1468,6 +1569,63 @@ def _save_uploaded_amr_files(files, upload_dir: Path) -> List[str]:
     return file_paths
 
 
+def _extract_bulk_amr_zip(zip_path: Path, upload_dir: Path) -> Dict[str, List[str]]:
+    """แตกไฟล์ .zip ที่รวมโฟลเดอร์ของ "หลายบริษัท/ไซต์" ไว้ในไฟล์เดียว (เช่น ดาวน์โหลดทั้งโฟลเดอร์
+    จาก Google Drive มาเป็น .zip — แต่ละโฟลเดอร์ย่อยคือลูกค้าคนละราย) ต่างจาก _save_uploaded_amr_files
+    ตรงที่ต้อง "แยกกลุ่ม" ไฟล์ตามโฟลเดอร์ที่บรรจุมันโดยตรง (immediate parent folder) แทนที่จะรวมทุก
+    ไฟล์เป็นก้อนเดียว — คืน dict {ชื่อโฟลเดอร์ (อาจเป็นภาษาไทย): [path ไฟล์ที่แตกออกมาแล้ว]}
+    ไฟล์ที่อยู่ที่ root ของ zip เลย (ไม่มีโฟลเดอร์ย่อยห่อ) จัดกลุ่มรวมกันภายใต้ key "" (ค่าว่าง)
+
+    เขียนไฟล์แต่ละกลุ่มลงดิสก์ใต้โฟลเดอร์ย่อยที่ตั้งชื่อด้วย index (group_0, group_1, ...) แทนชื่อ
+    โฟลเดอร์จริงในซิป เพราะชื่อโฟลเดอร์อาจมีอักขระที่ไม่ปลอดภัยเป็นชื่อไฟล์ระบบ (secure_filename()
+    ตัดอักขระนอก ASCII ทิ้งหมด ชื่อภาษาไทยล้วนๆ จะกลายเป็นสตริงว่างเปล่า ชนกันได้) — ชื่อโฟลเดอร์จริง
+    (ภาษาไทยได้เต็มที่) ยังคงเก็บไว้เป็น key ของ dict ที่คืนออกไป ใช้เป็น site_label/ชื่อบริษัทสำรอง
+    ได้ตามปกติ ไม่ผ่าน secure_filename เลย เพราะไม่ได้เอาไปใช้เป็นส่วนหนึ่งของ path ในดิสก์"""
+
+    groups: Dict[str, List[str]] = {}
+    group_dirs: Dict[str, Path] = {}
+
+    with zipfile.ZipFile(zip_path) as zf:
+        members = [m for m in zf.infolist() if not m.is_dir()]
+        if len(members) > _MAX_ZIP_MEMBERS:
+            raise ValueError(f"ไฟล์ zip มีไฟล์ข้างในเยอะเกินไป ({len(members)} ไฟล์)")
+        total_size = sum(m.file_size for m in members)
+        if total_size > _MAX_ZIP_EXTRACTED_BYTES:
+            raise ValueError("ไฟล์ zip ขนาดหลังแตกไฟล์ใหญ่เกินไป")
+
+        for i, member in enumerate(members):
+            parts = Path(member.filename).parts
+            if not parts:
+                continue
+            name = parts[-1]
+            # ข้ามไฟล์ระบบที่โปรแกรมซิปมักแถมมาเอง เหมือน _save_uploaded_amr_files
+            if not name or name.startswith(".") or "__MACOSX" in parts:
+                continue
+            if not name.lower().endswith(_AMR_FILE_EXTENSIONS):
+                continue
+
+            group_key = parts[-2] if len(parts) >= 2 else ""
+
+            if group_key not in group_dirs:
+                group_dir = upload_dir / f"group_{len(group_dirs)}"
+                group_dir.mkdir(parents=True, exist_ok=True)
+                group_dirs[group_key] = group_dir
+                groups[group_key] = []
+
+            group_dir = group_dirs[group_key]
+            safe_name = secure_filename(name) or f"zip_entry_{i}"
+            dest = (group_dir / safe_name).resolve()
+            if group_dir.resolve() not in dest.parents and dest != group_dir.resolve():
+                continue  # ป้องกัน zip slip อีกชั้น เหมือน _save_uploaded_amr_files
+            if dest.exists():
+                dest = group_dir / f"{i}_{safe_name}"
+            with zf.open(member) as src, open(dest, "wb") as out:
+                out.write(src.read())
+            groups[group_key].append(str(dest))
+
+    return {k: v for k, v in groups.items() if v}
+
+
 @app.route("/api/admin/import-file", methods=["POST"])
 def api_start_import_file():
     """เริ่ม job นำเข้า AMR จากไฟล์ที่แนบมาโดยตรง (ไม่ต้อง login เว็บ PEA เลย) — ใช้เมื่อมีไฟล์
@@ -1530,6 +1688,65 @@ def api_start_import_file():
     thread.start()
 
     return jsonify({"job_id": job_id})
+
+
+@app.route("/api/admin/import-bulk", methods=["POST"])
+def api_start_import_bulk():
+    """เริ่ม job นำเข้า AMR แบบกลุ่ม — ใช้เมื่อมีโฟลเดอร์ที่รวบรวมไฟล์ AMR ของลูกค้า "หลายราย"
+    ไว้ด้วยกัน (เช่น ดาวน์โหลดทั้งโฟลเดอร์จาก Google Drive มาเป็น .zip ทีเดียว แต่ละโฟลเดอร์ย่อย
+    คือลูกค้าคนละราย) ต่างจาก /api/admin/import-file ที่ออกแบบไว้สำหรับ "1 ลูกค้า หลายเดือน"
+    เท่านั้น — endpoint นี้จะแยกกลุ่มไฟล์ตามโฟลเดอร์ที่บรรจุมันโดยตรงในซิป (ดู
+    _extract_bulk_amr_zip) แล้วนำเข้าแยกทีละกลุ่มอิสระจากกัน กลุ่มไหนอ่านเลขบัญชีได้และมีในทะเบียน
+    ลูกค้าแล้ว นำเข้าเลย กลุ่มไหนยังไม่ทราบประเภทธุรกิจ เข้าคิว "รอทราบอัตรา" เหมือนโหมดไฟล์เดี่ยว
+    ไม่ทำให้กลุ่มอื่นที่เหลือหยุดนำเข้าไปด้วย (ดู _run_import_bulk_job)"""
+
+    files = request.files.getlist("files")
+    if len(files) != 1 or not (files[0].filename or "").lower().endswith(".zip"):
+        return jsonify(
+            {
+                "error": "invalid_request",
+                "message": "กรุณาแนบไฟล์ .zip ไฟล์เดียว (ดาวน์โหลดทั้งโฟลเดอร์จาก Google Drive หรือที่เก็บไฟล์ของคุณมาเป็น .zip ก่อน)",
+            }
+        ), 400
+
+    source_label = (request.form.get("source_label") or "").strip()
+    contract_kva_raw = (request.form.get("contract_kva") or "").strip()
+    has_solar = (request.form.get("has_solar") or "").strip().lower() in ("1", "true", "yes", "on")
+
+    contract_kva: Optional[float] = None
+    if contract_kva_raw:
+        try:
+            contract_kva = float(contract_kva_raw)
+        except ValueError:
+            return jsonify({"error": "invalid_request", "message": "KVA ตามสัญญาต้องเป็นตัวเลข"}), 400
+
+    job_id = uuid.uuid4().hex
+    upload_dir = DEFAULT_DOWNLOAD_DIR / "uploaded" / job_id
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    zip_path = upload_dir / "_bulk_upload.zip"
+    files[0].save(zip_path)
+
+    try:
+        groups = _extract_bulk_amr_zip(zip_path, upload_dir)
+    except (ValueError, zipfile.BadZipFile) as e:
+        return jsonify({"error": "invalid_request", "message": str(e)}), 400
+    finally:
+        zip_path.unlink(missing_ok=True)
+
+    if not groups:
+        return jsonify(
+            {"error": "invalid_request", "message": "ไม่พบไฟล์ AMR ที่รองรับ (.xls/.xlsx/.html/.htm) ในไฟล์ที่แนบมาเลย"}
+        ), 400
+
+    with _JOBS_LOCK:
+        _JOBS[job_id] = {"status": "running", "logs": [], "result": None, "error": None, "groups": []}
+
+    params = {"source_label": source_label, "contract_kva": contract_kva, "has_solar": has_solar}
+
+    thread = threading.Thread(target=_run_import_bulk_job, args=(job_id, groups, params), daemon=True)
+    thread.start()
+
+    return jsonify({"job_id": job_id, "group_count": len(groups)})
 
 
 @app.route("/api/admin/import/<job_id>")
