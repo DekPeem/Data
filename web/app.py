@@ -1417,14 +1417,22 @@ def _known_account_numbers(reference) -> set:
 
 
 def _known_company_names(reference) -> set:
-    """รวมชื่อลูกค้าที่มีอยู่แล้วในทะเบียน (ผ่าน normalize_company_name เดียวกับที่
+    """รวมชื่อบริษัทที่ "รู้จักอยู่แล้ว" ทั้งหมด (ผ่าน normalize_company_name เดียวกับที่
     scripts/dedupe_pending_amr.py ใช้ — ตัด prefix เลขลำดับโฟลเดอร์ + ช่องว่างซ้ำ/พิมพ์เล็กออกก่อน)
-    ใช้เป็นทางเลือกสำรองตอนเช็คบัญชีซ้ำก่อนนำเข้าโหมด "หลายบริษัทพร้อมกัน" สำหรับกลุ่มที่อ่านเลขบัญชี
-    จากหัวรายงานไม่ได้เลย (ไม่มีเลขบัญชีให้เทียบแบบ _known_account_numbers) ⚠️ เทียบด้วยชื่อเท่านั้น
-    แม่นน้อยกว่าเทียบด้วยเลขบัญชี (อาจมีบริษัทคนละรายชื่อพ้องกันได้) แต่ไฟล์ AMR ดิบยังถูกเก็บไว้ใน
-    amr_downloads/uploaded/ เสมอ ไม่ได้ถูกลบทิ้งแม้จะข้ามไป (ดู log ของ job นี้ย้อนหลังได้)"""
+    รวมทั้งชื่อในทะเบียนลูกค้า (customers_local.csv) และชื่อจากประวัติที่เคยนำเข้าสำเร็จมาก่อน
+    (import_log_local.csv) แม้จะไม่มีในทะเบียนก็ตาม — เหมือน _known_account_numbers แต่เทียบด้วยชื่อ
+    แทน ใช้เป็นทางเลือกสำรองตอนเช็คบัญชีซ้ำก่อนนำเข้าโหมด "หลายบริษัทพร้อมกัน" สำหรับกลุ่มที่อ่าน
+    เลขบัญชีจากหัวรายงานไม่ได้เลย (ไม่มีเลขบัญชีให้เทียบแบบ _known_account_numbers) ⚠️ เทียบด้วยชื่อ
+    เท่านั้น แม่นน้อยกว่าเทียบด้วยเลขบัญชี (อาจมีบริษัทคนละรายชื่อพ้องกันได้) แต่ไฟล์ AMR ดิบยังถูกเก็บ
+    ไว้ใน amr_downloads/uploaded/ เสมอ ไม่ได้ถูกลบทิ้งแม้จะข้ามไป (ดู log ของ job นี้ย้อนหลังได้)"""
 
-    return {normalize_company_name(c.name) for c in reference.customers if c.name}
+    names = {normalize_company_name(c.name) for c in reference.customers if c.name}
+    for e in load_import_log_local(DEFAULT_DATA_DIR / "import_log_local.csv"):
+        company_name = (e.get("company_name") or "").strip()
+        if company_name:
+            names.add(normalize_company_name(company_name))
+    names.discard("")
+    return names
 
 
 def _run_import_bulk_job(job_id: str, groups: Dict[str, List[str]], params: dict) -> None:

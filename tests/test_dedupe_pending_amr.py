@@ -310,6 +310,32 @@ def test_name_match_ignores_leading_folder_index_prefix(data_dir):
     assert customer.account_no == "020006578327"
 
 
+def test_name_match_finds_company_known_only_through_import_log_history(data_dir):
+    """เจอในการใช้งานจริง: บัญชีที่เคยนำเข้าสำเร็จผ่านโหมด "ดึงจากเว็บ PEA" ไม่เคยผูกกับทะเบียน
+    ลูกค้าเลย (มีแค่ import_log_local.csv ไม่มีใน customers_local.csv) — ต้องยังจับคู่ชื่อได้ ไม่ใช่
+    แค่เทียบกับทะเบียนลูกค้าอย่างเดียว ไม่งั้นรายการซ้ำแบบนี้จะไม่มีวันถูกจับได้เลย"""
+
+    append_import_log_local(
+        {
+            "imported_at": "2026-07-01T00:00:00+00:00",
+            "business_type_code": "20113",
+            "rate_code": "UNKNOWN",
+            "company_name": "บริษัท โนเบลเอ็นซี จำกัด",
+            "account_no": "020006578327",
+            "has_solar": "false",
+        },
+        data_dir / "import_log_local.csv",
+    )
+    _add_pending(data_dir, "pend01", "", "15_บริษัท โนเบลเอ็นซี จำกัด")
+
+    matches = find_name_match_candidates(data_dir)
+    assert len(matches) == 1
+    entry, customer = matches[0]
+    assert entry["pending_id"] == "pend01"
+    assert customer.account_no == "020006578327"
+    assert customer.business_type_code == "20113"
+
+
 def test_name_match_ignores_case_and_extra_whitespace(data_dir):
     (data_dir / "customers_local.csv").write_text(
         "account_no,name,business_type_code,rate_code,contract_kva,has_amr,has_solar,business_type_code_raw\n"

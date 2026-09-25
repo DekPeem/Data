@@ -2538,6 +2538,72 @@ def test_start_import_bulk_skips_by_name_when_account_no_unreadable(client, monk
     assert group["folder"] == "15_บริษัท โนเบลเอ็นซี จำกัด"
 
 
+def test_start_import_bulk_skips_by_name_for_company_known_only_through_import_log(client, monkeypatch, tmp_path):
+    """เจอในการใช้งานจริง: บัญชีที่เคยนำเข้าสำเร็จผ่านโหมด "ดึงจากเว็บ PEA" ไม่เคยผูกกับทะเบียน
+    ลูกค้าเลย (มีแค่ import_log_local.csv ไม่มีใน customers_local.csv) — ชื่อที่อ่านจากไฟล์ไม่ได้
+    ก็ต้องยังเทียบกับชื่อใน import_log ได้ ไม่ใช่แค่ทะเบียนลูกค้าอย่างเดียว"""
+    import io
+    import zipfile
+
+    from amr_mapping.loader import append_import_log_local
+
+    monkeypatch.setattr(app_module, "DEFAULT_DOWNLOAD_DIR", tmp_path / "amr_downloads")
+
+    tmp_data_dir = tmp_path / "reference"
+    tmp_data_dir.mkdir()
+    (tmp_data_dir / "business_types.csv").write_text("code,name_th,category,notes\nTESTBIZ,ธุรกิจทดสอบ,test,\n", encoding="utf-8")
+    (tmp_data_dir / "rate_schedules.csv").write_text("code,billing_method,voltage_level,description\n50,TOU,LV,\n", encoding="utf-8")
+    (tmp_data_dir / "load_profiles.csv").write_text(
+        "business_type_code,rate_code,billing_method,demand_p_kw,demand_op_kw,demand_h_kw,"
+        "energy_p_kwh,energy_op_kwh,energy_h_kwh,contract_kva_ref,sample_size,notes\n",
+        encoding="utf-8",
+    )
+    (tmp_data_dir / "load_curves.csv").write_text(
+        "business_type_code,rate_code,day_type,hour,kw_fraction\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_data_dir)
+    append_import_log_local(
+        {
+            "imported_at": "2026-07-01T00:00:00+00:00",
+            "business_type_code": "20113",
+            "rate_code": "UNKNOWN",
+            "company_name": "บริษัท โนเบลเอ็นซี จำกัด",
+            "account_no": "020006578327",
+            "has_solar": "false",
+        },
+        tmp_data_dir / "import_log_local.csv",
+    )
+
+    def fake_import_amr_from_files(**kwargs):
+        raise AssertionError("ไม่ควรถูกเรียกเลย — กลุ่มนี้ต้องถูกข้ามด้วยการเทียบชื่อ")
+
+    monkeypatch.setattr(app_module, "import_amr_from_files", fake_import_amr_from_files)
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zf:
+        zf.writestr("15_บริษัท โนเบลเอ็นซี จำกัด/report.xls", "<html>ไม่มีตารางหัวรายงาน</html>")
+    zip_buffer.seek(0)
+
+    res = client.post(
+        "/api/admin/import-bulk",
+        data={"files": (zip_buffer, "bundle.zip")},
+        content_type="multipart/form-data",
+    )
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/import/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    assert status["result"] == {"total": 1, "success": 0, "pending": 0, "error": 0, "skipped": 1}
+    group = status["groups"][0]
+    assert group["status"] == "skipped"
+
+
 def test_start_import_bulk_no_recognized_amr_files_returns_400(client, monkeypatch, tmp_path):
     import io
     import zipfile

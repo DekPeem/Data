@@ -67,6 +67,7 @@ from amr_mapping.loader import (
     normalize_company_name,
     remove_pending_amr_local,
 )
+from amr_mapping.models import Customer
 
 
 def _file_signatures_by_account(data_dir: Path) -> Dict[str, set]:
@@ -185,14 +186,27 @@ def find_resolvable_entries(data_dir: Path) -> List[Tuple[dict, str, str]]:
 
 
 def find_name_match_candidates(data_dir: Path) -> List[Tuple[dict, "object"]]:
-    """คืน list ของ (entry, ลูกค้าที่มีอยู่แล้วในทะเบียน) ที่ "ชื่อตรงกัน" สำหรับรายการ pending ที่
-    ไม่มีเลขบัญชีเลย (เทียบเลขบัญชีแบบกลุ่มที่ 1/2 ไม่ได้) — เทียบชื่อแบบตัดช่องว่างซ้ำ/พิมพ์เล็ก
-    หมดก่อนเทียบ (กัน "บริษัท เอ" vs "บริษัท เอ " หรือตัวพิมพ์ใหญ่-เล็กต่างกันไม่ตรงกันเฉยๆ) แต่ก็ยัง
-    เป็นแค่การเทียบชื่อ ไม่ใช่เลขบัญชี — อาจมีบริษัทคนละรายชื่อพ้องกันได้ ⚠️ ต้องเช็คเองก่อนลบเสมอ
-    (ดู docstring ของโมดูล กลุ่มที่ 3)"""
+    """คืน list ของ (entry, ลูกค้าที่มีอยู่แล้ว) ที่ "ชื่อตรงกัน" สำหรับรายการ pending ที่ไม่มีเลข
+    บัญชีเลย (เทียบเลขบัญชีแบบกลุ่มที่ 1/2 ไม่ได้) — เทียบชื่อแบบตัดช่องว่างซ้ำ/พิมพ์เล็ก หมดก่อน
+    เทียบ (กัน "บริษัท เอ" vs "บริษัท เอ " หรือตัวพิมพ์ใหญ่-เล็กต่างกันไม่ตรงกันเฉยๆ) รวมทั้งชื่อใน
+    ทะเบียนลูกค้า (customers_local.csv) และชื่อจากประวัติที่เคยนำเข้าสำเร็จมาก่อน
+    (import_log_local.csv) แม้จะไม่มีในทะเบียนก็ตาม (บัญชีที่มีแค่ประวัติจะสร้าง Customer จำลองขึ้น
+    มาเทียบ — ไม่มีอยู่จริงในทะเบียน) แต่ก็ยังเป็นแค่การเทียบชื่อ ไม่ใช่เลขบัญชี — อาจมีบริษัทคนละราย
+    ชื่อพ้องกันได้ ⚠️ ต้องเช็คเองก่อนลบเสมอ (ดู docstring ของโมดูล กลุ่มที่ 3)"""
 
     reference = load_reference_data(data_dir)
     customers_by_name = {normalize_company_name(c.name): c for c in reference.customers if c.name}
+
+    for e in load_import_log_local(data_dir / "import_log_local.csv"):
+        company_name = (e.get("company_name") or "").strip()
+        normalized = normalize_company_name(company_name)
+        if normalized and normalized not in customers_by_name:
+            customers_by_name[normalized] = Customer(
+                account_no=(e.get("account_no") or "").strip(),
+                name=company_name,
+                business_type_code=(e.get("business_type_code") or "").strip() or None,
+                rate_code=(e.get("rate_code") or "").strip() or None,
+            )
 
     pending_entries = load_pending_amr_local(data_dir / "pending_amr_local.csv")
 
