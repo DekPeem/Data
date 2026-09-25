@@ -2451,3 +2451,65 @@ def test_start_import_bulk_allows_more_files_than_single_file_mode_limit(client,
 
     assert status["status"] == "success"
     assert status["result"]["success"] == 1
+
+
+def test_start_import_bulk_groups_by_company_folder_not_generic_nested_subfolder(client, monkeypatch, tmp_path):
+    """เจอจริงจากผู้ใช้: บางบริษัทมีโฟลเดอร์ย่อยซ้อนอีกชั้นก่อนถึงไฟล์ (เช่น "raw_data",
+    "amr_data") และชื่อโฟลเดอร์ย่อยพวกนี้ซ้ำกันข้ามบริษัท — ถ้าจัดกลุ่มตาม "โฟลเดอร์ที่บรรจุไฟล์
+    โดยตรง" (immediate parent) เฉยๆ จะเอาไฟล์จากคนละบริษัทมาปนกันในกลุ่มเดียวผิดๆ ต้องจัดกลุ่มตาม
+    โฟลเดอร์บริษัท (ชั้นที่อยู่ใต้โฟลเดอร์ห่อหุ้มร่วม เช่น "Load Profile") แทน แม้ความลึกของแต่ละ
+    บริษัทจะไม่เท่ากันก็ตาม"""
+    import io
+    import zipfile
+
+    monkeypatch.setattr(app_module, "DEFAULT_DOWNLOAD_DIR", tmp_path / "amr_downloads")
+
+    received_calls = []
+
+    def fake_import_amr_from_files(**kwargs):
+        received_calls.append(kwargs)
+        from amr_mapping.models import LoadProfile
+
+        return LoadProfile(
+            business_type_code="63201", rate_code="50", billing_method="TOU",
+            demand_kw={"P": 1, "OP": 1, "H": 1}, energy_kwh={"P": 1, "OP": 1, "H": 1},
+            contract_kva_ref=None, sample_size=1, notes="fake",
+        )
+
+    monkeypatch.setattr(app_module, "import_amr_from_files", fake_import_amr_from_files)
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zf:
+        # บริษัท A: มีโฟลเดอร์ย่อย "raw_data" ซ้อนอีกชั้น
+        zf.writestr("Load Profile/01_Thaibengun/raw_data/report1.xls", "<html>A1</html>")
+        zf.writestr("Load Profile/01_Thaibengun/raw_data/report2.xls", "<html>A2</html>")
+        # บริษัท B: มีโฟลเดอร์ย่อยชื่อ "raw_data" เหมือนกัน (ชื่อซ้ำ แต่เป็นคนละบริษัท!)
+        zf.writestr("Load Profile/02_SomeOtherCompany/raw_data/report1.xls", "<html>B1</html>")
+        # บริษัท C: ไม่มีโฟลเดอร์ย่อยซ้อน ไฟล์อยู่ตรงในโฟลเดอร์บริษัทเลย
+        zf.writestr("Load Profile/03_บริษัท โนเบลเอ็นซี จำกัด/report.xls", "<html>C</html>")
+    zip_buffer.seek(0)
+
+    res = client.post(
+        "/api/admin/import-bulk",
+        data={"files": (zip_buffer, "Load Profile.zip")},
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 200
+    assert res.get_json()["group_count"] == 3  # ต้องได้ 3 กลุ่ม (3 บริษัท) ไม่ใช่ 2 (ถ้าปนกันผิด)
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/import/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    assert status["result"] == {"total": 3, "success": 3, "pending": 0, "error": 0}
+    groups = {g["folder"] for g in status["groups"]}
+    assert groups == {"01_Thaibengun", "02_SomeOtherCompany", "03_บริษัท โนเบลเอ็นซี จำกัด"}
+
+    # บริษัท A ต้องได้ 2 ไฟล์ของตัวเอง ไม่ปนกับบริษัท B (ที่มีโฟลเดอร์ย่อยชื่อ "raw_data" เหมือนกัน)
+    file_counts = sorted(len(call["file_paths"]) for call in received_calls)
+    assert file_counts == [1, 1, 2]

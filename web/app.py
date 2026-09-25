@@ -1577,12 +1577,40 @@ def _save_uploaded_amr_files(files, upload_dir: Path) -> List[str]:
     return file_paths
 
 
+def _common_wrapper_depth(all_parts: List[tuple]) -> int:
+    """หาจำนวนชั้นโฟลเดอร์ "ห่อหุ้ม" ที่ทุกไฟล์ในซิปมีร่วมกัน (เช่น Google Drive มักห่อทั้งโฟลเดอร์
+    ที่ดาวน์โหลดไว้ในโฟลเดอร์ชื่อเดียวกันเสมอ — "Load Profile/...") เพื่อใช้ตัดออกก่อนหาว่าชั้น
+    ถัดไปคือ "โฟลเดอร์บริษัท" จริงๆ — ต่างจากการดูแค่ "โฟลเดอร์ที่บรรจุไฟล์โดยตรง" (immediate
+    parent) ตรงที่รองรับกรณีบางบริษัทมีโฟลเดอร์ย่อยซ้อนอีกชั้นได้ (เช่น "บริษัทเอ/raw_data/ไฟล์.xls")
+    โดยไม่ทำให้ไฟล์จากบริษัทต่างกันที่บังเอิญมีชื่อโฟลเดอร์ย่อยชั้นในซ้ำกัน (เช่น "raw_data",
+    "amr_data", "output" — เจอจริงจากผู้ใช้) ถูกจัดกลุ่มปนกันผิดๆ
+
+    หยุดนับก่อนที่จะตัดจนไฟล์บางไฟล์ไม่เหลือชั้นโฟลเดอร์ของตัวเองเลย (กันกรณีมีไฟล์หลุดอยู่ตื้นกว่า
+    ไฟล์อื่นปนอยู่ด้วย) คืน 0 ถ้าไม่มีชั้นห่อหุ้มร่วมกันเลย (เช่น zip ที่มีโฟลเดอร์บริษัทอยู่ที่ root
+    ตรงๆ หลายโฟลเดอร์ ไม่มีโฟลเดอร์ห่อหุ้มชั้นเดียวครอบทุกอันไว้)"""
+
+    if not all_parts:
+        return 0
+    depth = 0
+    while True:
+        # ต้องเหลืออย่างน้อย 2 ส่วน (ชื่อโฟลเดอร์บริษัท + ชื่อไฟล์) หลังตัด ถึงจะตัดต่อได้อีกชั้น
+        if any(len(parts) <= depth + 2 for parts in all_parts):
+            break
+        first_seg = all_parts[0][depth]
+        if not all(parts[depth] == first_seg for parts in all_parts):
+            break
+        depth += 1
+    return depth
+
+
 def _extract_bulk_amr_zip(zip_path: Path, upload_dir: Path) -> Dict[str, List[str]]:
     """แตกไฟล์ .zip ที่รวมโฟลเดอร์ของ "หลายบริษัท/ไซต์" ไว้ในไฟล์เดียว (เช่น ดาวน์โหลดทั้งโฟลเดอร์
     จาก Google Drive มาเป็น .zip — แต่ละโฟลเดอร์ย่อยคือลูกค้าคนละราย) ต่างจาก _save_uploaded_amr_files
-    ตรงที่ต้อง "แยกกลุ่ม" ไฟล์ตามโฟลเดอร์ที่บรรจุมันโดยตรง (immediate parent folder) แทนที่จะรวมทุก
-    ไฟล์เป็นก้อนเดียว — คืน dict {ชื่อโฟลเดอร์ (อาจเป็นภาษาไทย): [path ไฟล์ที่แตกออกมาแล้ว]}
-    ไฟล์ที่อยู่ที่ root ของ zip เลย (ไม่มีโฟลเดอร์ย่อยห่อ) จัดกลุ่มรวมกันภายใต้ key "" (ค่าว่าง)
+    ตรงที่ต้อง "แยกกลุ่ม" ไฟล์ตามโฟลเดอร์บริษัท (ดู _common_wrapper_depth — ไม่ใช่แค่โฟลเดอร์ที่บรรจุ
+    ไฟล์โดยตรง เพราะบางบริษัทมีโฟลเดอร์ย่อยซ้อนอีกชั้น) แทนที่จะรวมทุกไฟล์เป็นก้อนเดียว — คืน dict
+    {ชื่อโฟลเดอร์บริษัท (อาจเป็นภาษาไทย): [path ไฟล์ที่แตกออกมาแล้ว]} ไฟล์ที่อยู่ตื้นเกินกว่าจะมี
+    ชั้นโฟลเดอร์บริษัทเป็นของตัวเองเลย (เช่น อยู่ที่ root ของ zip ตรงๆ) จัดกลุ่มรวมกันภายใต้ key ""
+    (ค่าว่าง)
 
     เขียนไฟล์แต่ละกลุ่มลงดิสก์ใต้โฟลเดอร์ย่อยที่ตั้งชื่อด้วย index (group_0, group_1, ...) แทนชื่อ
     โฟลเดอร์จริงในซิป เพราะชื่อโฟลเดอร์อาจมีอักขระที่ไม่ปลอดภัยเป็นชื่อไฟล์ระบบ (secure_filename()
@@ -1601,18 +1629,25 @@ def _extract_bulk_amr_zip(zip_path: Path, upload_dir: Path) -> Dict[str, List[st
         if total_size > _MAX_BULK_ZIP_EXTRACTED_BYTES:
             raise ValueError("ไฟล์ zip ขนาดหลังแตกไฟล์ใหญ่เกินไป")
 
-        for i, member in enumerate(members):
+        # รอบแรก: กรองเอาเฉพาะไฟล์ AMR จริง (ข้ามไฟล์ระบบ/นามสกุลไม่รองรับ) แล้วหาความลึกของ
+        # โฟลเดอร์ห่อหุ้มร่วมกันก่อน ถึงจะรู้ว่าชั้นไหนคือ "โฟลเดอร์บริษัท" จริงๆ
+        valid_entries = []
+        for member in members:
             parts = Path(member.filename).parts
             if not parts:
                 continue
             name = parts[-1]
-            # ข้ามไฟล์ระบบที่โปรแกรมซิปมักแถมมาเอง เหมือน _save_uploaded_amr_files
             if not name or name.startswith(".") or "__MACOSX" in parts:
                 continue
             if not name.lower().endswith(_AMR_FILE_EXTENSIONS):
                 continue
+            valid_entries.append((parts, member))
 
-            group_key = parts[-2] if len(parts) >= 2 else ""
+        wrapper_depth = _common_wrapper_depth([parts for parts, _ in valid_entries])
+
+        for i, (parts, member) in enumerate(valid_entries):
+            name = parts[-1]
+            group_key = parts[wrapper_depth] if len(parts) > wrapper_depth + 1 else ""
 
             if group_key not in group_dirs:
                 group_dir = upload_dir / f"group_{len(group_dirs)}"
