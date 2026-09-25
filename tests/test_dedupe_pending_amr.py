@@ -291,6 +291,25 @@ def test_name_match_finds_pending_entry_whose_name_matches_existing_customer(dat
     assert customer.account_no == "0199000001"
 
 
+def test_name_match_ignores_leading_folder_index_prefix(data_dir):
+    """ไฟล์ export บางไฟล์อ่านเลขบัญชีจากหัวรายงานไม่ได้เลย ระบบเลยใช้ชื่อโฟลเดอร์ Google Drive
+    ทั้งดุ้นแทน (เช่น "15_บริษัท โนเบลเอ็นซี จำกัด" — "15_" คือเลขลำดับโฟลเดอร์ ไม่ใช่ส่วนหนึ่งของ
+    ชื่อบริษัท) ต้องตัด prefix แบบนี้ทิ้งก่อนเทียบชื่อ ไม่งั้นจะพลาดจับคู่กับลูกค้าเดิมในทะเบียน"""
+
+    (data_dir / "customers_local.csv").write_text(
+        "account_no,name,business_type_code,rate_code,contract_kva,has_amr,has_solar,business_type_code_raw\n"
+        "020006578327,บริษัท โนเบลเอ็นซี จำกัด,20113,UNKNOWN,,false,,\n",
+        encoding="utf-8",
+    )
+    _add_pending(data_dir, "pend01", "", "15_บริษัท โนเบลเอ็นซี จำกัด")
+
+    matches = find_name_match_candidates(data_dir)
+    assert len(matches) == 1
+    entry, customer = matches[0]
+    assert entry["pending_id"] == "pend01"
+    assert customer.account_no == "020006578327"
+
+
 def test_name_match_ignores_case_and_extra_whitespace(data_dir):
     (data_dir / "customers_local.csv").write_text(
         "account_no,name,business_type_code,rate_code,contract_kva,has_amr,has_solar,business_type_code_raw\n"

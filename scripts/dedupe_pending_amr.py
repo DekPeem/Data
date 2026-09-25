@@ -51,6 +51,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -183,8 +184,17 @@ def find_resolvable_entries(data_dir: Path) -> List[Tuple[dict, str, str]]:
     return resolvable
 
 
+_LEADING_FOLDER_INDEX_RE = re.compile(r"^\d+[_\-.\s]+")
+
+
 def _normalize_name(name: str) -> str:
-    return " ".join((name or "").strip().split()).lower()
+    """ตัดช่องว่างซ้ำ/พิมพ์เล็กหมดก่อนเทียบชื่อ + ตัด "เลขลำดับโฟลเดอร์" ที่ google Drive ชอบนำหน้า
+    ชื่อไฟล์/โฟลเดอร์ทิ้งด้วย (เช่น "15_บริษัท โนเบลเอ็นซี จำกัด" หรือ "35_บริษัท เอส เค บี...")
+    — เจอกรณีจริงที่ไฟล์อ่านเลขบัญชีไม่ได้เลย ระบบเลยใช้ชื่อโฟลเดอร์ทั้งดุ้น (รวม prefix เลข) แทน
+    ทำให้เทียบกับชื่อลูกค้าที่บันทึกไว้แบบสะอาดๆ ในทะเบียนไม่ตรงกันเฉยๆ ทั้งที่เป็นบริษัทเดียวกัน"""
+
+    name = _LEADING_FOLDER_INDEX_RE.sub("", (name or "").strip())
+    return " ".join(name.split()).lower()
 
 
 def find_name_match_candidates(data_dir: Path) -> List[Tuple[dict, "object"]]:
