@@ -657,7 +657,7 @@ def api_forecast(account_no: str):
             }
         ), 409
 
-    result = estimate_customer_load(customer, reference)
+    result = estimate_customer_load(customer, reference, clusters=cluster_business_types(reference))
     return jsonify({"customer": _customer_to_dict(customer), **_estimate_result_to_dict(result, reference)})
 
 
@@ -713,7 +713,9 @@ def api_forecast_adhoc():
         has_solar=has_solar,
     )
 
-    result = estimate_customer_load(transient_customer, reference, section_code=section_code)
+    result = estimate_customer_load(
+        transient_customer, reference, section_code=section_code, clusters=cluster_business_types(reference)
+    )
     return jsonify(_estimate_result_to_dict(result, reference))
 
 
@@ -894,7 +896,7 @@ def _run_business_type_lookup_job(
                     has_solar=has_solar,
                 )
                 try:
-                    forecast_result = estimate_customer_load(transient_customer, reference)
+                    forecast_result = estimate_customer_load(transient_customer, reference, clusters=clusters)
                     forecast = _estimate_result_to_dict(forecast_result, reference)
                 except Exception as forecast_error:  # noqa: BLE001 — พยากรณ์อัตโนมัติล้มไม่ควรทำให้
                     # job หลัก (ที่ได้รายชื่อ/ประเภทธุรกิจมาแล้ว) กลายเป็น error ไปด้วย ผู้ใช้ยังเลือก

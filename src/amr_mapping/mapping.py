@@ -30,6 +30,7 @@ from __future__ import annotations
 
 from typing import Dict, Iterable, List, Optional
 
+from .clustering import BusinessTypeCluster
 from .loader import ReferenceData
 from .models import BusinessType, Customer, ForecastResult, LoadCurve, LoadProfile, MatchLevel, MatchResult, PERIODS
 
@@ -135,6 +136,34 @@ def _pick_by_solar(candidates: List[LoadProfile], has_solar: Optional[bool]) -> 
     return (non_solar[0] if non_solar else candidates[0]), True
 
 
+def _restrict_to_dominant_cluster(
+    candidates: List[LoadProfile], clusters: List[BusinessTypeCluster]
+) -> List[LoadProfile]:
+    """ใช้ข้อมูล cluster รูปแบบการใช้ไฟจริง (จาก clustering.cluster_business_types) แคบ
+    candidates เหลือแค่สมาชิกของ "กลุ่มรูปแบบที่พบบ่อยที่สุด" ในกลุ่ม candidates นี้ก่อนค่อยถัว
+    เฉลี่ย — กันเอาธุรกิจที่ใช้ไฟคนละรูปแบบกันมาปนกัน (เช่น หมวด TSIC section เดียวกัน แต่ตัวหนึ่ง
+    ใช้ไฟกลางวันเป็นหลัก อีกตัวใช้ไฟกลางคืนเป็นหลัก ถัวเฉลี่ยรวมกันตรงๆ จะได้รูปแบบที่ไม่เหมือน
+    ธุรกิจไหนเลยสักตัว) ใช้กับชั้น SECTION_ONLY เท่านั้น (DIVISION_ONLY แคบพอแล้วโดยธรรมชาติ ไม่ต้อง
+    กรองซ้ำ)
+
+    คืน candidates เดิมทั้งหมดถ้า: ไม่มีข้อมูล cluster ของสมาชิกเลยสักตัว, หรือกรองแล้วไม่เหลือเลย
+    (กันเคสแปลกๆ ที่ทำให้ผลลัพธ์แย่กว่าไม่กรองเลย)"""
+
+    cluster_by_business_code = {c.business_type_code: c.cluster_id for c in clusters}
+    candidate_cluster_ids = [cluster_by_business_code.get(p.business_type_code) for p in candidates]
+
+    counts: Dict[int, int] = {}
+    for cid in candidate_cluster_ids:
+        if cid is not None:
+            counts[cid] = counts.get(cid, 0) + 1
+    if not counts:
+        return candidates
+
+    dominant_cluster_id = max(counts, key=lambda cid: counts[cid])
+    filtered = [p for p, cid in zip(candidates, candidate_cluster_ids) if cid == dominant_cluster_id]
+    return filtered if filtered else candidates
+
+
 def find_load_profile(
     profiles: Iterable[LoadProfile],
     business_type_code: Optional[str] = None,
@@ -142,6 +171,7 @@ def find_load_profile(
     business_types: Optional[Dict[str, BusinessType]] = None,
     has_solar: Optional[bool] = None,
     section_code: Optional[str] = None,
+    clusters: Optional[List[BusinessTypeCluster]] = None,
 ) -> MatchResult:
     """จับคู่โปรไฟล์ที่เหมาะสมที่สุดตามลำดับความสำคัญ (ดู docstring ของโมดูล)
 
@@ -155,6 +185,12 @@ def find_load_profile(
     กรณีที่รู้แค่หมวดใหญ่ (เช่น "C" การผลิต) แต่ไม่รู้ business_type_code (รหัส TSIC 5 หลัก) เลย
     ถ้าระบุ business_type_code มาด้วยและเจอใน business_types จะใช้ section_code ของ
     business_type_code นั้นแทน (แม่นยำกว่า ไม่สนใจค่านี้)
+
+    clusters (ถ้าระบุ — ผลจาก clustering.cluster_business_types) ใช้เสริมความแม่นยำของชั้น
+    SECTION_ONLY เท่านั้น: หมวดใหญ่หนึ่งมักมีธุรกิจที่ใช้ไฟคนละรูปแบบกันปนอยู่ (เช่น ใช้ไฟกลางวัน
+    vs กลางคืน) ถ้าระบุ clusters มาจะแคบผู้สมัครเหลือแค่ "กลุ่มรูปแบบการใช้ไฟที่พบบ่อยที่สุด" ใน
+    หมวดนั้นก่อนถัวเฉลี่ย (ดู _restrict_to_dominant_cluster) แทนที่จะเฉลี่ยรวมทุกรูปแบบปนกันแบบ
+    ไม่เลือก — ไม่มีผลต่อชั้นอื่น (EXACT/BUSINESS_ONLY/DIVISION_ONLY แคบพอโดยธรรมชาติอยู่แล้ว)
 
     has_solar (ถ้าระบุ — True/False) ใช้กรองเฉพาะชั้น EXACT เท่านั้น ปล่อยเป็น None ถ้าไม่ทราบ
     สถานะ Solar ของลูกค้า (พฤติกรรมเดิมก่อนมีมิตินี้)
@@ -218,6 +254,10 @@ def find_load_profile(
             if business_types.get(p.business_type_code) is not None
             and business_types[p.business_type_code].section_code == effective_section_code
         ]
+        if section_candidates and clusters:
+            # หมวดใหญ่หนึ่งมักมีธุรกิจที่ใช้ไฟคนละรูปแบบกันปนอยู่ — แคบเหลือแค่กลุ่มรูปแบบที่พบ
+            # บ่อยที่สุดในหมวดนี้ก่อนถัวเฉลี่ย (ดู _restrict_to_dominant_cluster)
+            section_candidates = _restrict_to_dominant_cluster(section_candidates, clusters)
         if section_candidates:
             # ป้ายกำกับโปรไฟล์สังเคราะห์ที่คืนออกไป — ใช้ business_type_code จริงถ้ารู้ (แค่ไม่มี
             # โปรไฟล์ของมันเองพอดี) ไม่งั้นระบุ section แทน "DEFAULT" ตรงๆ กันสับสนว่าไม่เจอข้อมูล
@@ -279,7 +319,10 @@ def find_load_curve(
 
 
 def estimate_customer_load(
-    customer: Customer, reference: ReferenceData, section_code: Optional[str] = None
+    customer: Customer,
+    reference: ReferenceData,
+    section_code: Optional[str] = None,
+    clusters: Optional[List[BusinessTypeCluster]] = None,
 ) -> ForecastResult:
     """พยากรณ์โปรไฟล์ P/OP/H ของลูกค้าที่ไม่มีข้อมูล AMR ของตัวเอง
 
@@ -290,6 +333,9 @@ def estimate_customer_load(
     section_code (ถ้าระบุ) ส่งต่อให้ find_load_profile เป็นทางเลือกสำรองระดับ SECTION_ONLY เมื่อ
     ไม่มี customer.business_type_code เลย (รู้แค่หมวดใหญ่ TSIC เช่น "C" การผลิต) — ไม่ใช่ฟิลด์ที่
     บันทึกไว้ถาวรใน Customer/customers.csv เจตนาใช้แค่ตอนพยากรณ์แบบ ad-hoc ไม่บันทึกข้อมูลเท่านั้น
+
+    clusters (ถ้าระบุ — ผลจาก clustering.cluster_business_types) ส่งต่อให้ find_load_profile
+    เสริมความแม่นยำของชั้น SECTION_ONLY (ดู docstring ของ find_load_profile)
     """
 
     if customer.has_amr:
@@ -305,6 +351,7 @@ def estimate_customer_load(
         business_types=reference.business_types,
         has_solar=customer.has_solar,
         section_code=section_code,
+        clusters=clusters,
     )
     profile = match.profile
     warnings: List[str] = []

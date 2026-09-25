@@ -6,6 +6,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from amr_mapping import Customer, MatchLevel, estimate_customer_load, load_reference_data
+from amr_mapping.clustering import BusinessTypeCluster
 from amr_mapping.mapping import find_load_curve, find_load_profile
 from amr_mapping.models import BusinessType, LoadCurve, LoadProfile
 
@@ -286,6 +287,73 @@ def test_find_load_profile_section_fallback_requires_known_section_on_target():
 
     match = find_load_profile(profiles, business_type_code="99999", rate_code="999", business_types=business_types)
     assert match.level == MatchLevel.DEFAULT
+
+
+def test_find_load_profile_section_only_narrows_to_dominant_usage_pattern_cluster():
+    """หมวดใหญ่เดียวกัน (section "C") มีธุรกิจที่ใช้ไฟคนละรูปแบบกันปนอยู่ — 2 รายอยู่กลุ่มรูปแบบ
+    เดียวกัน (cluster 0) อีก 1 รายอยู่กลุ่มอื่น (cluster 1) ถ้าระบุ clusters มา ต้องถัวเฉลี่ยแค่
+    กลุ่มที่พบบ่อยที่สุด (cluster 0 มีสมาชิกเยอะกว่า) ไม่ใช่เฉลี่ยรวมทั้ง 3 ตัวปนกันแบบไม่เลือก"""
+
+    business_types = {
+        "22201": BusinessType(code="22201", name_th="ผลิตท่อพลาสติก", category="plastic", section_code="C", division_code="22"),
+        "27100": BusinessType(code="27100", name_th="ผลิตมอเตอร์ไฟฟ้า", category="electrical", section_code="C", division_code="27"),
+        "20119": BusinessType(code="20119", name_th="ผลิตเคมีภัณฑ์", category="chemical", section_code="C", division_code="20"),
+        "11011": BusinessType(code="11011", name_th="กลั่นสุรา", category="beverage", section_code="C", division_code="11"),
+    }
+    profiles = [
+        LoadProfile(
+            business_type_code="27100", rate_code="40", billing_method="TOU",
+            demand_kw={"P": 10, "OP": 10, "H": 10}, energy_kwh={"P": 10, "OP": 10, "H": 10}, sample_size=1,
+        ),
+        LoadProfile(
+            business_type_code="20119", rate_code="40", billing_method="TOU",
+            demand_kw={"P": 20, "OP": 20, "H": 20}, energy_kwh={"P": 20, "OP": 20, "H": 20}, sample_size=1,
+        ),
+        LoadProfile(
+            business_type_code="11011", rate_code="40", billing_method="TOU",
+            demand_kw={"P": 900, "OP": 900, "H": 900}, energy_kwh={"P": 900, "OP": 900, "H": 900}, sample_size=1,
+        ),
+    ]
+    clusters = [
+        BusinessTypeCluster(business_type_code="27100", rate_code="40", cluster_id=0, shape_vector=[], shape_label=""),
+        BusinessTypeCluster(business_type_code="20119", rate_code="40", cluster_id=0, shape_vector=[], shape_label=""),
+        BusinessTypeCluster(business_type_code="11011", rate_code="40", cluster_id=1, shape_vector=[], shape_label=""),
+    ]
+
+    match = find_load_profile(
+        profiles, business_type_code="22201", rate_code="40", business_types=business_types, clusters=clusters
+    )
+    assert match.level == MatchLevel.SECTION_ONLY
+    # ต้องไม่มี 11011 (cluster 1, ค่าดิบ 900 สูงลิ่วผิดปกติ) ปนอยู่ในค่าเฉลี่ยเลย — ถ้าปนมาด้วย
+    # ค่าเฉลี่ยจะเพี้ยนขึ้นมหาศาล (900 vs 10/20 ของกลุ่มที่ถูกต้อง)
+    assert match.profile.demand_kw["P"] == pytest.approx(15.0)  # เฉลี่ย (10+20)/2 เท่านั้น
+    assert len(match.contributing_profiles) == 2
+    assert {p.business_type_code for p in match.contributing_profiles} == {"27100", "20119"}
+
+
+def test_find_load_profile_section_only_falls_back_to_all_candidates_without_cluster_data():
+    """ไม่ได้ส่ง clusters มาเลย (พฤติกรรมเดิม) ต้องถัวเฉลี่ยผู้สมัครทั้งหมดใน section เหมือนเดิม
+    ไม่ใช่ข้ามไปที่ DEFAULT หรือ error"""
+
+    business_types = {
+        "22201": BusinessType(code="22201", name_th="ผลิตท่อพลาสติก", category="plastic", section_code="C", division_code="22"),
+        "27100": BusinessType(code="27100", name_th="ผลิตมอเตอร์ไฟฟ้า", category="electrical", section_code="C", division_code="27"),
+        "11011": BusinessType(code="11011", name_th="กลั่นสุรา", category="beverage", section_code="C", division_code="11"),
+    }
+    profiles = [
+        LoadProfile(
+            business_type_code="27100", rate_code="40", billing_method="TOU",
+            demand_kw={"P": 10, "OP": 10, "H": 10}, energy_kwh={"P": 10, "OP": 10, "H": 10}, sample_size=1,
+        ),
+        LoadProfile(
+            business_type_code="11011", rate_code="40", billing_method="TOU",
+            demand_kw={"P": 30, "OP": 30, "H": 30}, energy_kwh={"P": 30, "OP": 30, "H": 30}, sample_size=1,
+        ),
+    ]
+
+    match = find_load_profile(profiles, business_type_code="22201", rate_code="40", business_types=business_types)
+    assert match.level == MatchLevel.SECTION_ONLY
+    assert len(match.contributing_profiles) == 2
 
 
 def test_find_load_profile_matches_exact_across_alias_codes():
