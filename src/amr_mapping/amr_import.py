@@ -25,6 +25,7 @@ from .loader import (
     ReferenceData,
     append_import_log_local,
     append_site_curve_local,
+    compute_file_signature,
     load_reference_data,
     load_tsic_code_mapping,
     save_business_types,
@@ -258,6 +259,7 @@ def import_amr_for_business(
                     "account_no": r.account_no,
                     "has_solar": "true" if has_solar else "false",
                     "business_type_code_raw": business_type_code_raw or "",
+                    "file_signature": compute_file_signature([r.file_path]) or "",
                 },
                 data_dir / "import_log_local.csv",
             )
@@ -380,6 +382,7 @@ def import_amr_from_files(
                     "account_no": account_no,
                     "has_solar": "true" if has_solar else "false",
                     "business_type_code_raw": business_type_code_raw or "",
+                    "file_signature": compute_file_signature(file_paths) or "",
                 },
                 data_dir / "import_log_local.csv",
             )
@@ -522,6 +525,7 @@ def import_amr_auto(
                 "account_no": profile_info.get("account_no") or "",
                 "has_solar": "true" if has_solar else "false",
                 "business_type_code_raw": business_type_code_raw or "",
+                "file_signature": compute_file_signature(downloaded_files) or "",
             },
             data_dir / "import_log_local.csv",
         )

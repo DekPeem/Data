@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from amr_mapping.loader import (
     append_import_log_local,
     append_pending_amr_local,
+    compute_file_signature,
     load_pending_amr_local,
     load_reference_data,
 )
@@ -132,6 +133,66 @@ def test_deletable_does_not_flag_account_with_only_import_log_history(data_dir):
 def test_entries_without_account_no_are_never_flagged_deletable(data_dir):
     _add_pending(data_dir, "pend01", "", "โฟลเดอร์ที่อ่านเลขบัญชีไม่ได้")
     assert find_deletable_entries(data_dir) == []
+
+
+def test_deletable_flags_entry_whose_file_content_matches_previous_import(data_dir):
+    """อัปโหลด zip/ไฟล์เดิมซ้ำ: เนื้อหาไฟล์ตรงกับที่เคยนำเข้าไปแล้วเป๊ะ (เทียบด้วย file_signature)
+    แม้บัญชีจะไม่มีในทะเบียนลูกค้า (มีแค่ import_log history) ก็ลบได้เลยโดยไม่ต้องนำเข้าซ้ำ"""
+
+    amr_file = data_dir / "report.xls"
+    amr_file.write_text(_SYNTHETIC_INTERVAL_HTML, encoding="utf-8")
+    file_signature = compute_file_signature([str(amr_file)])
+    append_import_log_local(
+        {
+            "imported_at": "2026-07-01T00:00:00+00:00",
+            "business_type_code": "TESTBIZ",
+            "rate_code": "50",
+            "company_name": "บริษัท เอ",
+            "account_no": "0199000001",
+            "has_solar": "false",
+            "file_signature": file_signature,
+        },
+        data_dir / "import_log_local.csv",
+    )
+    _add_pending(data_dir, "pend01", "0199000001", "บริษัท เอ", file_paths=str(amr_file))
+
+    deletable = find_deletable_entries(data_dir)
+    assert len(deletable) == 1
+    entry, reason = deletable[0]
+    assert entry["pending_id"] == "pend01"
+    assert "เนื้อหาไฟล์ตรงกับที่เคยนำเข้าไปแล้ว" in reason
+
+    # ต้องไม่โผล่ในกลุ่ม resolvable ซ้ำด้วย (find_deletable_entries จัดการไปแล้ว)
+    assert find_resolvable_entries(data_dir) == []
+
+
+def test_resolvable_still_finds_entry_when_file_content_differs_from_history(data_dir):
+    """บัญชีเดียวกัน แต่ไฟล์เนื้อหาไม่ตรงกับที่เคยนำเข้า (เช่น เดือนใหม่จริงๆ) ต้องยังอยู่ในกลุ่มที่ 2
+    ตามปกติ (ไม่ถูกจัดเป็นลบได้เลยอัตโนมัติ เพราะเนื้อหาไม่ตรงกับที่เทียบได้)"""
+
+    old_file = data_dir / "old_report.xls"
+    old_file.write_text(_SYNTHETIC_INTERVAL_HTML, encoding="utf-8")
+    append_import_log_local(
+        {
+            "imported_at": "2026-07-01T00:00:00+00:00",
+            "business_type_code": "TESTBIZ",
+            "rate_code": "50",
+            "company_name": "บริษัท เอ",
+            "account_no": "0199000001",
+            "has_solar": "false",
+            "file_signature": compute_file_signature([str(old_file)]),
+        },
+        data_dir / "import_log_local.csv",
+    )
+
+    new_file = data_dir / "new_report.xls"
+    new_file.write_text(_SYNTHETIC_INTERVAL_HTML.replace("20.00", "99.00"), encoding="utf-8")
+    _add_pending(data_dir, "pend01", "0199000001", "บริษัท เอ", file_paths=str(new_file))
+
+    assert find_deletable_entries(data_dir) == []
+    resolvable = find_resolvable_entries(data_dir)
+    assert len(resolvable) == 1
+    assert resolvable[0][0]["pending_id"] == "pend01"
 
 
 # ── find_resolvable_entries (กลุ่มที่ 2 — นำเข้าอัตโนมัติได้ ห้ามลบเฉยๆ) ──

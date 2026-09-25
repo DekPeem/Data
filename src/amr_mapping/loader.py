@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -528,7 +529,30 @@ _IMPORT_LOG_FIELDNAMES = [
     "account_no",
     "has_solar",
     "business_type_code_raw",
+    "file_signature",
 ]
+
+
+def compute_file_signature(file_paths: List[str]) -> Optional[str]:
+    """คำนวณลายเซ็น (hash) ของเนื้อหาไฟล์ AMR ดิบชุดหนึ่ง ใช้เทียบว่า "ไฟล์ที่อัปโหลดมารอบนี้"
+    เป็นเนื้อหาเดียวกันเป๊ะกับที่เคยนำเข้าไปแล้วหรือไม่ (เช่น อัปโหลด zip เดิมซ้ำโดยไม่ตั้งใจ) —
+    ต่างจากการเทียบแค่ "เลขบัญชีเดียวกัน" ตรงที่บอกได้ชัดเจนว่าเป็น "ไฟล์ชุดเดิมเป๊ะ" ไม่ใช่แค่
+    "บัญชีเดิม แต่อาจเป็นเดือนใหม่"
+
+    แฮชเนื้อหาแต่ละไฟล์แยกกันก่อน แล้วเรียงลำดับก่อนรวมแฮชอีกที (ไม่สนใจชื่อไฟล์/ลำดับที่ส่งมา) —
+    กันกรณี zip เดิมถูกแตกไฟล์คนละชื่อ/คนละลำดับตอนอัปโหลดซ้ำ (เช่น group_1 vs group_7) แต่เนื้อหา
+    ไฟล์แต่ละไฟล์ข้างในเหมือนเดิมทุกตัวอักษร คืน None ถ้าไม่มีไฟล์เลย หรือไฟล์ใดไฟล์หนึ่งอ่านไม่ได้"""
+
+    if not file_paths:
+        return None
+    per_file_hashes: List[str] = []
+    for p in file_paths:
+        try:
+            per_file_hashes.append(hashlib.sha256(Path(p).read_bytes()).hexdigest())
+        except OSError:
+            return None
+    per_file_hashes.sort()
+    return hashlib.sha256("|".join(per_file_hashes).encode("utf-8")).hexdigest()
 
 
 def _migrate_import_log_header_if_needed(path: Path) -> None:

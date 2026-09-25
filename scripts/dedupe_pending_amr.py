@@ -7,6 +7,11 @@
     1. "ลบได้เลย" (--delete-safe) — ไม่มีไฟล์ใหม่ให้เสียของจริงๆ:
        - บัญชีมีประเภทธุรกิจ+อัตราอยู่ในทะเบียนลูกค้าแล้ว (ควรไปกด "บันทึก" ที่หน้า /overview แทน)
        - มีรายการ "รอทราบอัตรา" ซ้ำบัญชีเดียวกันอยู่ก่อนแล้ว (เก็บรายการแรกสุดไว้ ลบตัวที่ซ้ำทีหลัง)
+       - เนื้อหาไฟล์ตรงกับที่เคยนำเข้าไปแล้วเป๊ะทุกตัวอักษร (เทียบด้วย hash เนื้อหาไฟล์ ไม่ใช่แค่เลข
+         บัญชี — ดู compute_file_signature ใน loader.py) เช่น อัปโหลด zip/โฟลเดอร์เดิมซ้ำโดยไม่ได้
+         ตั้งใจ ยืนยันได้ชัดเจนว่าเป็นไฟล์ชุดเดิมเป๊ะ ไม่ใช่แค่ "บัญชีเดิมแต่อาจเป็นเดือนใหม่" จึงลบได้
+         โดยไม่ต้องนำเข้าซ้ำ (⚠️ ใช้ได้เฉพาะบัญชีที่การนำเข้าครั้งก่อนบันทึก file_signature ไว้แล้ว
+         เท่านั้น — รายการเก่าที่นำเข้าไปก่อนเพิ่มฟีเจอร์นี้จะไม่มีให้เทียบ ตกไปอยู่กลุ่มที่ 2 แทน)
 
     2. บัญชีเคยนำเข้า AMR สำเร็จมาก่อนแล้ว (มีในประวัติ import_log_local.csv) แต่ไม่มีในทะเบียน
        ลูกค้า (เช่น นำเข้าผ่านโหมด "ดึงจากเว็บ PEA" ที่กรอกประเภทธุรกิจ/อัตราตรงๆ ไม่เคยผูกกับ
@@ -55,11 +60,27 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from amr_mapping.amr_import import import_amr_from_files
 from amr_mapping.loader import (
     DEFAULT_DATA_DIR,
+    compute_file_signature,
     load_import_log_local,
     load_pending_amr_local,
     load_reference_data,
     remove_pending_amr_local,
 )
+
+
+def _file_signatures_by_account(data_dir: Path) -> Dict[str, set]:
+    """รวม file_signature ทุกอันที่เคยนำเข้าสำเร็จ แยกตามเลขบัญชี (ใช้เทียบเนื้อหาไฟล์ที่อัปโหลด
+    รอบใหม่ว่าตรงกับที่เคยนำเข้าไปแล้วเป๊ะหรือไม่ — รายการเก่าที่นำเข้าก่อนเพิ่มฟีเจอร์นี้จะไม่มี
+    file_signature บันทึกไว้ (ค่าว่าง) จึงเทียบไม่ได้และไม่ถูกนับ)"""
+
+    import_log_entries = load_import_log_local(data_dir / "import_log_local.csv")
+    signatures: Dict[str, set] = {}
+    for e in import_log_entries:
+        account_no = (e.get("account_no") or "").strip()
+        sig = (e.get("file_signature") or "").strip()
+        if account_no and sig:
+            signatures.setdefault(account_no, set()).add(sig)
+    return signatures
 
 
 def find_deletable_entries(data_dir: Path) -> List[Tuple[dict, str]]:
@@ -71,6 +92,7 @@ def find_deletable_entries(data_dir: Path) -> List[Tuple[dict, str]]:
     reference = load_reference_data(data_dir)
     customers_by_account = {c.account_no: c for c in reference.customers}
     pending_entries = load_pending_amr_local(data_dir / "pending_amr_local.csv")
+    signatures_by_account = _file_signatures_by_account(data_dir)
 
     deletable: List[Tuple[dict, str]] = []
     seen_accounts_in_pending: dict = {}
@@ -102,6 +124,20 @@ def find_deletable_entries(data_dir: Path) -> List[Tuple[dict, str]]:
             )
             continue
 
+        known_signatures = signatures_by_account.get(account_no)
+        if known_signatures:
+            file_paths = [p for p in (entry.get("file_paths") or "").split("|") if p]
+            sig = compute_file_signature(file_paths)
+            if sig and sig in known_signatures:
+                deletable.append(
+                    (
+                        entry,
+                        f"เนื้อหาไฟล์ตรงกับที่เคยนำเข้าไปแล้วเป๊ะ (บัญชี {account_no}) — น่าจะเป็นการ"
+                        "อัปโหลดไฟล์/zip เดิมซ้ำ ไม่ใช่ข้อมูลใหม่",
+                    )
+                )
+                continue
+
         seen_accounts_in_pending[account_no] = entry.get("pending_id")
 
     return deletable
@@ -123,12 +159,21 @@ def find_resolvable_entries(data_dir: Path) -> List[Tuple[dict, str, str]]:
             latest_by_account[account_no] = e  # เขียนทับเรื่อยๆ -> ตัวสุดท้ายที่เจอคือล่าสุด
 
     pending_entries = load_pending_amr_local(data_dir / "pending_amr_local.csv")
+    signatures_by_account = _file_signatures_by_account(data_dir)
 
     resolvable: List[Tuple[dict, str, str]] = []
     for entry in pending_entries:
         account_no = (entry.get("account_no") or "").strip()
         if not account_no or account_no not in latest_by_account:
             continue
+
+        known_signatures = signatures_by_account.get(account_no)
+        if known_signatures:
+            file_paths = [p for p in (entry.get("file_paths") or "").split("|") if p]
+            sig = compute_file_signature(file_paths)
+            if sig and sig in known_signatures:
+                continue  # เนื้อหาไฟล์ตรงกับที่เคยนำเข้าไปแล้วเป๊ะ -> find_deletable_entries จัดการแทน
+
         log_entry = latest_by_account[account_no]
         business_type_code = (log_entry.get("business_type_code") or "").strip()
         rate_code = (log_entry.get("rate_code") or "").strip()
