@@ -12,10 +12,12 @@ from amr_mapping.loader import (
     load_pending_amr_local,
     load_reference_data,
 )
+import dedupe_pending_amr
 from dedupe_pending_amr import (
     find_deletable_entries,
     find_name_match_candidates,
     find_resolvable_entries,
+    main,
     resolve_entry,
 )
 
@@ -255,3 +257,37 @@ def test_name_match_skips_entries_that_already_have_an_account_no(data_dir):
 def test_name_match_empty_when_no_name_overlaps(data_dir):
     _add_pending(data_dir, "pend01", "", "บริษัท ที่ไม่มีใครรู้จัก")
     assert find_name_match_candidates(data_dir) == []
+
+
+# ── --delete-duplicates (กลุ่มที่ 2 แต่ยืนยันแล้วว่าซ้ำของเดิม ไม่ต้องนำเข้าซ้ำ) ──
+
+
+def test_delete_duplicates_removes_resolvable_entries_without_reimporting(data_dir, monkeypatch):
+    append_import_log_local(
+        {
+            "imported_at": "2026-07-01T00:00:00+00:00",
+            "business_type_code": "TESTBIZ",
+            "rate_code": "50",
+            "company_name": "บริษัท เอ",
+            "account_no": "0199000001",
+            "has_solar": "false",
+        },
+        data_dir / "import_log_local.csv",
+    )
+    _add_pending(data_dir, "pend01", "0199000001", "บริษัท เอ")
+
+    monkeypatch.setattr(dedupe_pending_amr, "DEFAULT_DATA_DIR", data_dir)
+    monkeypatch.setattr(sys, "argv", ["dedupe_pending_amr.py", "--delete-duplicates"])
+    main()
+
+    # ลบออกจากคิวรอแล้ว แต่ไม่มีการนำเข้าซ้ำ (load_profiles.csv ต้องยังว่างเหมือนเดิม)
+    assert load_pending_amr_local(data_dir / "pending_amr_local.csv") == []
+    reference = load_reference_data(data_dir)
+    assert reference.load_profiles == []
+
+
+def test_auto_resolve_and_delete_duplicates_together_is_rejected(data_dir, monkeypatch):
+    monkeypatch.setattr(dedupe_pending_amr, "DEFAULT_DATA_DIR", data_dir)
+    monkeypatch.setattr(sys, "argv", ["dedupe_pending_amr.py", "--auto-resolve", "--delete-duplicates"])
+    with pytest.raises(SystemExit):
+        main()

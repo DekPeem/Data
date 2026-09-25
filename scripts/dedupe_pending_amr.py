@@ -8,13 +8,22 @@
        - บัญชีมีประเภทธุรกิจ+อัตราอยู่ในทะเบียนลูกค้าแล้ว (ควรไปกด "บันทึก" ที่หน้า /overview แทน)
        - มีรายการ "รอทราบอัตรา" ซ้ำบัญชีเดียวกันอยู่ก่อนแล้ว (เก็บรายการแรกสุดไว้ ลบตัวที่ซ้ำทีหลัง)
 
-    2. "นำเข้าอัตโนมัติ" (--auto-resolve) — ⚠️ ห้ามลบเฉยๆ เด็ดขาด:
-       บัญชีเคยนำเข้า AMR สำเร็จมาก่อนแล้ว (มีในประวัติ import_log_local.csv) แต่ไม่มีในทะเบียน
+    2. บัญชีเคยนำเข้า AMR สำเร็จมาก่อนแล้ว (มีในประวัติ import_log_local.csv) แต่ไม่มีในทะเบียน
        ลูกค้า (เช่น นำเข้าผ่านโหมด "ดึงจากเว็บ PEA" ที่กรอกประเภทธุรกิจ/อัตราตรงๆ ไม่เคยผูกกับ
-       ทะเบียนลูกค้าเลย) — ไฟล์ที่อัปโหลดรอบใหม่นี้อาจเป็น "เดือนใหม่ที่ยังไม่เคยนำเข้า" ไม่ใช่ไฟล์
-       ซ้ำเดือนเดิม ถ้าลบทิ้งเฉยๆ จะเสียข้อมูลจริงไป — โหมดนี้จะดึงประเภทธุรกิจ/อัตราล่าสุดที่เคย
-       ใช้กับบัญชีนั้นจากประวัติมา "นำเข้าจริง" ให้ (ข้อมูลใหม่จะถูกถ่วงน้ำหนักรวมกับของเดิมอัตโนมัติ
-       ผ่าน upsert_load_profile/upsert_load_curve เหมือนนำเข้าปกติ) แล้วค่อยลบออกจากคิวรอ
+       ทะเบียนลูกค้าเลย) — กลุ่มนี้ "เทียบด้วยเลขบัญชีอย่างเดียว" แยกแยะไม่ได้เองว่าไฟล์รอบใหม่คือ
+       (ก) เดือนใหม่ที่ยังไม่เคยนำเข้า → ต้อง "นำเข้าจริง" ไม่ใช่ลบทิ้ง หรือ (ข) อัปโหลด zip/โฟลเดอร์
+       เดิมซ้ำโดยไม่ได้ตั้งใจ (เช่น กดผิด/ทดสอบซ้ำ) → ข้อมูลถูกรวมเข้า load_profiles/load_curves
+       ไปแล้วตั้งแต่รอบก่อน ถ้า "นำเข้าซ้ำ" อีกจะยิ่งถ่วงน้ำหนัก sample_size เพิ่มเป็นสองเท่าผิดๆ
+       ต้องเลือกเอาอย่างใดอย่างหนึ่งเท่านั้น (ห้ามใส่ทั้งคู่พร้อมกัน):
+
+       - (--auto-resolve) กรณี (ก) — ดึงประเภทธุรกิจ/อัตราล่าสุดที่เคยใช้กับบัญชีนั้นจากประวัติมา
+         "นำเข้าจริง" ให้ (ข้อมูลใหม่จะถูกถ่วงน้ำหนักรวมกับของเดิมอัตโนมัติผ่าน
+         upsert_load_profile/upsert_load_curve เหมือนนำเข้าปกติ) แล้วค่อยลบออกจากคิวรอ
+       - (--delete-duplicates) กรณี (ข) — ⚠️ ใช้เฉพาะตอนที่ "ยืนยันแล้วจริงๆ" ว่าเป็นการอัปโหลดซ้ำ
+         ของเดิม (เช่น ผู้ใช้ยืนยันเองว่ากดอัปโหลดไฟล์/โฟลเดอร์เดิมซ้ำ) เท่านั้น — ลบรายการออกจากคิวรอ
+         เฉยๆ โดยไม่นำเข้าซ้ำ เพราะข้อมูลถูกรวมเข้าไปแล้วตั้งแต่รอบก่อนหน้า ห้ามใช้เป็นค่าเริ่มต้น
+         หรือเดาเอาเองว่าเป็นกรณีนี้ — ถ้าไม่แน่ใจว่าเป็นไฟล์ใหม่หรือไฟล์ซ้ำ ให้ใช้ --auto-resolve
+         แทนเสมอ (นำเข้าซ้ำโดยไม่ตั้งใจแค่ทำให้ตัวเลขเบี้ยว แต่ลบไฟล์ใหม่ทิ้งจะเสียข้อมูลจริงถาวร)
 
     3. "ชื่อตรงกับที่มีอยู่แล้ว แต่ไม่มีเลขบัญชีให้ยืนยัน" (--delete-name-matches) — ⚠️ เสี่ยงสุด
        ในสามกลุ่ม ต้องเช็คเองก่อนเสมอ: รายการที่อ่านเลขบัญชีจากไฟล์ไม่ได้เลย (ใช้ชื่อโฟลเดอร์แทน)
@@ -28,7 +37,8 @@
 ตัวอย่างการใช้งาน:
     python scripts/dedupe_pending_amr.py                        # ดูรายการทั้ง 3 กลุ่มก่อน (ไม่ทำอะไร)
     python scripts/dedupe_pending_amr.py --delete-safe           # ลบเฉพาะกลุ่มที่ 1 (ปลอดภัย ไม่มีไฟล์ใหม่)
-    python scripts/dedupe_pending_amr.py --auto-resolve          # นำเข้ากลุ่มที่ 2 จริง (ไม่ลบเฉยๆ)
+    python scripts/dedupe_pending_amr.py --auto-resolve          # นำเข้ากลุ่มที่ 2 จริง (คิดว่าเป็นไฟล์ใหม่)
+    python scripts/dedupe_pending_amr.py --delete-duplicates     # ลบกลุ่มที่ 2 เฉยๆ (⚠️ ยืนยันแล้วว่าซ้ำของเดิม)
     python scripts/dedupe_pending_amr.py --delete-name-matches   # ลบกลุ่มที่ 3 (เช็คเองให้แน่ใจก่อน!)
     python scripts/dedupe_pending_amr.py --delete-safe --auto-resolve   # ทำ 1+2 พร้อมกัน
 """
@@ -199,13 +209,25 @@ def resolve_entry(entry: dict, business_type_code: str, rate_code: str, data_dir
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--delete-safe", action="store_true", help="ลบกลุ่มที่ 1 ออกจริง (ปลอดภัย ไม่มีไฟล์ใหม่ให้เสีย)")
-    parser.add_argument("--auto-resolve", action="store_true", help="นำเข้ากลุ่มที่ 2 จริง (ไม่ใช่แค่ลบ — ข้อมูลใหม่จะถูกรวมเข้าไปด้วย)")
+    parser.add_argument(
+        "--auto-resolve",
+        action="store_true",
+        help="นำเข้ากลุ่มที่ 2 จริง (คิดว่าเป็นไฟล์/เดือนใหม่ที่ยังไม่เคยนำเข้า — ห้ามใช้พร้อม --delete-duplicates)",
+    )
+    parser.add_argument(
+        "--delete-duplicates",
+        action="store_true",
+        help="ลบกลุ่มที่ 2 ออกจริงโดยไม่นำเข้า (⚠️ ใช้เฉพาะตอนยืนยันแล้วว่าเป็นการอัปโหลดซ้ำของเดิม — ห้ามใช้พร้อม --auto-resolve)",
+    )
     parser.add_argument(
         "--delete-name-matches",
         action="store_true",
         help="ลบกลุ่มที่ 3 ออกจริง (⚠️ เทียบด้วยชื่อเท่านั้น ไม่มีเลขบัญชียืนยัน เช็คเองให้แน่ใจก่อนเสมอ)",
     )
     args = parser.parse_args()
+
+    if args.auto_resolve and args.delete_duplicates:
+        parser.error("ใส่ --auto-resolve กับ --delete-duplicates พร้อมกันไม่ได้ (เป็นการกระทำที่ตรงข้ามกันบนกลุ่มเดียวกัน — เลือกอย่างใดอย่างหนึ่ง)")
 
     data_dir = DEFAULT_DATA_DIR
 
@@ -218,10 +240,13 @@ def main() -> None:
         label = entry.get("company_name") or entry.get("account_no") or "(ไม่ทราบชื่อ)"
         print(f"  - {label} (บัญชี {entry.get('account_no') or '-'}) — {reason}")
 
-    print(f"\nกลุ่มที่ 2 — นำเข้าอัตโนมัติได้ (⚠️ ต้องนำเข้าจริง ห้ามลบเฉยๆ): {len(resolvable)} รายการ")
+    print(
+        f"\nกลุ่มที่ 2 — บัญชีนี้เคยนำเข้าสำเร็จมาก่อน: {len(resolvable)} รายการ "
+        "(⚠️ เลือกเอา: --auto-resolve ถ้าเป็นไฟล์/เดือนใหม่ | --delete-duplicates ถ้ายืนยันแล้วว่าซ้ำของเดิม)"
+    )
     for entry, business_type_code, rate_code in resolvable:
         label = entry.get("company_name") or entry.get("account_no") or "(ไม่ทราบชื่อ)"
-        print(f"  - {label} (บัญชี {entry.get('account_no') or '-'}) — จะนำเข้าด้วย {business_type_code}/{rate_code}")
+        print(f"  - {label} (บัญชี {entry.get('account_no') or '-'}) — ประวัติล่าสุดคือ {business_type_code}/{rate_code}")
 
     print(f"\nกลุ่มที่ 3 — ชื่อตรงกับที่มีอยู่แล้ว แต่ไม่มีเลขบัญชียืนยัน (⚠️ เช็คเองก่อนลบเสมอ): {len(name_matches)} รายการ")
     for entry, customer in name_matches:
@@ -232,10 +257,10 @@ def main() -> None:
             f"({customer.business_type_code or '?'}/{known_rate}) — อาจเป็นบริษัทเดียวกันจริง หรือชื่อพ้องกันก็ได้"
         )
 
-    if not args.delete_safe and not args.auto_resolve and not args.delete_name_matches:
+    if not args.delete_safe and not args.auto_resolve and not args.delete_duplicates and not args.delete_name_matches:
         print(
             "\n(นี่แค่แสดงให้ดูก่อนเฉยๆ ยังไม่ได้ทำอะไร — ใส่ --delete-safe / --auto-resolve / "
-            "--delete-name-matches เพื่อดำเนินการจริง)"
+            "--delete-duplicates / --delete-name-matches เพื่อดำเนินการจริง)"
         )
         return
 
@@ -255,6 +280,13 @@ def main() -> None:
             if resolve_entry(entry, business_type_code, rate_code, data_dir, log=lambda m: print(f"  {m}")):
                 succeeded += 1
         print(f"\n✅ นำเข้ากลุ่มที่ 2 สำเร็จ {succeeded}/{len(resolvable)} รายการ")
+
+    if args.delete_duplicates and resolvable:
+        removed = 0
+        for entry, _business_type_code, _rate_code in resolvable:
+            if remove_pending_amr_local(entry["pending_id"], data_dir / "pending_amr_local.csv"):
+                removed += 1
+        print(f"\n✅ ลบกลุ่มที่ 2 ไปแล้ว {removed} รายการ (ไม่ได้นำเข้าซ้ำ — ถือว่าข้อมูลถูกรวมเข้าไปแล้วตั้งแต่รอบก่อนหน้า)")
 
     if args.delete_name_matches and name_matches:
         removed = 0
