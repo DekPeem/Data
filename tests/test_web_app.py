@@ -2224,7 +2224,8 @@ def test_start_import_bulk_rejects_when_not_exactly_one_zip(client):
 
 def test_start_import_bulk_groups_files_by_folder_and_imports_each(client, monkeypatch, tmp_path):
     """zip ที่มี 2 โฟลเดอร์ (2 บริษัท) ต้องแยกนำเข้าเป็น 2 กลุ่มอิสระ ไม่ปนกัน — แต่ละกลุ่มได้รับ
-    เฉพาะไฟล์ของโฟลเดอร์ตัวเอง และ site_label ตรงกับชื่อโฟลเดอร์"""
+    เฉพาะไฟล์ของโฟลเดอร์ตัวเอง และไม่ส่ง site_label เข้าไปด้วย (ต้องการให้ company_name เป็นชื่อ
+    จริงจากไฟล์ล้วนๆ ไม่มีชื่อโฟลเดอร์ต่อท้าย — ตามที่ผู้ใช้ขอ)"""
     import io
     import zipfile
 
@@ -2279,8 +2280,9 @@ def test_start_import_bulk_groups_files_by_folder_and_imports_each(client, monke
     assert len(received_calls) == 2
     for call in received_calls:
         assert len(call["file_paths"]) == 1
-    site_labels = {call["site_label"] for call in received_calls}
-    assert site_labels == {"06_โรงแรมดิเอ็มเพรสเชียงใหม่", "07_โรงไม้นันทะ"}
+        # ไม่ส่ง site_label เข้าไปด้วยตั้งใจ (ต่างจากโหมดไฟล์เดี่ยว) — company_name จากไฟล์จะได้
+        # ไม่มีชื่อโฟลเดอร์ต่อท้ายเลย
+        assert "site_label" not in call
 
 
 def test_start_import_bulk_unknown_business_type_falls_back_to_folder_name(client, monkeypatch, tmp_path):
@@ -2346,7 +2348,10 @@ def test_start_import_bulk_one_group_failing_does_not_stop_the_others(client, mo
     def fake_import_amr_from_files(**kwargs):
         from amr_mapping.models import LoadProfile
 
-        if "broken" in kwargs["site_label"]:
+        # ไม่มี site_label ให้เช็คแล้ว (ไม่ส่งเข้าไปด้วยตั้งใจ) — ใช้เนื้อไฟล์เองแยกกลุ่มที่ควร
+        # พังแทน (แต่ละกลุ่มมีไฟล์ report.xls เนื้อหาต่างกันไว้แยกแยะ)
+        content = Path(kwargs["file_paths"][0]).read_text(encoding="utf-8")
+        if "เสีย" in content:
             raise RuntimeError("ไม่สามารถอ่านข้อมูลจากไฟล์ที่ดาวน์โหลดมาได้เลย")
         if kwargs.get("on_profile"):
             kwargs["on_profile"]({"name": "บริษัทปกติ", "account_no": "0199000001", "meter_no": ""})

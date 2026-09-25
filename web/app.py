@@ -1416,6 +1416,10 @@ def _run_import_bulk_job(job_id: str, groups: Dict[str, List[str]], params: dict
 
         log(f"📂 กำลังนำเข้ากลุ่ม: {group_label} ({len(file_paths)} ไฟล์)")
         try:
+            # site_label ไม่ได้ส่ง folder_name เข้าไปด้วยตั้งใจ (ต่างจากที่เคยทำ) — ผู้ใช้ขอให้
+            # company_name เป็นชื่อจริงจากไฟล์ล้วนๆ 100% ไม่ต้องมีชื่อโฟลเดอร์ต่อท้ายเป็น
+            # "ชื่อจริง (ชื่อโฟลเดอร์)" อีก (แลกกับการแยกไม่ออกถ้าบริษัทเดียวกันมีหลายมิเตอร์อยู่ใน
+            # import_log_local.csv/site_curves_local.csv ชื่อจะซ้ำกัน — ยังแยกด้วยเลขบัญชีได้อยู่)
             profile = import_amr_from_files(
                 file_paths=file_paths,
                 contract_kva=params.get("contract_kva"),
@@ -1423,7 +1427,6 @@ def _run_import_bulk_job(job_id: str, groups: Dict[str, List[str]], params: dict
                 has_solar=params.get("has_solar", False),
                 on_profile=on_profile,
                 log=log,
-                site_label=folder_name,
             )
             results.append(
                 {
