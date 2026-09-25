@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -11,6 +12,20 @@ from typing import Dict, List, Optional
 from .models import DAY_TYPES, BusinessType, Customer, LoadCurve, LoadProfile, RateSchedule, PERIODS
 
 DEFAULT_DATA_DIR = Path(__file__).resolve().parents[2] / "data" / "reference"
+
+_LEADING_FOLDER_INDEX_RE = re.compile(r"^\d+[_\-.\s]+")
+
+
+def normalize_company_name(name: str) -> str:
+    """ตัดช่องว่างซ้ำ/พิมพ์เล็กหมดก่อนเทียบชื่อ + ตัด "เลขลำดับโฟลเดอร์" ที่ Google Drive ชอบนำหน้า
+    ชื่อไฟล์/โฟลเดอร์ทิ้งด้วย (เช่น "15_บริษัท โนเบลเอ็นซี จำกัด" หรือ "35_บริษัท เอส เค บี...") —
+    เจอกรณีจริงที่ไฟล์อ่านเลขบัญชีไม่ได้เลย ระบบเลยใช้ชื่อโฟลเดอร์ทั้งดุ้น (รวม prefix เลข) แทน
+    ทำให้เทียบกับชื่อลูกค้าที่บันทึกไว้แบบสะอาดๆ ในทะเบียนไม่ตรงกันเฉยๆ ทั้งที่เป็นบริษัทเดียวกัน —
+    ใช้ร่วมกันทั้ง scripts/dedupe_pending_amr.py (เทียบรายการรอทราบอัตรา) และ web/app.py (เทียบ
+    ก่อนนำเข้าโหมดหลายบริษัทพร้อมกัน) กันตรรกะเทียบชื่อเพี้ยนไปคนละแบบ"""
+
+    name = _LEADING_FOLDER_INDEX_RE.sub("", (name or "").strip())
+    return " ".join(name.split()).lower()
 
 
 def _to_float(value: str) -> Optional[float]:

@@ -51,6 +51,7 @@ from amr_mapping.loader import (
     load_pending_amr_local,
     load_site_curves_local,
     load_tsic_code_mapping,
+    normalize_company_name,
     remove_import_log_local_entry,
     remove_load_curve,
     remove_load_profile,
@@ -1415,6 +1416,17 @@ def _known_account_numbers(reference) -> set:
     return known
 
 
+def _known_company_names(reference) -> set:
+    """รวมชื่อลูกค้าที่มีอยู่แล้วในทะเบียน (ผ่าน normalize_company_name เดียวกับที่
+    scripts/dedupe_pending_amr.py ใช้ — ตัด prefix เลขลำดับโฟลเดอร์ + ช่องว่างซ้ำ/พิมพ์เล็กออกก่อน)
+    ใช้เป็นทางเลือกสำรองตอนเช็คบัญชีซ้ำก่อนนำเข้าโหมด "หลายบริษัทพร้อมกัน" สำหรับกลุ่มที่อ่านเลขบัญชี
+    จากหัวรายงานไม่ได้เลย (ไม่มีเลขบัญชีให้เทียบแบบ _known_account_numbers) ⚠️ เทียบด้วยชื่อเท่านั้น
+    แม่นน้อยกว่าเทียบด้วยเลขบัญชี (อาจมีบริษัทคนละรายชื่อพ้องกันได้) แต่ไฟล์ AMR ดิบยังถูกเก็บไว้ใน
+    amr_downloads/uploaded/ เสมอ ไม่ได้ถูกลบทิ้งแม้จะข้ามไป (ดู log ของ job นี้ย้อนหลังได้)"""
+
+    return {normalize_company_name(c.name) for c in reference.customers if c.name}
+
+
 def _run_import_bulk_job(job_id: str, groups: Dict[str, List[str]], params: dict) -> None:
     """นำเข้าทีละกลุ่ม (1 กลุ่ม = 1 โฟลเดอร์ = สันนิษฐานว่า 1 บริษัท/ไซต์) ต่อเนื่องกันไปจนครบ —
     กลุ่มไหนพัง (ไม่ว่าจะเพราะไม่ทราบประเภทธุรกิจ/รหัสอัตรา หรือไฟล์อ่านไม่ได้) ต้องไม่ทำให้กลุ่ม
@@ -1423,14 +1435,19 @@ def _run_import_bulk_job(job_id: str, groups: Dict[str, List[str]], params: dict
 
     ก่อนนำเข้าแต่ละกลุ่ม จะอ่านเลขบัญชีจากหัวรายงานของไฟล์แรกมาเช็คก่อนว่า "รู้จักอยู่แล้ว" หรือไม่
     (ดู _known_account_numbers) — ถ้าใช่ ข้ามกลุ่มนั้นไปเลย ไม่นำเข้าซ้ำ ไม่ไปค้างในคิวรอทราบอัตรา
-    (เผื่อ zip ที่อัปโหลดมามีทั้งบริษัทที่ทำไปแล้วปนกับบริษัทใหม่ที่ยังไม่เคยทำ)"""
+    (เผื่อ zip ที่อัปโหลดมามีทั้งบริษัทที่ทำไปแล้วปนกับบริษัทใหม่ที่ยังไม่เคยทำ) ถ้าอ่านเลขบัญชีจากไฟล์
+    ไม่ได้เลย (บางไฟล์ export ไม่มีตารางหัวรายงานให้อ่าน) จะเทียบด้วยชื่อแทน (ชื่อจากหัวรายงานถ้ามี
+    ไม่งั้นใช้ชื่อโฟลเดอร์ — ดู _known_company_names/normalize_company_name) แม่นน้อยกว่าเทียบเลข
+    บัญชี แต่ยังดีกว่าปล่อยให้ไปค้างในคิวรอทราบอัตราซ้ำๆ ทุกครั้งที่อัปโหลดซ้ำ"""
 
     def log(msg: str) -> None:
         with _JOBS_LOCK:
             _JOBS[job_id]["logs"].append(msg)
 
     results: List[dict] = []
-    known_accounts = _known_account_numbers(load_reference_data(DEFAULT_DATA_DIR))
+    reference = load_reference_data(DEFAULT_DATA_DIR)
+    known_accounts = _known_account_numbers(reference)
+    known_names = _known_company_names(reference)
 
     for folder_name, file_paths in groups.items():
         group_label = folder_name or "(ไฟล์ที่ root ของ zip ไม่มีโฟลเดอร์ห่อ)"
@@ -1442,22 +1459,34 @@ def _run_import_bulk_job(job_id: str, groups: Dict[str, List[str]], params: dict
         log(f"📂 กำลังนำเข้ากลุ่ม: {group_label} ({len(file_paths)} ไฟล์)")
 
         peeked_account_no = ""
+        peeked_company_name = ""
         if file_paths:
             try:
-                peeked_account_no = (parse_report_header(file_paths[0]).get("บัญชีผู้ใช้ไฟ") or "").strip()
+                peeked_header = parse_report_header(file_paths[0])
+                peeked_account_no = (peeked_header.get("บัญชีผู้ใช้ไฟ") or "").strip()
+                peeked_company_name = (peeked_header.get("ชื่อผู้ใช้ไฟ") or "").strip()
             except Exception as e:  # noqa: BLE001 — อ่านหัวรายงานไม่สำเร็จต้องไม่ทำให้ job หลักพังไปด้วย
                 log(f"⚠️ อ่านหัวรายงานของกลุ่ม {group_label} ก่อนเช็คบัญชีซ้ำไม่สำเร็จ (ไม่กระทบการนำเข้าหลัก): {e}")
 
+        skip_reason = ""
         if peeked_account_no and peeked_account_no in known_accounts:
+            skip_reason = f"บัญชี {peeked_account_no} มีอยู่แล้วในหน้าภาพรวม"
+        elif not peeked_account_no:
+            name_candidate = peeked_company_name or folder_name
+            normalized = normalize_company_name(name_candidate)
+            if normalized and normalized in known_names:
+                skip_reason = f'ชื่อ "{name_candidate}" ตรงกับลูกค้าที่มีอยู่แล้วในหน้าภาพรวม (เทียบด้วยชื่อ เพราะอ่านเลขบัญชีจากไฟล์ไม่ได้)'
+
+        if skip_reason:
             results.append(
                 {
                     "folder": folder_name,
                     "status": "skipped",
                     "account_no": peeked_account_no,
-                    "company_name": "",
+                    "company_name": peeked_company_name,
                 }
             )
-            log(f"⏭️ ข้ามกลุ่ม {group_label} — บัญชี {peeked_account_no} มีอยู่แล้วในหน้าภาพรวม")
+            log(f"⏭️ ข้ามกลุ่ม {group_label} — {skip_reason}")
             continue
 
         try:

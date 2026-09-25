@@ -51,7 +51,6 @@
 from __future__ import annotations
 
 import argparse
-import re
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -65,6 +64,7 @@ from amr_mapping.loader import (
     load_import_log_local,
     load_pending_amr_local,
     load_reference_data,
+    normalize_company_name,
     remove_pending_amr_local,
 )
 
@@ -184,19 +184,6 @@ def find_resolvable_entries(data_dir: Path) -> List[Tuple[dict, str, str]]:
     return resolvable
 
 
-_LEADING_FOLDER_INDEX_RE = re.compile(r"^\d+[_\-.\s]+")
-
-
-def _normalize_name(name: str) -> str:
-    """ตัดช่องว่างซ้ำ/พิมพ์เล็กหมดก่อนเทียบชื่อ + ตัด "เลขลำดับโฟลเดอร์" ที่ google Drive ชอบนำหน้า
-    ชื่อไฟล์/โฟลเดอร์ทิ้งด้วย (เช่น "15_บริษัท โนเบลเอ็นซี จำกัด" หรือ "35_บริษัท เอส เค บี...")
-    — เจอกรณีจริงที่ไฟล์อ่านเลขบัญชีไม่ได้เลย ระบบเลยใช้ชื่อโฟลเดอร์ทั้งดุ้น (รวม prefix เลข) แทน
-    ทำให้เทียบกับชื่อลูกค้าที่บันทึกไว้แบบสะอาดๆ ในทะเบียนไม่ตรงกันเฉยๆ ทั้งที่เป็นบริษัทเดียวกัน"""
-
-    name = _LEADING_FOLDER_INDEX_RE.sub("", (name or "").strip())
-    return " ".join(name.split()).lower()
-
-
 def find_name_match_candidates(data_dir: Path) -> List[Tuple[dict, "object"]]:
     """คืน list ของ (entry, ลูกค้าที่มีอยู่แล้วในทะเบียน) ที่ "ชื่อตรงกัน" สำหรับรายการ pending ที่
     ไม่มีเลขบัญชีเลย (เทียบเลขบัญชีแบบกลุ่มที่ 1/2 ไม่ได้) — เทียบชื่อแบบตัดช่องว่างซ้ำ/พิมพ์เล็ก
@@ -205,7 +192,7 @@ def find_name_match_candidates(data_dir: Path) -> List[Tuple[dict, "object"]]:
     (ดู docstring ของโมดูล กลุ่มที่ 3)"""
 
     reference = load_reference_data(data_dir)
-    customers_by_name = {_normalize_name(c.name): c for c in reference.customers if c.name}
+    customers_by_name = {normalize_company_name(c.name): c for c in reference.customers if c.name}
 
     pending_entries = load_pending_amr_local(data_dir / "pending_amr_local.csv")
 
@@ -213,7 +200,7 @@ def find_name_match_candidates(data_dir: Path) -> List[Tuple[dict, "object"]]:
     for entry in pending_entries:
         if (entry.get("account_no") or "").strip():
             continue  # มีเลขบัญชีอยู่แล้ว ให้กลุ่มที่ 1/2 (เทียบด้วยเลขบัญชี แม่นกว่า) จัดการไป
-        company_name = _normalize_name(entry.get("company_name") or "")
+        company_name = normalize_company_name(entry.get("company_name") or "")
         if not company_name:
             continue
         customer = customers_by_name.get(company_name)
