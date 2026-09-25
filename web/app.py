@@ -684,6 +684,10 @@ def api_forecast_adhoc():
     body = request.get_json(force=True, silent=True) or {}
 
     business_type_code = (body.get("business_type_code") or "").strip() or None
+    # section_code (เช่น "C" การผลิต) — ใช้ตอนรู้แค่หมวดใหญ่ ไม่รู้ business_type_code (รหัส TSIC
+    # 5 หลัก) เลย (ดู MatchLevel.SECTION_ONLY ใน mapping.py) ไม่มีผลถ้าระบุ business_type_code มา
+    # ด้วย (business_type_code แม่นยำกว่าเสมอ)
+    section_code = (body.get("section_code") or "").strip() or None
     rate_code = (body.get("rate_code") or "").strip() or None
     has_solar = _parse_tri_state_bool(body.get("has_solar"))
     contract_kva = body.get("contract_kva")
@@ -692,7 +696,7 @@ def api_forecast_adhoc():
     except (TypeError, ValueError):
         return jsonify({"error": "invalid_request", "message": "KVA ตามสัญญาต้องเป็นตัวเลข"}), 400
 
-    if not business_type_code and not rate_code:
+    if not business_type_code and not section_code and not rate_code:
         return jsonify(
             {"error": "invalid_request", "message": "กรุณาเลือก/กรอกประเภทธุรกิจ หรือ ประเภทอัตรา อย่างน้อยหนึ่งอย่าง"}
         ), 400
@@ -709,7 +713,7 @@ def api_forecast_adhoc():
         has_solar=has_solar,
     )
 
-    result = estimate_customer_load(transient_customer, reference)
+    result = estimate_customer_load(transient_customer, reference, section_code=section_code)
     return jsonify(_estimate_result_to_dict(result, reference))
 
 

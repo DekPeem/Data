@@ -142,6 +142,12 @@ let BUSINESS_TYPE_NAMES = {}; // code -> name_th
 let BUSINESS_TYPE_GROUPS = new Map(); // section_code (หรือ "UNVERIFIED") -> [{code, bt}, ...]
 let BUSINESS_TYPE_BY_CODE = {}; // code -> business type เต็ม (รวม alias_of) จาก /api/business-types-full
 
+// เลือกแค่ Section (เช่น "C" การผลิต) ไว้ แต่ยังไม่ได้เลือกประเภทธุรกิจย่อย — ใช้พยากรณ์แบบหยาบ
+// (SECTION_ONLY) ได้เลยโดยไม่ต้องรู้รหัส TSIC 5 หลัก (ดู runForecast) ล้างค่านี้ทิ้งทันทีที่เลือก
+// ประเภทธุรกิจย่อยจริงๆ (business_type_code แม่นยำกว่าเสมอ) — ไม่นับ "UNVERIFIED" (ไม่ใช่ Section
+// TSIC จริง เป็นแค่กลุ่มรวมธุรกิจที่ยังไม่ตรวจสอบ)
+let selectedSectionCode = "";
+
 // รหัสธุรกิจที่ถือว่า "เรื่องเดียวกัน" กับ code (ตัวเอง + alias ทุกทิศทาง) — พอร์ตมาจาก
 // mapping._equivalent_codes ฝั่ง Python (ดู src/amr_mapping/mapping.py) ใช้ตอนหารายชื่อบริษัทจริง
 // ที่ backing โปรไฟล์นี้ (renderMatchedCompanies) เพื่อให้สอดคล้องกับตรรกะจับคู่จริงที่ backend
@@ -224,6 +230,9 @@ function filterComboboxList(input, wrap) {
 // runForecast เองอยู่แล้ว ยิงซ้ำจะเบิ้ล)
 function setBusinessType(code, { dispatchChange = false } = {}) {
   businessTypeSelect.value = code || "";
+  // เลือกประเภทธุรกิจย่อยจริงแล้ว (หรือเคลียร์ทั้งหมด) — Section ที่เลือกไว้เฉยๆ ไม่มีความหมาย
+  // อีกต่อไป (business_type_code แม่นยำกว่าเสมอ ดู runForecast)
+  selectedSectionCode = "";
   const sectionInput = document.querySelector("#f-business-type-section .biz-type-search-input");
   const bizInput = document.querySelector("#f-business-type-biz .biz-type-search-input");
   const clearBtn = document.getElementById("f-business-type-clear");
@@ -284,7 +293,11 @@ function setupBusinessTypeCombobox() {
       // ที่เพิ่งตั้งไว้ข้างบนทิ้งไปด้วย (กรณี "ไม่มีอะไรเลือกเลย" ต่างจากกรณีนี้ที่เลือก Section
       // ไว้แล้ว แค่ยังไม่เลือกประเภทธุรกิจย่อย)
       businessTypeSelect.value = "";
-      clearBtn.style.display = "none";
+      // เก็บ Section ที่เลือกไว้ — ถ้าไม่เลือกประเภทธุรกิจย่อยต่อ ก็ยังพยากรณ์แบบหยาบได้เลย
+      // (SECTION_ONLY) ไม่นับ "UNVERIFIED" เพราะไม่ใช่ Section TSIC จริง
+      selectedSectionCode = key === "UNVERIFIED" ? "" : key;
+      // มีตัวเลือกให้ล้างแล้ว (อย่างน้อยก็ Section) แสดงปุ่มล้างไว้เพื่อให้กลับไปจุดเริ่มต้นได้
+      clearBtn.style.display = selectedSectionCode ? "" : "none";
       bizInput.disabled = false;
       bizInput.value = "";
       bizInput.placeholder = `🔍 ค้นหาประเภทธุรกิจ (${items.length} รายการ)...`;
@@ -689,12 +702,14 @@ async function runForecast(forceCategoryOnly) {
   adhocFormHint.textContent = "";
   const displayName = nameInput.value.trim(); // ใช้แสดงผลเท่านั้น — ไม่ส่งไป server
   const businessTypeCode = businessTypeSelect.value.trim();
+  // เลือกแค่ Section ไว้ (ยังไม่เลือกประเภทธุรกิจย่อย) — ยังพยากรณ์แบบหยาบได้ (SECTION_ONLY)
+  const sectionCodeOnly = !businessTypeCode ? selectedSectionCode : "";
   const rateCode = forceCategoryOnly ? "" : rateCodeSelect.value.trim();
   const kvaRaw = kvaInput.value.trim();
   const hasSolarRaw = hasSolarSelect.value; // "" = ไม่ทราบ, "true"/"false" = ทราบแน่ชัด
 
-  if (!businessTypeCode && !rateCode) {
-    adhocFormHint.textContent = "กรุณาเลือกประเภทธุรกิจ หรือ กรอกรหัสอัตรา อย่างน้อยหนึ่งอย่าง";
+  if (!businessTypeCode && !sectionCodeOnly && !rateCode) {
+    adhocFormHint.textContent = "กรุณาเลือกประเภทธุรกิจ (อย่างน้อย Section) หรือ กรอกรหัสอัตรา อย่างน้อยหนึ่งอย่าง";
     return;
   }
 
@@ -705,6 +720,7 @@ async function runForecast(forceCategoryOnly) {
 
   const body = {
     business_type_code: businessTypeCode || undefined,
+    section_code: sectionCodeOnly || undefined,
     rate_code: rateCode || undefined,
     contract_kva: kvaRaw || undefined,
     has_solar: hasSolarRaw === "" ? undefined : hasSolarRaw === "true",

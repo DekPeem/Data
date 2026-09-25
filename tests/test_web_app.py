@@ -300,6 +300,55 @@ def test_forecast_adhoc_missing_both_fields(client):
     assert res.get_json()["error"] == "invalid_request"
 
 
+def test_forecast_adhoc_accepts_bare_section_code_without_business_type(client, monkeypatch):
+    """ส่งแค่ section_code มา (ไม่มี business_type_code เลย) ต้องพยากรณ์ได้ด้วยระดับ SECTION_ONLY
+    — ใช้ตอนผู้ใช้รู้แค่หมวดใหญ่ (เช่น "C" การผลิต) ไม่รู้รหัส TSIC 5 หลัก"""
+
+    from amr_mapping.models import BusinessType, LoadProfile
+
+    original = app_module.load_reference_data()
+    business_types = dict(original.business_types)
+    business_types["27100"] = BusinessType(
+        code="27100", name_th="ผลิตมอเตอร์ไฟฟ้า", category="electrical", section_code="C", division_code="27",
+    )
+    profile = LoadProfile(
+        business_type_code="27100", rate_code="40", billing_method="TOU",
+        demand_kw={"P": 50, "OP": 50, "H": 50}, energy_kwh={"P": 50, "OP": 50, "H": 50}, sample_size=1,
+    )
+    patched = replace(original, business_types=business_types, load_profiles=[profile])
+    monkeypatch.setattr(app_module, "get_reference", lambda: patched)
+
+    res = client.post("/api/forecast-adhoc", json={"section_code": "C", "rate_code": "40"})
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["match"]["level"] == "same_tsic_section"
+    assert data["matched_profile"]["business_type_code"] == "27100"
+    assert data["forecast"]["demand_kw"]["P"] == 50
+
+
+def test_forecast_adhoc_bare_section_code_without_any_other_field_is_valid_request(client, monkeypatch):
+    """section_code เพียงอย่างเดียว (ไม่มี business_type_code หรือ rate_code เลย) ต้องไม่ถูกปัด
+    เป็น 400 invalid_request — ก่อนแก้ endpoint เช็คแค่ business_type_code/rate_code เท่านั้น"""
+
+    from amr_mapping.models import BusinessType, LoadProfile
+
+    original = app_module.load_reference_data()
+    business_types = dict(original.business_types)
+    business_types["27100"] = BusinessType(
+        code="27100", name_th="ผลิตมอเตอร์ไฟฟ้า", category="electrical", section_code="C", division_code="27",
+    )
+    profile = LoadProfile(
+        business_type_code="27100", rate_code="40", billing_method="TOU",
+        demand_kw={"P": 50, "OP": 50, "H": 50}, energy_kwh={"P": 50, "OP": 50, "H": 50}, sample_size=1,
+    )
+    patched = replace(original, business_types=business_types, load_profiles=[profile])
+    monkeypatch.setattr(app_module, "get_reference", lambda: patched)
+
+    res = client.post("/api/forecast-adhoc", json={"section_code": "C"})
+    assert res.status_code == 200
+    assert res.get_json()["match"]["level"] == "same_tsic_section"
+
+
 def test_forecast_adhoc_never_receives_a_name_field(client):
     """ยืนยันว่า endpoint นี้ใช้งานได้ปกติแม้ไม่ส่ง name มาเลย (ไม่มี parameter นี้อยู่จริง) —
     ส่ง name มาด้วยก็ต้องถูกเพิกเฉย ไม่มีทางไปโผล่ในคำตอบหรือถูกใช้คำนวณอะไรทั้งสิ้น"""

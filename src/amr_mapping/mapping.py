@@ -141,14 +141,20 @@ def find_load_profile(
     rate_code: Optional[str] = None,
     business_types: Optional[Dict[str, BusinessType]] = None,
     has_solar: Optional[bool] = None,
+    section_code: Optional[str] = None,
 ) -> MatchResult:
     """จับคู่โปรไฟล์ที่เหมาะสมที่สุดตามลำดับความสำคัญ (ดู docstring ของโมดูล)
 
-    business_types (ถ้าระบุ) ใช้ 2 อย่าง: (1) ชั้น DIVISION_ONLY — ดู section_code/division_code
-    (2) ยกระดับชั้น EXACT/BUSINESS_ONLY ให้ข้ามไปมาระหว่างรหัสที่เป็น alias กันได้ (ดู
-    BusinessType.alias_of/_equivalent_codes) เช่น business_type_code ที่ลูกค้าระบุมาคือ 86101
-    (TSIC ปัจจุบัน) แต่โปรไฟล์จริงในระบบบันทึกไว้เป็น 93311 (รหัสเก่า alias กัน) จะยังจับคู่ที่
-    EXACT ได้เลย ไม่ต้องตกไป DIVISION_ONLY
+    business_types (ถ้าระบุ) ใช้ 2 อย่าง: (1) ชั้น DIVISION_ONLY/SECTION_ONLY — ดู
+    section_code/division_code (2) ยกระดับชั้น EXACT/BUSINESS_ONLY ให้ข้ามไปมาระหว่างรหัสที่เป็น
+    alias กันได้ (ดู BusinessType.alias_of/_equivalent_codes) เช่น business_type_code ที่ลูกค้า
+    ระบุมาคือ 86101 (TSIC ปัจจุบัน) แต่โปรไฟล์จริงในระบบบันทึกไว้เป็น 93311 (รหัสเก่า alias กัน)
+    จะยังจับคู่ที่ EXACT ได้เลย ไม่ต้องตกไป DIVISION_ONLY
+
+    section_code (ถ้าระบุ) ใช้เป็น TSIC section เป้าหมายสำหรับชั้น SECTION_ONLY โดยตรง — สำหรับ
+    กรณีที่รู้แค่หมวดใหญ่ (เช่น "C" การผลิต) แต่ไม่รู้ business_type_code (รหัส TSIC 5 หลัก) เลย
+    ถ้าระบุ business_type_code มาด้วยและเจอใน business_types จะใช้ section_code ของ
+    business_type_code นั้นแทน (แม่นยำกว่า ไม่สนใจค่านี้)
 
     has_solar (ถ้าระบุ — True/False) ใช้กรองเฉพาะชั้น EXACT เท่านั้น ปล่อยเป็น None ถ้าไม่ทราบ
     สถานะ Solar ของลูกค้า (พฤติกรรมเดิมก่อนมีมิตินี้)
@@ -159,6 +165,7 @@ def find_load_profile(
     # การเทียบ business_type_code ตรงๆ ในชั้น EXACT/BUSINESS_ONLY ทั้งหมดด้านล่าง คืนแค่
     # {business_type_code} เฉยๆ ถ้าไม่มี business_types หรือไม่มี alias (พฤติกรรมเดิม)
     equivalent_codes = _equivalent_codes(business_type_code, business_types) if business_type_code else set()
+    target_bt = business_types.get(business_type_code) if business_types and business_type_code else None
 
     if business_type_code and rate_code:
         exact_candidates = [
@@ -183,41 +190,46 @@ def find_load_profile(
 
         # ไม่มีโปรไฟล์ของ business_type_code นี้ตรงๆ เลย — ลองหาโปรไฟล์ของธุรกิจอื่นที่อยู่ใน
         # TSIC division เดียวกัน (ต้องทราบ division_code ของทั้งเป้าหมายและผู้สมัครทุกตัว)
-        if business_types:
-            target_bt = business_types.get(business_type_code)
-            if target_bt and target_bt.division_code:
-                division_candidates = [
-                    p
-                    for p in profiles
-                    if business_types.get(p.business_type_code) is not None
-                    and business_types[p.business_type_code].division_code == target_bt.division_code
-                ]
-                if division_candidates:
-                    if rate_code:
-                        preferred = [p for p in division_candidates if p.rate_code == rate_code]
-                        if preferred:
-                            averaged = _weighted_average_profile(preferred, business_type_code, rate_code)
-                            return MatchResult(averaged, MatchLevel.DIVISION_ONLY, preferred)
-                    averaged = _weighted_average_profile(division_candidates, business_type_code, rate_code)
-                    return MatchResult(averaged, MatchLevel.DIVISION_ONLY, division_candidates)
+        if business_types and target_bt and target_bt.division_code:
+            division_candidates = [
+                p
+                for p in profiles
+                if business_types.get(p.business_type_code) is not None
+                and business_types[p.business_type_code].division_code == target_bt.division_code
+            ]
+            if division_candidates:
+                if rate_code:
+                    preferred = [p for p in division_candidates if p.rate_code == rate_code]
+                    if preferred:
+                        averaged = _weighted_average_profile(preferred, business_type_code, rate_code)
+                        return MatchResult(averaged, MatchLevel.DIVISION_ONLY, preferred)
+                averaged = _weighted_average_profile(division_candidates, business_type_code, rate_code)
+                return MatchResult(averaged, MatchLevel.DIVISION_ONLY, division_candidates)
 
-            # ไม่มีโปรไฟล์ใน division เดียวกันเลย — ลองหมวดใหญ่กว่า (TSIC section เช่น
-            # C=การผลิต) แทน ก่อนตกไปที่ RATE_ONLY/DEFAULT ที่ไม่สนใจประเภทธุรกิจเลย
-            if target_bt and target_bt.section_code:
-                section_candidates = [
-                    p
-                    for p in profiles
-                    if business_types.get(p.business_type_code) is not None
-                    and business_types[p.business_type_code].section_code == target_bt.section_code
-                ]
-                if section_candidates:
-                    if rate_code:
-                        preferred = [p for p in section_candidates if p.rate_code == rate_code]
-                        if preferred:
-                            averaged = _weighted_average_profile(preferred, business_type_code, rate_code)
-                            return MatchResult(averaged, MatchLevel.SECTION_ONLY, preferred)
-                    averaged = _weighted_average_profile(section_candidates, business_type_code, rate_code)
-                    return MatchResult(averaged, MatchLevel.SECTION_ONLY, section_candidates)
+    # ไม่มีโปรไฟล์ตรงธุรกิจ/division เดียวกันเลย (หรือไม่ได้ระบุ business_type_code มาตั้งแต่ต้น
+    # รู้แค่หมวดใหญ่) — ลองหมวดใหญ่กว่า (TSIC section เช่น C=การผลิต) แทน ก่อนตกไปที่
+    # RATE_ONLY/DEFAULT ที่ไม่สนใจประเภทธุรกิจเลย — section ของ business_type_code (ถ้ารู้จัก)
+    # แม่นยำกว่า section_code ที่ระบุมาตรงๆ เสมอ
+    effective_section_code = (target_bt.section_code if target_bt else None) or section_code
+    if effective_section_code and business_types:
+        section_candidates = [
+            p
+            for p in profiles
+            if business_types.get(p.business_type_code) is not None
+            and business_types[p.business_type_code].section_code == effective_section_code
+        ]
+        if section_candidates:
+            # ป้ายกำกับโปรไฟล์สังเคราะห์ที่คืนออกไป — ใช้ business_type_code จริงถ้ารู้ (แค่ไม่มี
+            # โปรไฟล์ของมันเองพอดี) ไม่งั้นระบุ section แทน "DEFAULT" ตรงๆ กันสับสนว่าไม่เจอข้อมูล
+            # อะไรเลย ทั้งที่จริงเจอแล้ว (แค่กว้างระดับ section ไม่ใช่ธุรกิจเป๊ะๆ)
+            synthetic_label = business_type_code or f"SECTION:{effective_section_code}"
+            if rate_code:
+                preferred = [p for p in section_candidates if p.rate_code == rate_code]
+                if preferred:
+                    averaged = _weighted_average_profile(preferred, synthetic_label, rate_code)
+                    return MatchResult(averaged, MatchLevel.SECTION_ONLY, preferred)
+            averaged = _weighted_average_profile(section_candidates, synthetic_label, rate_code)
+            return MatchResult(averaged, MatchLevel.SECTION_ONLY, section_candidates)
 
     if rate_code:
         candidates = [p for p in profiles if p.rate_code == rate_code]
@@ -266,12 +278,18 @@ def find_load_curve(
     return non_solar[0] if non_solar else candidates[0]
 
 
-def estimate_customer_load(customer: Customer, reference: ReferenceData) -> ForecastResult:
+def estimate_customer_load(
+    customer: Customer, reference: ReferenceData, section_code: Optional[str] = None
+) -> ForecastResult:
     """พยากรณ์โปรไฟล์ P/OP/H ของลูกค้าที่ไม่มีข้อมูล AMR ของตัวเอง
 
     ขั้นตอน:
         1. จับคู่โปรไฟล์อ้างอิงที่ใกล้เคียงที่สุด (ดู find_load_profile)
         2. ปรับสเกลตาม contract_kva ของลูกค้า เทียบกับ contract_kva_ref ของโปรไฟล์
+
+    section_code (ถ้าระบุ) ส่งต่อให้ find_load_profile เป็นทางเลือกสำรองระดับ SECTION_ONLY เมื่อ
+    ไม่มี customer.business_type_code เลย (รู้แค่หมวดใหญ่ TSIC เช่น "C" การผลิต) — ไม่ใช่ฟิลด์ที่
+    บันทึกไว้ถาวรใน Customer/customers.csv เจตนาใช้แค่ตอนพยากรณ์แบบ ad-hoc ไม่บันทึกข้อมูลเท่านั้น
     """
 
     if customer.has_amr:
@@ -286,6 +304,7 @@ def estimate_customer_load(customer: Customer, reference: ReferenceData) -> Fore
         rate_code=customer.rate_code,
         business_types=reference.business_types,
         has_solar=customer.has_solar,
+        section_code=section_code,
     )
     profile = match.profile
     warnings: List[str] = []

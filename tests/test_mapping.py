@@ -148,6 +148,74 @@ def test_find_load_profile_division_fallback_requires_known_division_on_target()
     assert match.level == MatchLevel.DEFAULT
 
 
+def test_find_load_profile_matches_by_bare_section_code_without_business_type():
+    """รู้แค่หมวดใหญ่ (TSIC section เช่น "C") ไม่รู้ business_type_code 5 หลักเลย ก็ยังต้อง
+    จับคู่ได้ (SECTION_ONLY) — ใช้ตอนผู้ใช้เลือกแค่ Section ในหน้าพยากรณ์แบบไม่บันทึกข้อมูล"""
+
+    business_types = {
+        "27100": BusinessType(code="27100", name_th="ผลิตมอเตอร์ไฟฟ้า", category="electrical", section_code="C", division_code="27"),
+    }
+    profiles = [
+        LoadProfile(
+            business_type_code="27100", rate_code="40", billing_method="TOU",
+            demand_kw={"P": 1, "OP": 1, "H": 1}, energy_kwh={"P": 1, "OP": 1, "H": 1},
+        ),
+    ]
+
+    match = find_load_profile(profiles, business_type_code=None, rate_code="40", business_types=business_types, section_code="C")
+    assert match.level == MatchLevel.SECTION_ONLY
+    assert match.profile.business_type_code == "27100"
+
+
+def test_find_load_profile_bare_section_code_synthetic_profile_labeled_by_section_not_default():
+    """โปรไฟล์สังเคราะห์ (ถัวเฉลี่ยจากหลายตัว) ที่ได้จาก section_code เปล่าๆ (ไม่มี
+    business_type_code) ต้องมีป้ายกำกับ "SECTION:<code>" ไม่ใช่ "DEFAULT" — กันสับสนว่าไม่เจอข้อมูล
+    อะไรเลย ทั้งที่จริงเจอแล้ว (แค่กว้างระดับ section)"""
+
+    business_types = {
+        "27100": BusinessType(code="27100", name_th="ผลิตมอเตอร์ไฟฟ้า", category="electrical", section_code="C", division_code="27"),
+        "20119": BusinessType(code="20119", name_th="ผลิตเคมีภัณฑ์", category="chemical", section_code="C", division_code="20"),
+    }
+    profiles = [
+        LoadProfile(
+            business_type_code="27100", rate_code="40", billing_method="TOU",
+            demand_kw={"P": 1, "OP": 1, "H": 1}, energy_kwh={"P": 1, "OP": 1, "H": 1}, sample_size=1,
+        ),
+        LoadProfile(
+            business_type_code="20119", rate_code="40", billing_method="TOU",
+            demand_kw={"P": 3, "OP": 3, "H": 3}, energy_kwh={"P": 3, "OP": 3, "H": 3}, sample_size=1,
+        ),
+    ]
+
+    match = find_load_profile(profiles, business_type_code=None, rate_code="40", business_types=business_types, section_code="C")
+    assert match.level == MatchLevel.SECTION_ONLY
+    assert match.profile.business_type_code == "SECTION:C"
+
+
+def test_find_load_profile_business_type_section_wins_over_bare_section_code():
+    """ถ้าระบุทั้ง business_type_code (ที่รู้จัก section ของตัวเอง) และ section_code เปล่าๆ มา
+    พร้อมกัน ต้องใช้ section ของ business_type_code เสมอ (แม่นยำกว่า) ไม่ใช่ section_code ที่ส่งมา"""
+
+    business_types = {
+        "22201": BusinessType(code="22201", name_th="ผลิตท่อพลาสติก", category="plastic", section_code="C", division_code="22"),
+        "46900": BusinessType(code="46900", name_th="ขายส่งทั่วไป", category="wholesale", section_code="G", division_code="46"),
+    }
+    profiles = [
+        LoadProfile(
+            business_type_code="46900", rate_code="40", billing_method="TOU",
+            demand_kw={"P": 1, "OP": 1, "H": 1}, energy_kwh={"P": 1, "OP": 1, "H": 1},
+        ),
+    ]
+
+    # section_code="G" ถูกส่งมาด้วย แต่ business_type_code="22201" อยู่ section "C" ต่างหาก —
+    # ไม่มีโปรไฟล์ section C เลย ต้องไม่ไปเจอ 46900 ที่ section G ผิดๆ ผ่าน SECTION_ONLY เด็ดขาด
+    # (ตกไปที่ RATE_ONLY แทน เพราะ rate_code="40" ยังตรงกับโปรไฟล์นั้นพอดีโดยบังเอิญ)
+    match = find_load_profile(
+        profiles, business_type_code="22201", rate_code="40", business_types=business_types, section_code="G"
+    )
+    assert match.level == MatchLevel.RATE_ONLY
+
+
 def test_find_load_profile_falls_back_to_same_tsic_section_when_no_division_match():
     """ไม่มีโปรไฟล์ของ "22201" ตรงๆ และไม่มีธุรกิจอื่นใน division "22" เดียวกันเลย แต่มีโปรไฟล์ของ
     "27100" ซึ่งอยู่ section "C" (การผลิต) เดียวกัน — ต้องได้ SECTION_ONLY แทนที่จะตกไป DEFAULT"""
