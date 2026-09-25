@@ -218,14 +218,23 @@ def parse_report_header(path: Union[str, Path]) -> dict:
     ไม่มีตารางหัวรายงานนี้เลย (เช่นไฟล์รูปแบบเก่า/ไฟล์ทดสอบ) ไม่ error
 
     ถ้าไฟล์เป็น Excel (.xlsx) แท้ (ไม่ใช่ HTML แฝงเป็น .xls แบบปกติ — เช่นไฟล์จากระบบ "AMI"
-    ของ PEA) จะส่งต่อให้ pea_ami_ingest.parse_ami_report_header อ่านแทนโดยอัตโนมัติ (import
-    แบบ lazy กันปัญหา circular import เพราะ pea_ami_ingest ก็ import จากไฟล์นี้เหมือนกัน)
+    ของ PEA) จะส่งต่อให้ pea_ami_ingest.parse_ami_report_header อ่านแทนโดยอัตโนมัติ ถ้าเป็น
+    Excel ไบนารีแท้ๆ รูปแบบเก่า (.xls จริง ไม่ใช่ HTML แฝง — เช่นรายงานจากอุปกรณ์วัด/บันทึกข้อมูล
+    ที่ไม่ใช่ AMRWEB) จะส่งต่อให้ pea_meter_log_ingest.parse_meter_log_header แทน (import แบบ
+    lazy กันปัญหา circular import เพราะทั้งสองโมดูลก็ import จากไฟล์นี้เหมือนกัน)
     """
 
     if is_ami_xlsx(path):
         from .pea_ami_ingest import parse_ami_report_header
 
         return parse_ami_report_header(path)
+
+    from .pea_meter_log_ingest import is_meter_log_xls
+
+    if is_meter_log_xls(path):
+        from .pea_meter_log_ingest import parse_meter_log_header
+
+        return parse_meter_log_header(path)
 
     soup = _read_html(path)
     info: dict = {}
@@ -245,13 +254,23 @@ def parse_interval_report(path: Union[str, Path]) -> List[IntervalReading]:
     แล้วอ่านทุกแถวที่มีค่า ยกเว้นแถวสรุปผลรวมท้ายตาราง (เช่น "ผลรวมทั้งหมด")
 
     ถ้าไฟล์เป็น Excel (.xlsx) แท้ (ดู is_ami_xlsx) จะส่งต่อให้
-    pea_ami_ingest.parse_ami_interval_report อ่านแทนโดยอัตโนมัติ
+    pea_ami_ingest.parse_ami_interval_report อ่านแทนโดยอัตโนมัติ ถ้าเป็น Excel ไบนารีแท้ๆ
+    รูปแบบเก่า (.xls จริง — ดู pea_meter_log_ingest.is_meter_log_xls) จะส่งต่อให้
+    pea_meter_log_ingest.parse_meter_log_interval_report แทน (ไฟล์แบบนี้ไม่มีคอลัมน์ Rate
+    A/B/C ให้เลย ต้องคำนวณช่วง P/OP/H เองจาก timestamp)
     """
 
     if is_ami_xlsx(path):
         from .pea_ami_ingest import parse_ami_interval_report
 
         return parse_ami_interval_report(path)
+
+    from .pea_meter_log_ingest import is_meter_log_xls
+
+    if is_meter_log_xls(path):
+        from .pea_meter_log_ingest import parse_meter_log_interval_report
+
+        return parse_meter_log_interval_report(path)
 
     soup = _read_html(path)
     tables = soup.find_all("table")
