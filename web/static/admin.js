@@ -1163,6 +1163,7 @@ const BULK_GROUP_STATUS_TH = {
   success: { text: "✅ สำเร็จ", color: "#006300" },
   pending: { text: "📋 รอทราบอัตรา", color: "#8a6100" },
   error: { text: "❌ ไม่สำเร็จ", color: "#a01818" },
+  skipped: { text: "⏭️ ข้าม (มีอยู่แล้ว)", color: "#55647a" },
 };
 
 function renderBulkResult(groups) {
@@ -1181,7 +1182,9 @@ function renderBulkResult(groups) {
           ? `ธุรกิจ ${g.business_type_code || "-"} · อัตรา ${g.rate_code || "-"} · ${g.sample_size ?? "-"} ไฟล์`
           : g.status === "error"
             ? g.error || ""
-            : "";
+            : g.status === "skipped"
+              ? "บัญชีนี้มีข้อมูลอยู่แล้วในหน้าภาพรวม ไม่ได้นำเข้าซ้ำ"
+              : "";
       return `
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid rgba(15,23,42,0.06);">
           <div>
@@ -1197,10 +1200,11 @@ function renderBulkResult(groups) {
   const successCount = groups.filter((g) => g.status === "success").length;
   const pendingCount = groups.filter((g) => g.status === "pending").length;
   const errorCount = groups.filter((g) => g.status === "error").length;
+  const skippedCount = groups.filter((g) => g.status === "skipped").length;
 
   jobResult.innerHTML = `
     <div class="hint" style="margin-bottom:8px;">
-      รวม ${groups.length} กลุ่ม — สำเร็จ ${successCount}, รอทราบอัตรา ${pendingCount}, ไม่สำเร็จ ${errorCount}
+      รวม ${groups.length} กลุ่ม — สำเร็จ ${successCount}, รอทราบอัตรา ${pendingCount}, ไม่สำเร็จ ${errorCount}, ข้าม (มีอยู่แล้ว) ${skippedCount}
       ${pendingCount > 0 ? `· <a href="/pending-amr" target="_blank" rel="noopener">ไปกรอกประเภทธุรกิจของรายการที่รออยู่ →</a>` : ""}
     </div>
     <div>${rows}</div>`;

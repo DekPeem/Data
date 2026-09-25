@@ -2271,7 +2271,7 @@ def test_start_import_bulk_groups_files_by_folder_and_imports_each(client, monke
         time.sleep(0.05)
 
     assert status["status"] == "success"
-    assert status["result"] == {"total": 2, "success": 2, "pending": 0, "error": 0}
+    assert status["result"] == {"total": 2, "success": 2, "pending": 0, "error": 0, "skipped": 0}
     groups = {g["folder"]: g for g in status["groups"]}
     assert set(groups) == {"06_โรงแรมดิเอ็มเพรสเชียงใหม่", "07_โรงไม้นันทะ"}
     assert all(g["status"] == "success" for g in groups.values())
@@ -2323,7 +2323,7 @@ def test_start_import_bulk_unknown_business_type_falls_back_to_folder_name(clien
         time.sleep(0.05)
 
     assert status["status"] == "success"
-    assert status["result"] == {"total": 1, "success": 0, "pending": 1, "error": 0}
+    assert status["result"] == {"total": 1, "success": 0, "pending": 1, "error": 0, "skipped": 0}
     group = status["groups"][0]
     assert group["status"] == "pending"
     assert group["company_name"] == "08_Thai Mikami"
@@ -2384,10 +2384,99 @@ def test_start_import_bulk_one_group_failing_does_not_stop_the_others(client, mo
         time.sleep(0.05)
 
     assert status["status"] == "success"
-    assert status["result"] == {"total": 2, "success": 1, "pending": 0, "error": 1}
+    assert status["result"] == {"total": 2, "success": 1, "pending": 0, "error": 1, "skipped": 0}
     groups = {g["folder"]: g for g in status["groups"]}
     assert groups["broken_company"]["status"] == "error"
     assert groups["ok_company"]["status"] == "success"
+
+
+# ตารางหัวรายงานจริง (เหมือน _SYNTHETIC_HTML_WITH_HEADER_TEMPLATE ใน tests/test_amr_import.py) —
+# ใช้ให้ parse_report_header (ตัวจริง ไม่ mock) อ่านเลขบัญชีได้ก่อนนำเข้าจริง เพื่อทดสอบการเช็ค
+# "บัญชีนี้มีอยู่แล้วในหน้าภาพรวมไหม" ก่อนนำเข้า (ดู _known_account_numbers ใน web/app.py)
+_HEADER_HTML_TEMPLATE = """
+<table width='800px'><tr>
+<td class='detail'>บัญชีผู้ใช้ไฟ : </td><td>{account_no}&nbsp;</td><td class='detail'>ชื่อผู้ใช้ไฟ : </td><td>{company_name}</td>
+</tr>
+</table>
+"""
+
+
+def test_start_import_bulk_skips_account_already_known_in_overview(client, monkeypatch, tmp_path):
+    """zip มีทั้งบัญชีที่ทำไปแล้ว (มีในทะเบียนลูกค้าพร้อมประเภทธุรกิจ+อัตราแล้ว) ปนกับบัญชีใหม่ —
+    บัญชีที่ทำไปแล้วต้องถูกข้ามไปเลย ไม่นำเข้าซ้ำ ไม่เข้าคิวรอทราบอัตรา ส่วนบัญชีใหม่ยังนำเข้าตามปกติ
+    (ผู้ใช้ต้องการอัปโหลด zip ที่มีทั้งบริษัทเก่า+ใหม่ปนกันได้ในครั้งเดียว โดยไม่ต้องแยกเอง)"""
+    import io
+    import zipfile
+
+    monkeypatch.setattr(app_module, "DEFAULT_DOWNLOAD_DIR", tmp_path / "amr_downloads")
+
+    tmp_data_dir = tmp_path / "reference"
+    tmp_data_dir.mkdir()
+    (tmp_data_dir / "business_types.csv").write_text("code,name_th,category,notes\nTESTBIZ,ธุรกิจทดสอบ,test,\n", encoding="utf-8")
+    (tmp_data_dir / "rate_schedules.csv").write_text("code,billing_method,voltage_level,description\n50,TOU,LV,\n", encoding="utf-8")
+    (tmp_data_dir / "load_profiles.csv").write_text(
+        "business_type_code,rate_code,billing_method,demand_p_kw,demand_op_kw,demand_h_kw,"
+        "energy_p_kwh,energy_op_kwh,energy_h_kwh,contract_kva_ref,sample_size,notes\n",
+        encoding="utf-8",
+    )
+    (tmp_data_dir / "load_curves.csv").write_text(
+        "business_type_code,rate_code,day_type,hour,kw_fraction\n", encoding="utf-8"
+    )
+    (tmp_data_dir / "customers_local.csv").write_text(
+        "account_no,name,business_type_code,rate_code,contract_kva,has_amr,has_solar,business_type_code_raw\n"
+        "0199000001,บริษัท เก่า จำกัด,TESTBIZ,50,,false,,\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_data_dir)
+
+    called_file_contents = []
+
+    def fake_import_amr_from_files(**kwargs):
+        from amr_mapping.models import LoadProfile
+
+        called_file_contents.append(Path(kwargs["file_paths"][0]).read_text(encoding="utf-8"))
+        if kwargs.get("on_profile"):
+            kwargs["on_profile"]({"name": "บริษัทใหม่", "account_no": "0199000002", "meter_no": ""})
+        return LoadProfile(
+            business_type_code="TESTBIZ", rate_code="50", billing_method="TOU",
+            demand_kw={"P": 1, "OP": 1, "H": 1}, energy_kwh={"P": 1, "OP": 1, "H": 1},
+            contract_kva_ref=None, sample_size=1, notes="fake",
+        )
+
+    monkeypatch.setattr(app_module, "import_amr_from_files", fake_import_amr_from_files)
+
+    old_html = _HEADER_HTML_TEMPLATE.format(account_no="0199000001", company_name="บริษัท เก่า จำกัด")
+    new_html = _HEADER_HTML_TEMPLATE.format(account_no="0199000002", company_name="บริษัทใหม่")
+
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as zf:
+        zf.writestr("old_company/report.xls", old_html)
+        zf.writestr("new_company/report.xls", new_html)
+    zip_buffer.seek(0)
+
+    res = client.post(
+        "/api/admin/import-bulk",
+        data={"files": (zip_buffer, "bundle.zip")},
+        content_type="multipart/form-data",
+    )
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/import/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    assert status["result"] == {"total": 2, "success": 1, "pending": 0, "error": 0, "skipped": 1}
+    groups = {g["folder"]: g for g in status["groups"]}
+    assert groups["old_company"]["status"] == "skipped"
+    assert groups["old_company"]["account_no"] == "0199000001"
+    assert groups["new_company"]["status"] == "success"
+
+    # import_amr_from_files ต้องไม่ถูกเรียกเลยสำหรับกลุ่มที่ข้าม (เรียกแค่ 1 ครั้งสำหรับกลุ่มใหม่)
+    assert len(called_file_contents) == 1
 
 
 def test_start_import_bulk_no_recognized_amr_files_returns_400(client, monkeypatch, tmp_path):
@@ -2511,7 +2600,7 @@ def test_start_import_bulk_groups_by_company_folder_not_generic_nested_subfolder
         time.sleep(0.05)
 
     assert status["status"] == "success"
-    assert status["result"] == {"total": 3, "success": 3, "pending": 0, "error": 0}
+    assert status["result"] == {"total": 3, "success": 3, "pending": 0, "error": 0, "skipped": 0}
     groups = {g["folder"] for g in status["groups"]}
     assert groups == {"01_Thaibengun", "02_SomeOtherCompany", "03_บริษัท โนเบลเอ็นซี จำกัด"}
 

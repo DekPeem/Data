@@ -63,6 +63,7 @@ from amr_mapping.loader import (
 )
 from amr_mapping.mapping import UNKNOWN_RATE_CODE, MatchLevel, find_load_curve
 from amr_mapping.models import BusinessType, Customer
+from amr_mapping.pea_ingest import parse_report_header
 from amr_mapping.tsic_normalize import normalize_tsic_code_with_audit
 from amr_mapping.wikipedia_lookup import search_wikipedia_company
 
@@ -1395,17 +1396,41 @@ def _run_import_file_job(job_id: str, file_paths: List[str], params: dict) -> No
             _JOBS[job_id]["error"] = str(e)
 
 
+def _known_account_numbers(reference) -> set:
+    """รวมเลขบัญชีที่ "รู้จักอยู่แล้ว" ทั้งหมด (เห็นในหน้า /overview) — บัญชีในทะเบียนลูกค้าที่มี
+    ประเภทธุรกิจ+อัตราครบแล้ว รวมกับบัญชีที่เคยนำเข้า AMR สำเร็จมาก่อน (import_log_local.csv)
+    แม้จะไม่มีในทะเบียนก็ตาม (เกณฑ์เดียวกับ find_deletable_entries/find_resolvable_entries ใน
+    scripts/dedupe_pending_amr.py) ใช้กรองก่อนนำเข้าโหมด "หลายบริษัทพร้อมกัน" — ผู้ใช้อัปโหลด zip
+    ที่มีทั้งบริษัทที่ทำไปแล้วปนกับบริษัทใหม่ ไม่อยากให้บริษัทที่ทำไปแล้วถูกนำเข้าซ้ำหรือไปค้างในคิว
+    รอทราบอัตราอีก (ต่างจากโหมดไฟล์เดี่ยว/นำเข้าทีละบัญชี ที่ยังอยากให้ merge ข้อมูลเดือนใหม่ได้ตามปกติ)"""
+
+    known: set = set()
+    for c in reference.customers:
+        if c.account_no and c.business_type_code and c.rate_code:
+            known.add(c.account_no)
+    for e in load_import_log_local(DEFAULT_DATA_DIR / "import_log_local.csv"):
+        account_no = (e.get("account_no") or "").strip()
+        if account_no:
+            known.add(account_no)
+    return known
+
+
 def _run_import_bulk_job(job_id: str, groups: Dict[str, List[str]], params: dict) -> None:
     """นำเข้าทีละกลุ่ม (1 กลุ่ม = 1 โฟลเดอร์ = สันนิษฐานว่า 1 บริษัท/ไซต์) ต่อเนื่องกันไปจนครบ —
     กลุ่มไหนพัง (ไม่ว่าจะเพราะไม่ทราบประเภทธุรกิจ/รหัสอัตรา หรือไฟล์อ่านไม่ได้) ต้องไม่ทำให้กลุ่ม
     อื่นที่เหลือหยุดนำเข้าไปด้วย (ต่างจาก _run_import_file_job ที่มีแค่กลุ่มเดียว พังแล้วจบเลยได้)
-    บันทึกผลแต่ละกลุ่มไว้ใน _JOBS[job_id]["groups"] ให้ครบทุกกลุ่มเมื่อจบ job"""
+    บันทึกผลแต่ละกลุ่มไว้ใน _JOBS[job_id]["groups"] ให้ครบทุกกลุ่มเมื่อจบ job
+
+    ก่อนนำเข้าแต่ละกลุ่ม จะอ่านเลขบัญชีจากหัวรายงานของไฟล์แรกมาเช็คก่อนว่า "รู้จักอยู่แล้ว" หรือไม่
+    (ดู _known_account_numbers) — ถ้าใช่ ข้ามกลุ่มนั้นไปเลย ไม่นำเข้าซ้ำ ไม่ไปค้างในคิวรอทราบอัตรา
+    (เผื่อ zip ที่อัปโหลดมามีทั้งบริษัทที่ทำไปแล้วปนกับบริษัทใหม่ที่ยังไม่เคยทำ)"""
 
     def log(msg: str) -> None:
         with _JOBS_LOCK:
             _JOBS[job_id]["logs"].append(msg)
 
     results: List[dict] = []
+    known_accounts = _known_account_numbers(load_reference_data(DEFAULT_DATA_DIR))
 
     for folder_name, file_paths in groups.items():
         group_label = folder_name or "(ไฟล์ที่ root ของ zip ไม่มีโฟลเดอร์ห่อ)"
@@ -1415,6 +1440,26 @@ def _run_import_bulk_job(job_id: str, groups: Dict[str, List[str]], params: dict
             _store.update(info)
 
         log(f"📂 กำลังนำเข้ากลุ่ม: {group_label} ({len(file_paths)} ไฟล์)")
+
+        peeked_account_no = ""
+        if file_paths:
+            try:
+                peeked_account_no = (parse_report_header(file_paths[0]).get("บัญชีผู้ใช้ไฟ") or "").strip()
+            except Exception as e:  # noqa: BLE001 — อ่านหัวรายงานไม่สำเร็จต้องไม่ทำให้ job หลักพังไปด้วย
+                log(f"⚠️ อ่านหัวรายงานของกลุ่ม {group_label} ก่อนเช็คบัญชีซ้ำไม่สำเร็จ (ไม่กระทบการนำเข้าหลัก): {e}")
+
+        if peeked_account_no and peeked_account_no in known_accounts:
+            results.append(
+                {
+                    "folder": folder_name,
+                    "status": "skipped",
+                    "account_no": peeked_account_no,
+                    "company_name": "",
+                }
+            )
+            log(f"⏭️ ข้ามกลุ่ม {group_label} — บัญชี {peeked_account_no} มีอยู่แล้วในหน้าภาพรวม")
+            continue
+
         try:
             # site_label ไม่ได้ส่ง folder_name เข้าไปด้วยตั้งใจ (ต่างจากที่เคยทำ) — ผู้ใช้ขอให้
             # company_name เป็นชื่อจริงจากไฟล์ล้วนๆ 100% ไม่ต้องมีชื่อโฟลเดอร์ต่อท้ายเป็น
@@ -1496,6 +1541,7 @@ def _run_import_bulk_job(job_id: str, groups: Dict[str, List[str]], params: dict
             "success": sum(1 for r in results if r["status"] == "success"),
             "pending": sum(1 for r in results if r["status"] == "pending"),
             "error": sum(1 for r in results if r["status"] == "error"),
+            "skipped": sum(1 for r in results if r["status"] == "skipped"),
         }
 
 
