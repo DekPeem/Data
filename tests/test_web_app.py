@@ -1440,11 +1440,10 @@ def test_business_type_lookup_success_suggests_matching_business_type(client, mo
 
 
 def test_business_type_lookup_uses_registration_no_profile_fetch_when_provided(client, monkeypatch):
-    """ถ้าส่ง registration_no มาด้วย ต้องเรียก lookup_business_type_by_registration_no (เข้าหน้า
-    โปรไฟล์ตรงๆ ด้วยเลขทะเบียน) แทน lookup_business_type_for_company (ค้นหาผ่านช่องค้นหาด้วยชื่อ)
-    ไปเลย — ไม่ใช้ช่องค้นหาด้วยเลขทะเบียนอีกต่อไป เพราะยืนยันจากผู้ใช้จริงว่ามักโดนบล็อก และ
-    exact_match_index ต้องคำนวณจากเลขทะเบียนตรงกัน ไม่ใช่ชื่อ — แม้ชื่อที่พิมพ์มา (company_name) จะ
-    สะกดคลาดเคลื่อนจากชื่อที่ DBD บันทึกไว้จริงก็ตาม"""
+    """ถ้าส่ง registration_no มาด้วย ต้องเรียก lookup_tsic_by_registration_no (dbd_scraper,
+    Playwright — ขับกล่องค้นหาบนหน้าเว็บจริง) แทน lookup_business_type_for_company (dbd_lookup,
+    Selenium — ค้นหาผ่านช่องค้นหาด้วยชื่อ) ไปเลย และ exact_match_index ต้องคำนวณจากเลขทะเบียนตรงกัน
+    ไม่ใช่ชื่อ — แม้ชื่อที่พิมพ์มา (company_name) จะสะกดคลาดเคลื่อนจากชื่อที่ DBD บันทึกไว้จริงก็ตาม"""
 
     from amr_mapping.dbd_lookup import CompanyBusinessInfo
 
@@ -1468,7 +1467,12 @@ def test_business_type_lookup_uses_registration_no_profile_fetch_when_provided(c
         name_search_called.append(company_name)
         return []
 
-    monkeypatch.setattr(app_module, "lookup_business_type_by_registration_no", fake_profile_fetch)
+    # lookup_tsic_by_registration_no ถูก import แบบ lazy (ไม่ใช่ top-level ของ web/app.py — กัน
+    # boot ไม่ขึ้นถ้าเครื่องไม่มี playwright ติดตั้ง) จึงต้อง patch ที่ต้นทาง (amr_mapping.dbd_scraper)
+    # แทน app_module โดยตรง — `from X import Y` ที่เรียกตอนรัน job จะเห็นค่าที่ patch ไว้เสมอ
+    import amr_mapping.dbd_scraper as dbd_scraper_module
+
+    monkeypatch.setattr(dbd_scraper_module, "lookup_tsic_by_registration_no", fake_profile_fetch)
     monkeypatch.setattr(app_module, "lookup_business_type_for_company", fake_name_search)
 
     res = client.post(

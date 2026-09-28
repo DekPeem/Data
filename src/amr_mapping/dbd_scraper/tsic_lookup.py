@@ -1,0 +1,198 @@
+"""หา TSIC ของนิติบุคคลจาก "เลขทะเบียนนิติบุคคล" โดยตรง ผ่าน Playwright — คู่กับ
+amr_mapping.dbd_lookup.lookup_business_type_for_company (Selenium, ค้นด้วยชื่อบริษัท) แต่ใช้
+กลไกคนละแบบเพราะค้นด้วยเลขทะเบียนต้องพึ่งกล่องค้นหา+autocomplete บนหน้าเว็บจริง (ดู docstring
+หัวแพ็กเกจ __init__.py และ scraper.search_company สำหรับรายละเอียด)
+
+หลักการ: เข้าหน้าแรก → พิมพ์เลขทะเบียนในกล่องค้นหา → เลือกจาก autocomplete (หรือกด Enter/เข้า URL
+โปรไฟล์ตรงๆ เป็นสำรอง) → อ่านการ์ด "ข้อมูลนิติบุคคล" (scraper.scrape_juristic) ได้ชื่อ/ประเภท/
+สถานะนิติบุคคล จากนั้นหารหัส TSIC 2 จุดที่อาจมีอยู่ในหน้าเดียวกัน (ตอนจดทะเบียน / ตามงบการเงิน
+ปีล่าสุด) ด้วย regex บนข้อความทั้งหน้า (ไม่ผูกกับ CSS class เฉพาะของ 2 การ์ดนี้ เพราะไม่มีตัวอย่าง
+DOM จริงมายืนยัน ต่างจาก scrape_juristic ที่ยืนยันโครงสร้าง .prompt แล้วจริง) — เอา "ปีล่าสุด" ขึ้น
+ก่อนเสมอถ้าพบทั้งคู่และรหัสต่างกัน
+
+⚠️ ข้อสังเกตสำคัญเรื่องจริยธรรม/นโยบายของโปรเจกต์: โมดูลนี้ปลอม navigator.webdriver และคุณสมบัติ
+อื่นๆ ของเบราว์เซอร์ (ดู config.STEALTH_JS) เพื่อผ่านระบบป้องกันบอท (Incapsula) ของเว็บ DBD —
+ตรงข้ามกับหลักการที่ dbd_lookup.py (โมดูลเดิม) ประกาศไว้ชัดเจนว่า "ไม่พยายามหลีกเลี่ยง/ปลอมตัวให้
+พ้นการตรวจจับนี้เด็ดขาด" ใช้ตรงนี้เพราะผู้ใช้ยืนยันจากการทดสอบจริงว่าจำเป็น (ค้นด้วยเลขทะเบียนแบบ
+ไม่ปลอมตัวโดนบล็อกเกือบทุกครั้ง) และเป็นการดึงข้อมูลทะเบียนธุรกิจสาธารณะ ไม่ใช่ข้อมูลส่วนตัว/ต้อง
+login ในอัตราที่มีการหน่วงเวลาให้เหมาะสม (DELAY_BETWEEN_COMPANIES_MS) ไม่ใช่การโจมตี/ดึงข้อมูล
+จำนวนมหาศาล — แต่ก็ยังเป็นการปลอมตัวเพื่อเลี่ยงมาตรการที่เว็บตั้งใจทำขึ้นจริง ถ้าจะปิดการปลอมตัวนี้
+(เช่น กังวลเรื่องข้อกำหนดการใช้งาน/robots.txt ของ DBD) ต้องแก้ config.STEALTH_JS/CHROME_CHANNEL
+เอง — ไม่ใช่แค่ปิดสวิตช์เดียว
+
+รองรับเฉพาะกรณี headless ต้องมี Google Chrome ตัวจริงติดตั้งอยู่ (channel="chrome" ใน
+config.CHROME_CHANNEL) — Playwright's เบราว์เซอร์ Chromium ที่ bundle มาเองใช้ไม่ได้ (ยืนยันจากการ
+ทดสอบจริงของผู้ใช้ว่ายังโดนบล็อกอยู่แม้จะปลอมตัวแล้วก็ตาม)
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Callable, List, Optional, Tuple
+
+from ..dbd_lookup import BlockedByAntiBot, CompanyBusinessInfo
+from . import config
+from . import scraper
+from .browser_utils import ElementNotFound
+
+ProgressCallback = Callable[[str], None]
+
+
+def _noop(_: str) -> None:
+    pass
+
+
+# คำ/วลีที่บ่งชี้ว่าเว็บบล็อกการเข้าถึงอัตโนมัติ — เหมือนกับที่ dbd_lookup.py ใช้ (Selenium) เผื่อ
+# Incapsula ยังหลุดผ่านการปลอมตัวมาบล็อกได้บางครั้ง (ยังไม่เคยพบจากการทดสอบของผู้ใช้ แต่เช็คไว้กันเหนียว)
+_BLOCK_INDICATORS = ("incapsula", "request unsuccessful", "access denied", "are you a robot", "captcha")
+
+_HEADER_LATEST_FINANCIAL_STATEMENT = "ประเภทธุรกิจที่ส่งงบการเงินปีล่าสุด"
+_HEADER_AT_REGISTRATION = "ประเภทธุรกิจตอนจดทะเบียน"
+
+
+def _extract_tsic_after_header(text: str, header: str, next_header: Optional[str] = None) -> Optional[Tuple[str, str]]:
+    """หารหัส+ชื่อ TSIC (บรรทัด "ประเภทธุรกิจ" ตามด้วยรหัส 5 หลัก + ชื่อ) ในช่วงข้อความหลังหัวข้อ
+    header จนถึงก่อน next_header ถัดไป (กันอ่านข้ามโซนผิดถ้ามีหัวข้อ "ประเภทธุรกิจ" ซ้ำกันหลายจุด
+    ในหน้าเดียว) คืน (code, name) หรือ None ถ้าไม่เจอ header หรือไม่เจอรหัสในช่วงนั้นเลย"""
+
+    start = text.find(header)
+    if start == -1:
+        return None
+    segment_end = -1
+    if next_header:
+        segment_end = text.find(next_header, start + len(header))
+    segment = text[start:segment_end] if segment_end != -1 else text[start : start + 600]
+
+    m = re.search(r"ประเภทธุรกิจ\s*\n?\s*(\d{5})\s+(.+)", segment)
+    if not m:
+        return None
+    return m.group(1), m.group(2).strip()
+
+
+def _extract_tsic_from_juristic_dict(data: dict) -> List[Tuple[str, str, str]]:
+    """เผื่อการ์ด "ข้อมูลนิติบุคคล" (scraper.scrape_juristic อ่านด้วย .prompt selector ที่ยืนยัน
+    โครงสร้างแล้วจริง) มีคีย์ที่เป็นรหัส TSIC ปนอยู่ด้วย (ไม่ทราบแน่ชัดว่าการ์ดประเภทธุรกิจ 2 การ์ด
+    ใช้โครงสร้าง .prompt เดียวกันหรือคนละแบบ — เช็คทางนี้ก่อนเพราะน่าเชื่อถือกว่าถ้ามีจริง) คืน
+    [(code, name, key), ...] ของทุกคีย์ที่มีคำว่า "ประเภทธุรกิจ" อยู่และค่าขึ้นต้นด้วยรหัส 5 หลัก"""
+
+    found = []
+    for key, value in data.items():
+        if "ประเภทธุรกิจ" not in key:
+            continue
+        m = re.match(r"\s*(\d{5})\s+(.+)", value or "")
+        if m:
+            found.append((m.group(1), m.group(2).strip(), key))
+    return found
+
+
+def _build_candidates(
+    registration_no: str, juristic: dict, body_text: str, log: ProgressCallback
+) -> List[CompanyBusinessInfo]:
+    juristic_name = juristic.get("ชื่อนิติบุคคล") or ""
+    juristic_type = juristic.get("ประเภทนิติบุคคล") or ""
+    status = juristic.get("สถานะนิติบุคคล") or ""
+
+    from_dict = _extract_tsic_from_juristic_dict(juristic)
+    if from_dict:
+        entries = [(code, name, key) for code, name, key in from_dict]
+    else:
+        latest = _extract_tsic_after_header(body_text, _HEADER_LATEST_FINANCIAL_STATEMENT)
+        registered = _extract_tsic_after_header(
+            body_text, _HEADER_AT_REGISTRATION, next_header=_HEADER_LATEST_FINANCIAL_STATEMENT
+        )
+        entries = []
+        if latest:
+            entries.append((latest[0], latest[1], "ตามงบการเงินปีล่าสุด"))
+        if registered:
+            entries.append((registered[0], registered[1], "ตอนจดทะเบียน"))
+
+    candidates: List[CompanyBusinessInfo] = []
+    seen_codes: set = set()
+    for code, name, label in entries:
+        if code in seen_codes:
+            continue
+        seen_codes.add(code)
+        candidates.append(
+            CompanyBusinessInfo(
+                registration_no=registration_no,
+                juristic_name=juristic_name,
+                juristic_type=juristic_type,
+                status=status,
+                tsic_code=code,
+                tsic_name_th=f"({label}) {name}",
+            )
+        )
+
+    if not candidates:
+        log("⚠️ พบหน้าบริษัทแต่อ่านรหัส TSIC ไม่สำเร็จ (โครงสร้างหน้าอาจเปลี่ยนไป จาก dbd_scraper ที่ยืนยันไว้ล่าสุด)")
+    else:
+        log(f"✅ อ่านข้อมูลสำเร็จ: {juristic_name} — พบ TSIC {len(candidates)} รายการ")
+    return candidates
+
+
+def _launch(playwright, headless: bool):
+    """เปิดเบราว์เซอร์ตามที่ยืนยันจากผู้ใช้จริงว่าใช้ได้ (ดู config.py หัวข้อ "Bot protection"):
+    เปิดแบบ headed (มองเห็นหน้าต่าง) ไม่ต้องปลอมตัวก็ผ่าน — headless ต้องใช้ Google Chrome ตัวจริง
+    (channel="chrome") พร้อม stealth script เท่านั้น ตัว Chromium ที่ Playwright bundle มาเองใช้
+    ไม่ได้แม้จะปลอมตัวแล้วก็ตาม"""
+
+    if headless:
+        browser = playwright.chromium.launch(
+            channel=config.CHROME_CHANNEL, headless=True, args=config.HEADLESS_ARGS
+        )
+    else:
+        browser = playwright.chromium.launch(headless=False, args=config.LAUNCH_ARGS)
+
+    context = browser.new_context(user_agent=config.USER_AGENT, locale="th-TH")
+    context.add_init_script(config.STEALTH_JS)
+    return browser, context
+
+
+def lookup_tsic_by_registration_no(
+    registration_no: str, log: ProgressCallback = _noop, headless: bool = True
+) -> List[CompanyBusinessInfo]:
+    """entry point ที่ web/app.py เรียก — เปิดเบราว์เซอร์ใหม่ทุกครั้ง ค้นหาด้วยเลขทะเบียน แล้วปิด
+    เบราว์เซอร์ทิ้งเสมอไม่ว่าจะสำเร็จหรือพัง คืน [] (ไม่ raise) เมื่อไม่พบบริษัทนี้/หา TSIC ไม่ได้
+    เลย — raise BlockedByAntiBot ถ้าตรวจพบข้อความของระบบป้องกันบอทแม้จะปลอมตัวแล้วก็ตาม (ยังไม่เคย
+    เกิดขึ้นจากการทดสอบของผู้ใช้ แต่เช็คไว้กันเหนียว เหมือน dbd_lookup.py เดิม)
+
+    ⚠️ ต้องรันในเครื่องที่ติดตั้ง Playwright + Google Chrome จริง (ดู docstring หัวไฟล์นี้) —
+    ใช้งานไม่ได้ในสภาพแวดล้อมที่ไม่มีเบราว์เซอร์จริง/ไม่มี network ออกไปเว็บภายนอกได้"""
+
+    from playwright.sync_api import Error as PlaywrightError
+    from playwright.sync_api import sync_playwright
+
+    normalized = registration_no.strip()
+    log(f"🔍 เปิดเว็บ DBD DataWarehouse ค้นหาเลขทะเบียน: {normalized}")
+
+    with sync_playwright() as p:
+        browser, context = _launch(p, headless)
+        try:
+            page = context.new_page()
+            try:
+                scraper.search_company(page, normalized)
+            except scraper.OverlayBlocked as e:
+                log(f"⚠️ {e}")
+                return []
+            except ElementNotFound as e:
+                log(f"⚠️ ไม่พบหน้าบริษัทของเลขทะเบียน '{normalized}': {e}")
+                return []
+
+            body_text = page.inner_text("body")
+            lowered = body_text.lower()
+            if any(indicator in lowered for indicator in _BLOCK_INDICATORS):
+                log("🚫 เว็บ DBD บล็อกการเข้าถึงอัตโนมัติ (ตรวจพบข้อความของระบบป้องกันบอท แม้จะปลอมตัวแล้วก็ตาม)")
+                raise BlockedByAntiBot(" ".join(body_text.split())[:300])
+
+            try:
+                juristic = scraper.scrape_juristic(page, normalized)
+            except RuntimeError as e:
+                log(f"⚠️ อ่านข้อมูลนิติบุคคลไม่สำเร็จ: {e}")
+                return []
+
+            return _build_candidates(normalized, juristic, body_text, log)
+        except PlaywrightError as e:
+            log(f"⚠️ เกิดข้อผิดพลาดระหว่างเปิดเว็บ: {e}")
+            return []
+        finally:
+            browser.close()
