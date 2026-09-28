@@ -267,11 +267,27 @@ def search_company(page: Page, company_id: str, *, interactive: bool = False) ->
     try:
         box = bu.find(page, config.SEARCH_INPUT, what="the home search box")
     except ElementNotFound:
-        # เก็บ screenshot + HTML ไว้ดูว่าตอนพังจริงๆ หน้าตาเป็นยังไง (bu.find เดิมไม่เคยเก็บตรงนี้
-        # ไว้เลย ข้อความ error แค่บอกให้ไปดู debug/ เฉยๆ ทั้งที่ไม่เคยมีไฟล์ให้ดูจริง) — ช่วยแยกให้
-        # ชัดว่าติดหน้า Incapsula ที่ _BLOCK_INDICATORS ยังไม่ครอบคลุม หรือเป็นปัญหาอื่นไปเลย
-        bu.dump_debug(page, f"no-search-box-{company_id}")
-        raise
+        # ยืนยันจาก debug dump จริงของผู้ใช้อีกครั้ง: หน้าบล็อกของ Incapsula บางครั้ง render ช้ากว่า
+        # 3 วินาทีที่ initial check ด้านบนรอ (challenge/scoring ของ Incapsula เอง) — ตอนนั้นเลยยัง
+        # ไม่เจอ แต่ bu.find เพิ่งรอไปนานสุดถึง 45s (DEFAULT_TIMEOUT_MS) หาช่องค้นหาไม่เจอ ซึ่งนานพอ
+        # ที่หน้าบล็อกจะ render จนเห็นผลจริงแล้ว ก่อนจะยอมแพ้เลย เช็คซ้ำอีกทีตรงนี้ — ถ้าเจอบล็อกจริง
+        # ตอนนี้ ให้ไล่ reload/interactive prompt อีกรอบ (ดู _reload_if_blocked) แล้วลองหาใหม่อีกครั้ง
+        # เดียว ก่อนค่อยยอมแพ้จริงๆ
+        if _looks_blocked(page):
+            print("  ⚠️ หน้าบล็อกเพิ่งปรากฏช้ากว่าที่เช็คไว้ตอนแรก — ลอง reload อีกรอบ")
+            _reload_if_blocked(page, interactive=interactive)
+            dismiss_overlays(page)
+            try:
+                box = bu.find(page, config.SEARCH_INPUT, what="the home search box")
+            except ElementNotFound:
+                bu.dump_debug(page, f"no-search-box-{company_id}")
+                raise
+        else:
+            # เก็บ screenshot + HTML ไว้ดูว่าตอนพังจริงๆ หน้าตาเป็นยังไง (bu.find เดิมไม่เคยเก็บตรงนี้
+            # ไว้เลย ข้อความ error แค่บอกให้ไปดู debug/ เฉยๆ ทั้งที่ไม่เคยมีไฟล์ให้ดูจริง) — ช่วยแยกให้
+            # ชัดว่าติดหน้า Incapsula ที่ _BLOCK_INDICATORS ยังไม่ครอบคลุม หรือเป็นปัญหาอื่นไปเลย
+            bu.dump_debug(page, f"no-search-box-{company_id}")
+            raise
     # The click is where a re-opened warning modal bites: it sits over the box
     # and swallows the click. Give it a short bound rather than the 45s default,
     # and if it is intercepted, clear the overlays once more and try again. If
