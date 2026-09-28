@@ -154,16 +154,24 @@ def _looks_blocked(page: Page, *, poll_ms: int = 3000, interval_ms: int = 500) -
     """เช็คซ้ำหลายครั้งในช่วงเวลาสั้นๆ (ไม่ใช่เช็คทีเดียวจบ) ว่าหน้าปัจจุบันเป็นหน้า "Access denied"
     ของ Incapsula ไหม — ยืนยันจาก debug dump จริงของผู้ใช้ว่าเช็คครั้งเดียวทันทีหลังโหลดหน้าพลาดได้
     จริง เพราะหน้า Access denied อาจยังโหลด/redirect ไม่เสร็จตอนนั้น (มี JS/redirect เพิ่มอีกขั้น)
-    คืน True ทันทีที่เจอ ไม่ต้องรอครบ poll_ms เสมอไป"""
+    คืน True ทันทีที่เจอ ไม่ต้องรอครบ poll_ms เสมอไป
+
+    บั๊กที่เจอจาก screenshot ของผู้ใช้ (ยังโดนบล็อกอยู่แต่ script พังไปเลยแทนที่จะหยุดถามให้ reload
+    เอง): page.inner_text("body") โยน PlaywrightError ได้ตอนหน้ากำลัง reload/เปลี่ยนหน้าพอดี (frame
+    detached ชั่วคราว) — เดิมเจอ error แล้วคืน False ทันที (ตีความว่า "ไม่บล็อกแน่นอน") ทั้งที่ความจริง
+    แค่ "ยังอ่านไม่ได้ตอนนี้" ทำให้ _reload_if_blocked คิดว่าผ่านแล้ว ข้ามการ reload/prompt ที่เหลือไปเลย
+    ทั้งที่จริงยังอยู่หน้า Access denied — แก้โดยถือว่า error ระหว่างอ่านเป็นแค่ "ยังไม่รู้ผล" ให้ poll
+    ต่อเหมือนเดิมจนกว่าจะครบ poll_ms แทนที่จะปัดเป็น False ทันที"""
 
     elapsed = 0
     while True:
         try:
             text = page.inner_text("body").lower()
         except PlaywrightError:
-            return False
-        if any(indicator in text for indicator in _BLOCK_INDICATORS):
-            return True
+            pass  # หน้ากำลัง transition อยู่พอดี — ยังไม่รู้ผล ไม่ใช่ "ไม่บล็อกแน่นอน" ให้ poll ต่อ
+        else:
+            if any(indicator in text for indicator in _BLOCK_INDICATORS):
+                return True
         if elapsed >= poll_ms:
             return False
         page.wait_for_timeout(interval_ms)
