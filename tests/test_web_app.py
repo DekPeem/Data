@@ -101,6 +101,36 @@ def test_forecast_curve_available_and_scaled_when_present(client, monkeypatch):
     assert data["curve"]["day_types"]["all"][0] is None
 
 
+def test_forecast_boxplot_available_when_single_business_type_and_enough_sites(client, monkeypatch, tmp_path):
+    """ผลพยากรณ์ที่จับคู่ประเภทธุรกิจเดียวเป๊ะ (ไม่ใช่โปรไฟล์สังเคราะห์ถัวเฉลี่ยหลายประเภท) และมี
+    ไซต์จริง >= 2 แห่งของประเภทธุรกิจนั้นในเครื่องนี้ — boxplot.available ต้องเป็น True"""
+    from amr_mapping.models import LoadCurve
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    header = "company_name,account_no,business_type_code,rate_code,has_solar,day_type,contract_kva_ref,sample_size,notes," + ",".join(f"h{h:02d}" for h in range(24))
+    def row(account_no, h09):
+        hours = ["" if h != 9 else str(h09) for h in range(24)]
+        return f"บ.{account_no},{account_no},55101,50,false,all,2000,1,,{','.join(hours)}"
+    (tmp_path / "site_curves_local.csv").write_text(
+        header + "\n" + row("A1", 10.0) + "\n" + row("A2", 30.0) + "\n", encoding="utf-8"
+    )
+
+    original = app_module.load_reference_data()
+    curve = LoadCurve(
+        business_type_code="55101", rate_code="50",
+        hours={"all": [10.0 if h == 9 else None for h in range(24)]},
+        contract_kva_ref=2000.0, sample_size=3, has_solar=False,
+    )
+    monkeypatch.setattr(app_module, "get_reference", lambda: replace(original, load_curves=[curve]))
+
+    res = client.get("/api/forecast/DEMO-HOTEL-001")
+    data = res.get_json()
+    assert data["boxplot"]["available"] is True
+    stats = data["boxplot"]["day_types"]["all"][9]
+    assert stats["min"] == pytest.approx(10.0)
+    assert stats["max"] == pytest.approx(30.0)
+
+
 def test_admin_curve_returns_unscaled_curve(client, monkeypatch):
     """/api/admin/curve ใช้ scale_factor=1.0 เสมอ (ไม่ผูกกับ KVA ของลูกค้ารายใด) เพราะเป็นการ
     ดูรูปแบบกราฟดิบของกลุ่มธุรกิจ ไม่ใช่การพยากรณ์ให้ลูกค้ารายใดรายหนึ่ง"""
@@ -127,7 +157,51 @@ def test_admin_curve_returns_unscaled_curve(client, monkeypatch):
 def test_admin_curve_not_available_for_unknown_pair(client):
     res = client.get("/api/admin/curve/NOPE/999")
     data = res.get_json()
-    assert data == {"available": False, "day_types": {}, "sample_size": 0}
+    assert data["available"] is False
+    assert data["day_types"] == {}
+    assert data["sample_size"] == 0
+    assert data["boxplot"] == {"available": False, "day_types": {}}
+
+
+def test_admin_curve_boxplot_unavailable_without_enough_site_curves(client, monkeypatch, tmp_path):
+    """site_curves_local.csv ไม่มีไฟล์เลย (เช่น เครื่องนี้ยังไม่เคยนำเข้าแบบอัตโนมัติผ่านเว็บมาก่อน)
+    — boxplot.available ต้องเป็น False (ไม่ใช่ error) กราฟเส้นเฉลี่ยปกติยังใช้ได้ตามเดิม"""
+    from amr_mapping.models import LoadCurve
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    original = app_module.load_reference_data()
+    curve = LoadCurve(
+        business_type_code="63201", rate_code="50",
+        hours={"all": [10.0 if h == 9 else None for h in range(24)]},
+        contract_kva_ref=2000.0, sample_size=3,
+    )
+    monkeypatch.setattr(app_module, "get_reference", lambda: replace(original, load_curves=[curve]))
+
+    res = client.get("/api/admin/curve/63201/50")
+    data = res.get_json()
+    assert data["available"] is True  # กราฟเส้นเฉลี่ยยังมีตามปกติ
+    assert data["boxplot"] == {"available": False, "day_types": {}}
+
+
+def test_admin_curve_boxplot_available_with_enough_site_curves(client, monkeypatch, tmp_path):
+    """มีไซต์จริง >= 2 แห่งของธุรกิจ+has_solar เดียวกันใน site_curves_local.csv — boxplot.available
+    ต้องเป็น True พร้อม quartile ต่อชั่วโมง"""
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    header = "company_name,account_no,business_type_code,rate_code,has_solar,day_type,contract_kva_ref,sample_size,notes," + ",".join(f"h{h:02d}" for h in range(24))
+    def row(account_no, h09):
+        hours = ["" if h != 9 else str(h09) for h in range(24)]
+        return f"บ.{account_no},{account_no},63201,50,false,all,2000,1,,{','.join(hours)}"
+    (tmp_path / "site_curves_local.csv").write_text(
+        header + "\n" + row("A1", 10.0) + "\n" + row("A2", 20.0) + "\n", encoding="utf-8"
+    )
+
+    res = client.get("/api/admin/curve/63201/50?has_solar=false")
+    data = res.get_json()
+    assert data["boxplot"]["available"] is True
+    stats = data["boxplot"]["day_types"]["all"][9]
+    assert stats["min"] == pytest.approx(10.0)
+    assert stats["max"] == pytest.approx(20.0)
+    assert stats["n"] == 2
 
 
 def test_forecast_not_found(client):

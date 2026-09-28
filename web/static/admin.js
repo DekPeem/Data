@@ -684,7 +684,7 @@ async function toggleCurvePanel(code, rateCode, hasSolar) {
         `/api/admin/curve/${encodeURIComponent(code)}/${encodeURIComponent(rateCode)}?has_solar=${hasSolar}`
       );
       const curveData = await res.json();
-      initDailyCurveSection(panel, curveData);
+      initDailyCurveSection(panel, curveData, curveData.boxplot);
     } catch (err) {
       panel.innerHTML = `<div class="hint" style="color:#d03b3b;">โหลดกราฟไม่สำเร็จ</div>`;
       console.error("โหลดกราฟไม่สำเร็จ", err);

@@ -36,6 +36,7 @@ from amr_mapping.amr_import import (
     import_amr_from_files,
 )
 from amr_mapping.clustering import cluster_business_types, nearest_business_type_by_tsic, rank_business_types_by_tsic
+from amr_mapping.curve_stats import compute_hourly_boxplot
 from amr_mapping.dataforthai_lookup import lookup_business_category, suggest_companies_with_fallback
 from amr_mapping.dataforthai_lookup import setup_driver as setup_dataforthai_driver
 from amr_mapping.dbd_lookup import BlockedByAntiBot, find_exact_match, lookup_business_type_for_company
@@ -118,6 +119,7 @@ def _customer_to_dict(customer) -> dict:
 
 
 _NO_CURVE = {"available": False, "day_types": {}, "sample_size": 0}
+_NO_BOXPLOT = {"available": False, "day_types": {}}
 
 
 def _parse_tri_state_bool(value) -> Optional[bool]:
@@ -203,6 +205,21 @@ def _blended_curve_response(reference, contributing_profiles, scale_factor: floa
     }
 
 
+def _boxplot_response(business_type_code: str, has_solar: Optional[bool], scale_factor: float) -> dict:
+    """เหมือน _curve_response แต่คืนสถิติการกระจายตัว (min/Q1/median/Q3/max) รายชั่วโมงแทนค่าเฉลี่ย
+    เดี่ยว — ใช้วาดกราฟแบบ Boxplot ในหน้าเว็บ (ดู curve_stats.compute_hourly_boxplot) รองรับแค่กรณี
+    ประเภทธุรกิจเดียวเป๊ะๆ เท่านั้น (ไม่รองรับโปรไฟล์สังเคราะห์ที่ถัวเฉลี่ยมาจากหลายประเภทธุรกิจ
+    เช่นชั้น SECTION_ONLY/DIVISION_ONLY — เรียกฟังก์ชันนี้แค่ตอน business_type_code เดียวเท่านั้น)
+    คืน {"available": False, ...} เฉยๆ ถ้าไซต์ในเครื่องนี้ (site_curves_local.csv) ไม่พอวาด (ไม่ใช่
+    error — เครื่องที่ยังไม่เคยนำเข้า AMR แบบอัตโนมัติ หรือมีไซต์ประเภทนี้ไม่ถึง 2 ไซต์)"""
+
+    site_curves = load_site_curves_local(DEFAULT_DATA_DIR / "site_curves_local.csv")
+    day_types = compute_hourly_boxplot(site_curves, business_type_code, has_solar=has_solar, scale_factor=scale_factor)
+    if not day_types:
+        return _NO_BOXPLOT
+    return {"available": True, "day_types": day_types}
+
+
 def _estimate_result_to_dict(result, reference) -> dict:
     """แปลง ForecastResult เป็น dict สำหรับตอบกลับ JSON — โครงสร้างเดียวกับที่เดิมเขียนซ้ำอยู่ 2
     จุด (/api/forecast/<account_no> และ /api/forecast-adhoc) ดึงมารวมไว้ที่เดียว เพื่อให้จุดที่ 3
@@ -211,6 +228,18 @@ def _estimate_result_to_dict(result, reference) -> dict:
 
     business_type = reference.business_types.get(result.matched_profile.business_type_code)
     rate_schedule = reference.rate_schedules.get(result.matched_profile.rate_code)
+
+    # Boxplot รองรับแค่กรณีประเภทธุรกิจเดียวเป๊ะๆ เท่านั้น (ดู docstring _boxplot_response) — ถ้า
+    # ผลลัพธ์เป็นโปรไฟล์สังเคราะห์ที่ถัวเฉลี่ยมาจากหลายประเภทธุรกิจ (เช่นชั้น SECTION_ONLY/
+    # DIVISION_ONLY ที่มีมากกว่า 1 candidate ต่างประเภทกัน) จะไม่มี boxplot ให้ (fallback ไปวาด
+    # กราฟเส้นเฉลี่ยแบบเดิมที่ฝั่ง frontend เอง)
+    contributing = result.contributing_profiles or [result.matched_profile]
+    distinct_codes = {p.business_type_code for p in contributing}
+    boxplot = (
+        _boxplot_response(next(iter(distinct_codes)), result.matched_profile.has_solar, result.scale_factor)
+        if len(distinct_codes) == 1
+        else _NO_BOXPLOT
+    )
 
     return {
         "match": {
@@ -235,9 +264,10 @@ def _estimate_result_to_dict(result, reference) -> dict:
         },
         "curve": _blended_curve_response(
             reference,
-            result.contributing_profiles or [result.matched_profile],
+            contributing,
             result.scale_factor,
         ),
+        "boxplot": boxplot,
     }
 
 
@@ -577,7 +607,12 @@ def api_admin_curve(code: str, rate_code: str):
 
     reference = get_reference()
     has_solar = _parse_tri_state_bool(request.args.get("has_solar"))
-    return jsonify(_curve_response(reference, code, rate_code, scale_factor=1.0, has_solar=has_solar))
+    # dict(...) เพื่อ copy ออกมาก่อนแก้ — _curve_response อาจคืน _NO_CURVE ตัวเดียวกันซ้ำๆ (module
+    # level singleton) ถ้าแก้ค่าใส่ตรงๆ จะไปเผลอ mutate _NO_CURVE ทำให้ response อื่นที่ไม่มีเส้น
+    # โค้งเลยพลอยมี "boxplot" ค้างอยู่ผิดๆ ไปด้วย (คำตอบของ request อื่นที่ไม่เกี่ยวข้องกันเลย)
+    response = dict(_curve_response(reference, code, rate_code, scale_factor=1.0, has_solar=has_solar))
+    response["boxplot"] = _boxplot_response(code, has_solar, scale_factor=1.0)
+    return jsonify(response)
 
 
 @app.route("/api/admin/load-profile/<code>/<rate_code>", methods=["DELETE"])

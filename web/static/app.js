@@ -936,7 +936,7 @@ function renderResult(data, identity) {
   emptyState.style.display = "none";
   resultArea.style.display = "flex";
 
-  initDailyCurveSection(document.getElementById("daily-curve-root"), data.curve);
+  initDailyCurveSection(document.getElementById("daily-curve-root"), data.curve, data.boxplot);
   renderMatchedCompanies(p.business_type_code, p.rate_code);
 
   document.getElementById("export-csv-btn").addEventListener("click", () => exportResultToCsv(data, identity));
