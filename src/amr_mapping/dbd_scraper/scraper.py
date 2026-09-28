@@ -24,6 +24,7 @@ from playwright.sync_api import Page
 
 from . import browser_utils as bu
 from . import config
+from .browser_utils import ElementNotFound
 
 _IS_REGISTRATION_ID = re.compile(r"^\d{13}$")
 
@@ -218,7 +219,14 @@ def search_company(page: Page, company_id: str, *, interactive: bool = False) ->
     _reload_if_blocked(page, interactive=interactive)
     dismiss_overlays(page)
 
-    box = bu.find(page, config.SEARCH_INPUT, what="the home search box")
+    try:
+        box = bu.find(page, config.SEARCH_INPUT, what="the home search box")
+    except ElementNotFound:
+        # เก็บ screenshot + HTML ไว้ดูว่าตอนพังจริงๆ หน้าตาเป็นยังไง (bu.find เดิมไม่เคยเก็บตรงนี้
+        # ไว้เลย ข้อความ error แค่บอกให้ไปดู debug/ เฉยๆ ทั้งที่ไม่เคยมีไฟล์ให้ดูจริง) — ช่วยแยกให้
+        # ชัดว่าติดหน้า Incapsula ที่ _BLOCK_INDICATORS ยังไม่ครอบคลุม หรือเป็นปัญหาอื่นไปเลย
+        bu.dump_debug(page, f"no-search-box-{company_id}")
+        raise
     # The click is where a re-opened warning modal bites: it sits over the box
     # and swallows the click. Give it a short bound rather than the 45s default,
     # and if it is intercepted, clear the overlays once more and try again. If
