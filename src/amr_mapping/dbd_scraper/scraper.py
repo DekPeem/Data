@@ -183,10 +183,13 @@ def _reload_if_blocked(page: Page, *, max_attempts: int = 3, interactive: bool =
     บ่งชี้ว่า Incapsula อาจตรวจจับการเชื่อมต่อ CDP ของ Playwright เองได้เลย ไม่ว่าจะจำลอง input
     event แบบไหนก็ตาม (ไม่ใช่แค่เรื่อง "input event จริงหรือปลอม" อย่างที่คาดไว้แต่แรก)
 
-    ⚠️ ใช้ wait_until="domcontentloaded" เสมอ (ไม่ใช้ "networkidle") ตอนกด F5/reload — เพราะหน้า
-    Access denied/challenge page ของ Incapsula อาจมี background request/polling ค้างอยู่ตลอดเวลา
-    ทำให้ networkidle ไม่เกิดขึ้นเลย (รอค้างไม่จบ) ใช้ _looks_blocked (poll ซ้ำแบบมี timeout ชัดเจน)
-    แทนการพึ่ง wait_until ของ Playwright ให้บอกว่าหน้าโหลดเสร็จหรือยัง
+    ใช้ wait_until="networkidle" ตอนกด F5/reload (ผูก timeout สั้นแค่ 15s ไม่ใช่ DEFAULT_TIMEOUT_MS
+    45s) — ยืนยันจากวิดีโอทดสอบจริงของผู้ใช้ว่ารอบที่ใช้ networkidle ผ่านหน้าบล็อกของ Incapsula ได้
+    จริง (เห็น TSIC ออกมา) ส่วนรอบที่เปลี่ยนไปใช้ domcontentloaded (กลัว networkidle ค้างเพราะหน้า
+    challenge อาจมี background polling ตลอดเวลา) กลับยังโดนบล็อกอยู่เหมือนเดิม — เดาว่า
+    domcontentloaded fire เร็วเกินไปจนเช็คบล็อกก่อนหน้า/cookie ของ Incapsula ตั้งเสร็จ ส่วนความกลัว
+    เรื่องค้างไม่จบ แก้ด้วยการผูก timeout สั้นแทน (ไม่ใช่เลิกใช้ networkidle ไปเลย) — timeout แล้ว
+    fallback ไป domcontentloaded ธรรมดา
 
     interactive=True (ใช้เฉพาะตอนรัน standalone script แบบเห็นหน้าต่างจริงเท่านั้น — เปิดจาก
     scripts/lookup_tsic.py) — ถ้าลองอัตโนมัติครบ max_attempts รอบแล้วยังโดนบล็อกอยู่ จะหยุดรอให้
@@ -201,7 +204,12 @@ def _reload_if_blocked(page: Page, *, max_attempts: int = 3, interactive: bool =
         wait_ms = config.SETTLE_MS * (attempt + 3)  # รอนานขึ้นเรื่อยๆ ทุกรอบ (2.1s, 2.8s, 3.5s ที่ SETTLE_MS=700)
         _simulate_mouse_activity(page, wait_ms)
         try:
-            with page.expect_navigation(wait_until="domcontentloaded", timeout=config.DEFAULT_TIMEOUT_MS):
+            # networkidle (ไม่ใช่ domcontentloaded) เพื่อรอให้ challenge/redirect ของ Incapsula
+            # settle ก่อนค่อยเช็คซ้ำ — วิดีโอทดสอบจริงยืนยันว่ารันครั้งที่ใช้ networkidle ผ่านได้
+            # จริง ส่วนรันที่เปลี่ยนกลับไป domcontentloaded ยังโดนบล็อกอยู่ แต่ผูก timeout สั้นไว้
+            # (15s ไม่ใช่ DEFAULT_TIMEOUT_MS 45s) เผื่อหน้าบล็อกมี background polling ค้างตลอดจน
+            # networkidle ไม่มีวันเกิด — timeout แล้ว fallback ไป domcontentloaded ธรรมดาแทน
+            with page.expect_navigation(wait_until="networkidle", timeout=15_000):
                 page.keyboard.press("F5")
         except PlaywrightError:
             try:
@@ -233,11 +241,15 @@ def search_company(page: Page, company_id: str, *, interactive: bool = False) ->
     """
     # ยืนยันจาก debug dump จริงของผู้ใช้: ตอนโดนบล็อก หน้า "Access denied" ของ Incapsula ยังไม่ทัน
     # render ตอน domcontentloaded fire (อาจมี redirect/JS เพิ่มอีกขั้น) — เช็คบล็อกครั้งเดียวทันที
-    # ตอนนั้นจึงพลาดได้ ⚠️ เคยลองแก้ด้วย wait_until="networkidle" แต่หน้า Incapsula อาจมี background
-    # request/polling ค้างตลอดเวลา ทำให้ networkidle ไม่เกิดขึ้นเลย (เสี่ยงค้างไม่จบ) — ใช้
-    # domcontentloaded ตามเดิม (เร็ว ไม่เสี่ยงค้าง) แต่ให้ _reload_if_blocked/_looks_blocked เป็นคน
-    # poll เช็คซ้ำหลายครั้งในตัวเองแทน (ดู _looks_blocked)
-    page.goto(config.BASE_URL, wait_until="domcontentloaded")
+    # ตอนนั้นจึงพลาดได้ ใช้ wait_until="networkidle" ให้หน้า/challenge settle ก่อน (วิดีโอทดสอบจริง
+    # ยืนยันว่ารอบที่ใช้ networkidle ผ่านได้จริง ส่วนรอบที่เปลี่ยนกลับไป domcontentloaded ยังโดน
+    # บล็อกอยู่) แต่ผูก timeout สั้น (15s) กันไว้เผื่อหน้าบล็อกมี background polling ค้างตลอดจน
+    # networkidle ไม่มีวันเกิด — timeout แล้วไปต่อเลย (หน้าก็ navigate ไปแล้วจริง แค่ wait ไม่ทัน)
+    # แทนที่จะรอค้างไม่จบ แล้วให้ _reload_if_blocked/_looks_blocked poll เช็คซ้ำอีกชั้นแทน
+    try:
+        page.goto(config.BASE_URL, wait_until="networkidle", timeout=15_000)
+    except PlaywrightError:
+        pass
     page.wait_for_timeout(config.SETTLE_MS)
     _reload_if_blocked(page, interactive=interactive)
     dismiss_overlays(page)
