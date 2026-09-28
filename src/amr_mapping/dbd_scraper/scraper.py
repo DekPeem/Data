@@ -214,7 +214,13 @@ def search_company(page: Page, company_id: str, *, interactive: bool = False) ->
 
     interactive=True — ดู _reload_if_blocked (ใช้เฉพาะ standalone script แบบเห็นหน้าต่างจริง)
     """
-    page.goto(config.BASE_URL, wait_until="domcontentloaded")
+    # ยืนยันจาก debug dump จริงของผู้ใช้: ตอนโดนบล็อก หน้า "Access denied" ของ Incapsula ยังไม่ทัน
+    # render ตอน domcontentloaded fire (อาจมี redirect/JS เพิ่มอีกขั้น) — เช็คบล็อกตอนนั้นเลยจะเจอ
+    # หน้าที่ยังโหลดไม่เสร็จ (ไม่มีข้อความ "Access denied" ให้เจอ) แล้วเข้าใจผิดว่าไม่บล็อก ทั้งที่จริง
+    # บล็อกอยู่ (พิสูจน์แล้วว่า bu.find รอ 45 วินาทีทีหลังไปเจอหน้า Access denied ที่ render เสร็จแล้ว
+    # พอดี) — ใช้ wait_until="networkidle" แทน domcontentloaded ให้หน้าโหลด/redirect เสร็จสมบูรณ์
+    # ก่อนค่อยเช็คบล็อก เหมือนที่ _reload_if_blocked ใช้ตอน reload อยู่แล้ว
+    page.goto(config.BASE_URL, wait_until="networkidle")
     page.wait_for_timeout(config.SETTLE_MS)
     _reload_if_blocked(page, interactive=interactive)
     dismiss_overlays(page)
