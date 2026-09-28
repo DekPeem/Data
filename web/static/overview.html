@@ -79,22 +79,20 @@
         </div>
         <div class="header-titles">
           <div class="header-title">ภาพรวมลูกค้าทั้งหมด</div>
-          <div class="header-subtitle">รวมทุกบัญชีในทะเบียน — ชื่อ ประเภทธุรกิจ หมวด TSIC รหัสอัตรา และสถานะ Solar ในตารางเดียว</div>
+          <div class="header-subtitle">รวมทุกบัญชีในทะเบียน — ชื่อ ประเภทธุรกิจ และหมวด TSIC ในตารางเดียว</div>
         </div>
       </div>
       <div style="display:flex;gap:16px;align-items:center;">
-        <a href="/pending-amr" style="font-size:13px;color:#2a78d6;text-decoration:none;">📋 รอทราบอัตรา →</a>
-        <a href="/admin" style="font-size:13px;color:#2a78d6;text-decoration:none;">← กลับหน้านำเข้า AMR</a>
+        <a href="/admin" style="font-size:13px;color:#2a78d6;text-decoration:none;">← กลับหน้า Admin</a>
       </div>
     </header>
 
     <main class="body-wrap">
 
       <div class="warn-box">
-        ⚠️ หน้านี้แสดง <b>ชื่อบัญชีจริง</b> จากประวัติการนำเข้า AMR ในเครื่องนี้ (import_log_local.csv) รวมกับทะเบียนลูกค้า (customers_local.csv ถ้ามี) —
+        ⚠️ หน้านี้แสดง <b>ชื่อบัญชีจริง</b> จากทะเบียนลูกค้า (customers_local.csv ถ้ามี) —
         ใช้ดูในเครื่องนี้เท่านั้น ไม่ถูกบันทึกเข้า repo สาธารณะ (ตัดแถวข้อมูลสมมติ/DEMO ออกให้แล้ว)<br>
-        ✏️ กด "แก้ไข" ที่แถวไหนก็ได้เพื่อแก้ประเภทธุรกิจ/รหัสอัตรา/สถานะ Solar — บันทึกแล้วมีผลกับทั้งระบบทันที (เขียนลง customers_local.csv ซึ่งหน้าค้นหา/พยากรณ์อื่นๆ อ่านค่าเดียวกันนี้) ตอนนี้แก้ไขได้เลยไม่ต้องใส่รหัสผ่าน (ยังไม่ได้ตั้ง ADMIN_EDIT_PASSWORD ไว้) — ถ้าอยากให้ต้องใส่รหัสผ่านก่อนแก้ไขทุกครั้ง ตั้งค่า environment variable นี้เมื่อไหร่ก็ได้ (ดู .env.example)<br>
-        ⚡ "ใช้ไฟเฉลี่ย/เดือน" และ "Peak สูงสุด/วัน" คำนวณจากกราฟรายชั่วโมงจริงของแต่ละไซต์ (site_curves_local.csv — ค่าเฉลี่ยกำลังไฟฟ้า 24 ชม. คูณ 30 วันสำหรับหน่วยต่อเดือน) มีเฉพาะบัญชีที่เคยนำเข้า AMR จริงแบบรู้เลขบัญชีเท่านั้น
+        ✏️ กด "แก้ไข" ที่แถวไหนก็ได้เพื่อแก้ประเภทธุรกิจ — บันทึกแล้วมีผลกับทั้งระบบทันที (เขียนลง customers_local.csv ซึ่งหน้าค้นหาอื่นๆ อ่านค่าเดียวกันนี้) ตอนนี้แก้ไขได้เลยไม่ต้องใส่รหัสผ่าน (ยังไม่ได้ตั้ง ADMIN_EDIT_PASSWORD ไว้) — ถ้าอยากให้ต้องใส่รหัสผ่านก่อนแก้ไขทุกครั้ง ตั้งค่า environment variable นี้เมื่อไหร่ก็ได้ (ดู .env.example)
       </div>
 
       <div class="overview-toolbar">
@@ -107,19 +105,14 @@
       <div class="card table-card">
         <table class="overview-table">
           <colgroup>
-            <col style="width:17%"><col style="width:15%"><col style="width:14%">
-            <col style="width:6%"><col style="width:10%"><col style="width:9%">
-            <col style="width:8%"><col style="width:7%"><col style="width:10%">
+            <col style="width:26%"><col style="width:24%"><col style="width:22%">
+            <col style="width:14%"><col style="width:14%">
           </colgroup>
           <thead>
             <tr>
               <th>ชื่อ</th>
               <th>ธุรกิจอะไร</th>
               <th>อยู่หมวดไหน (TSIC)</th>
-              <th>มีอัตราไหม</th>
-              <th>ใช้ไฟเฉลี่ย/เดือน</th>
-              <th>Peak สูงสุด/วัน</th>
-              <th>ติด Solar รึยัง</th>
               <th>มี AMR จริงหรือยัง</th>
               <th>จัดการ</th>
             </tr>

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>นำเข้า AMR — No AMR</title>
+  <title>Admin — No AMR</title>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap">
   <link rel="stylesheet" href="styles.css">
   <style>
@@ -40,16 +40,6 @@
       display: flex; align-items: center; justify-content: space-between; gap: 10px;
       background: #fff; border: 1px solid rgba(15,23,42,0.08); border-radius: 8px; padding: 10px 12px;
     }
-    .section-block { border: 1px solid rgba(15,23,42,0.08); border-radius: 12px; }
-    .section-pill-btn {
-      width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px;
-      background: #f7f9fc; border: none; border-radius: 12px; padding: 14px 18px; font-family: inherit;
-      font-size: 14px; font-weight: 700; color: #0f1b2d; cursor: pointer; text-align: left;
-    }
-    .section-pill-btn:hover { background: #eef3fa; }
-    .section-pill-btn .section-count { font-size: 12.5px; font-weight: 500; color: #8996ab; }
-    .section-panel { display: none; padding: 16px 18px; flex-direction: column; gap: 14px; }
-    .section-panel.open { display: flex; }
     .biz-card {
       border: 1px solid rgba(15,23,42,0.08); border-radius: 10px; padding: 14px 16px;
       display: flex; flex-direction: column; gap: 10px; background: #fff;
@@ -60,35 +50,33 @@
       display: inline-block; margin-left: 8px; font-size: 11.5px; font-weight: 600; color: #55647a;
       background: #f0f2f6; border-radius: 999px; padding: 2px 9px;
     }
-    .company-combobox, .biz-type-combobox, .section-combobox { position: relative; }
-    .company-search-input, .biz-type-search-input, .section-search-input {
+    .biz-type-combobox, .section-combobox { position: relative; }
+    .biz-type-search-input, .section-search-input {
       width: 100%; box-sizing: border-box; padding: 7px 12px; border: 1px solid #dbe1ea;
       border-radius: 8px; font-size: 13px; font-family: inherit; background: #f8fafc;
     }
-    .company-search-input:focus, .biz-type-search-input:focus, .section-search-input:focus {
+    .biz-type-search-input:focus, .section-search-input:focus {
       outline: none; border-color: #3b82f6; background: #fff;
       box-shadow: 0 0 0 3px rgba(59,130,246,0.12);
     }
-    .company-dropdown, .biz-type-dropdown, .section-dropdown {
+    .biz-type-dropdown, .section-dropdown {
       display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0;
       background: #fff; border: 1px solid #dbe1ea; border-radius: 10px;
       box-shadow: 0 10px 24px rgba(15,23,42,0.1); max-height: 216px; overflow-y: auto;
       z-index: 30; padding: 4px;
     }
-    .company-combobox.open .company-dropdown, .biz-type-combobox.open .biz-type-dropdown,
-    .section-combobox.open .section-dropdown { display: block; }
-    .company-dropdown-item, .biz-type-dropdown-item, .section-dropdown-item {
+    .biz-type-combobox.open .biz-type-dropdown, .section-combobox.open .section-dropdown { display: block; }
+    .biz-type-dropdown-item, .section-dropdown-item {
       display: block; width: 100%; text-align: left; border: none; background: none;
       cursor: pointer; font-family: inherit; font-size: 12.5px; font-weight: 600;
       color: #184f95; padding: 7px 10px; border-radius: 6px;
     }
-    .company-dropdown-item:hover, .biz-type-dropdown-item:hover, .section-dropdown-item:hover { background: #eef3fa; }
-    .company-dropdown-item.active, .biz-type-dropdown-item.active, .section-dropdown-item.active { background: #dbeafe; color: #0b3d91; }
-    .company-dropdown-empty, .biz-type-dropdown-empty, .section-dropdown-empty { padding: 8px 10px; font-size: 12.5px; color: #8996ab; }
+    .biz-type-dropdown-item:hover, .section-dropdown-item:hover { background: #eef3fa; }
+    .biz-type-dropdown-item.active, .section-dropdown-item.active { background: #dbeafe; color: #0b3d91; }
+    .biz-type-dropdown-empty, .section-dropdown-empty { padding: 8px 10px; font-size: 12.5px; color: #8996ab; }
     .biz-type-combobox { margin-bottom: 4px; }
     .section-combobox { max-width: 520px; margin-bottom: 4px; }
     .biz-card-wrap { display: flex; flex-direction: column; }
-    .biz-profiles { display: flex; flex-wrap: wrap; gap: 8px; }
   </style>
 </head>
 <body>
@@ -100,29 +88,20 @@
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>
         </div>
         <div class="header-titles">
-          <div class="header-title">นำเข้า AMR จริง (Admin)</div>
-          <div class="header-subtitle">ดาวน์โหลดข้อมูล AMR จากเว็บ PEA แล้วคำนวณโปรไฟล์ P/OP/H อัตโนมัติ</div>
+          <div class="header-title">Admin</div>
+          <div class="header-subtitle">จัดการฐานข้อมูล DBD Open Data และหมวดหมู่ธุรกิจ (TSIC) ในระบบ</div>
         </div>
       </div>
       <div style="display:flex;gap:16px;align-items:center;">
         <a target="_blank" rel="noopener" href="/manual" style="font-size:13px;color:#2a78d6;text-decoration:none;">📖 คู่มือการใช้งาน</a>
         <a target="_blank" rel="noopener" href="/methodology" style="font-size:13px;color:#2a78d6;text-decoration:none;">🧠 วิธีการคิด/โมเดล</a>
-        <a target="_blank" rel="noopener" href="/pending-amr" style="font-size:13px;color:#2a78d6;text-decoration:none;">📋 รอทราบอัตรา</a>
         <a target="_blank" rel="noopener" href="/overview" style="font-size:13px;color:#2a78d6;text-decoration:none;">📊 ภาพรวมลูกค้าทั้งหมด</a>
-        <a target="_blank" rel="noopener" href="/business-match" style="font-size:13px;color:#2a78d6;text-decoration:none;">⚡ จับคู่เฉพาะหมวดธุรกิจ</a>
-        <a href="/api/admin/backup" style="font-size:13px;color:#2a78d6;text-decoration:none;" title="ดาวน์โหลดไฟล์ข้อมูลลูกค้าจริงในเครื่องนี้ทั้งหมดเป็น .zip — เก็บสำรองไว้นอกเครื่องเป็นระยะ เพราะไฟล์เหล่านี้ไม่เคยถูก commit เข้า git เลย">💾 สำรองข้อมูล</a>
+        <a href="/api/admin/backup" style="font-size:13px;color:#2a78d6;text-decoration:none;" title="ดาวน์โหลดไฟล์ข้อมูลลูกค้าจริงในเครื่องนี้เป็น .zip — เก็บสำรองไว้นอกเครื่องเป็นระยะ เพราะไฟล์นี้ไม่เคยถูก commit เข้า git เลย">💾 สำรองข้อมูล</a>
         <a href="/" style="font-size:13px;color:#2a78d6;text-decoration:none;">← กลับหน้าแรก</a>
       </div>
     </header>
 
     <main class="body-wrap">
-
-      <div class="warn-box">
-        ⚠️ ต้องรันเว็บนี้ในเครื่องที่มี Google Chrome ติดตั้งอยู่ กรอกแค่ Username/Password เข้าเว็บ
-        AMR ของ PEA + ช่วงวันที่ ก็พอ ระบบจะตรวจจับประเภทธุรกิจ/อัตรา/KVA ให้เองอัตโนมัติ — ข้อมูล
-        ที่กรอกและไฟล์ที่ดาวน์โหลดมาปลอดภัย ไม่หลุดเข้า repo public
-        <a target="_blank" rel="noopener" href="/manual#chrome-credentials" style="color:#7a5a00;font-weight:600;">อ่านรายละเอียดในคู่มือ →</a>
-      </div>
 
       <div class="card" style="padding: 28px; display: flex; flex-direction: column; gap: 16px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
@@ -146,206 +125,6 @@
         </div>
       </div>
 
-      <div class="card" style="padding: 28px; display: flex; flex-direction: column; gap: 20px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-          <div style="font-size: 15px; font-weight: 700;">ตั้งค่าการนำเข้า</div>
-          <div style="display:flex;gap:8px;">
-            <button type="button" class="day-type-btn import-mode-tab-btn active" data-mode="web">🌐 ดึงจากเว็บ PEA</button>
-            <button type="button" class="day-type-btn import-mode-tab-btn" data-mode="file">📎 แนบไฟล์ที่มีอยู่แล้ว</button>
-            <button type="button" class="day-type-btn import-mode-tab-btn" data-mode="bulk">📦 นำเข้าหลายบริษัทพร้อมกัน</button>
-          </div>
-        </div>
-
-        <div id="import-mode-web">
-          <div class="form-grid">
-            <div class="form-field">
-              <label for="f-username">Username เข้าเว็บ AMR ของ PEA</label>
-              <input id="f-username" type="text" autocomplete="off" placeholder="เช่น เลขบัญชีผู้ใช้ไฟที่ใช้ login">
-              <div class="hint">เว้นว่างได้ถ้าตั้งค่า PEA_AMR_USERNAME ไว้ในเครื่องแล้ว</div>
-            </div>
-
-            <div class="form-field">
-              <label for="f-password">Password เข้าเว็บ AMR ของ PEA</label>
-              <input id="f-password" type="password" autocomplete="off" placeholder="เว้นว่างได้ถ้าตั้งค่าไว้ในเครื่องแล้ว">
-              <div class="hint">ใช้ครั้งเดียวสำหรับงานนี้เท่านั้น ไม่ถูกบันทึกลงที่ใดทั้งสิ้น</div>
-            </div>
-
-            <div class="form-field">
-              <label for="f-start">วันที่เริ่มต้น</label>
-              <input id="f-start" type="date" min="2015-01-01">
-            </div>
-
-            <div class="form-field">
-              <label for="f-end">วันที่สิ้นสุด</label>
-              <input id="f-end" type="date" min="2015-01-01">
-            </div>
-
-            <div class="form-field" style="grid-column: 1 / -1;">
-              <label for="f-source-label">คำอธิบายที่มา (ไม่บังคับ)</label>
-              <input id="f-source-label" type="text" placeholder="ห้ามใส่ชื่อ/เลขบัญชีลูกค้า">
-            </div>
-
-            <div class="form-field" style="grid-column: 1 / -1;">
-              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-                <input type="checkbox" id="f-has-solar">
-                บัญชีนี้ติดตั้ง Solar / Net Metering แล้ว
-              </label>
-              <div class="hint">
-                ต้องติ๊กเอง — หน้าข้อมูลผู้ใช้ไฟของ PEA ไม่มีฟิลด์บอกสถานะนี้ให้ตรวจจับอัตโนมัติได้
-                ถ้าติดแล้วจะถูกบันทึกแยกโปรไฟล์ต่างหากจากบัญชีที่ไม่ติด Solar ของธุรกิจ+อัตราเดียวกัน
-                เพราะรูปแบบการใช้ไฟช่วงกลางวันต่างกันมาก
-              </div>
-            </div>
-          </div>
-
-          <details style="margin-top: 20px;">
-            <summary style="cursor:pointer;font-size:13px;font-weight:600;color:#55647a;">
-              ตัวเลือกขั้นสูง — กรอกเองแทนการให้ระบบตรวจจับอัตโนมัติ
-            </summary>
-            <div class="form-grid" style="margin-top: 16px;">
-              <div class="form-field" style="grid-column: 1 / -1;">
-                <label for="f-accounts">เลขบัญชีผู้ใช้ไฟที่จะดึงข้อมูล (คั่นด้วย , ถ้ามีหลายราย)</label>
-                <input id="f-accounts" type="text" placeholder="เช่น 019900000001, 019900000002">
-                <div class="hint">เติมให้อัตโนมัติจาก Username ด้านบน (ปกติ username = เลขบัญชี) — ใช้เฉพาะตอนกรอกประเภทธุรกิจ/อัตราเองเท่านั้น โหมดอัตโนมัติจะดึงจากบัญชีของ username ที่ login เสมอ</div>
-              </div>
-
-              <div class="form-field">
-                <label for="f-business-type">ประเภทธุรกิจ</label>
-                <select id="f-business-type"></select>
-              </div>
-
-              <div class="form-field">
-                <label for="f-rate-code">รหัสอัตรา</label>
-                <input id="f-rate-code" type="text" placeholder="50">
-              </div>
-
-              <div class="form-field">
-                <label for="f-kva">KVA ตามสัญญา (ถ้าทราบ)</label>
-                <input id="f-kva" type="number" min="0" step="any" placeholder="2000">
-              </div>
-            </div>
-          </details>
-
-          <div class="submit-row" style="margin-top: 20px;">
-            <button id="submit-btn" class="search-button">ดาวน์โหลดและนำเข้า</button>
-          </div>
-        </div>
-
-        <div id="import-mode-file" style="display:none;">
-          <div class="hint" style="margin-bottom: 16px;">
-            ใช้ตอนมีไฟล์ AMR จากเว็บ PEA อยู่แล้ว — <b>แนบแค่ไฟล์ก็พอ ไม่ต้องกรอกอะไรเพิ่มเลย</b>
-            ระบบจะอ่านเลขบัญชีจากในไฟล์แล้วหาประเภทธุรกิจ/อัตราจากทะเบียนลูกค้าให้เอง
-            <a target="_blank" rel="noopener" href="/manual#file-attach-mode">อ่านรายละเอียดในคู่มือ →</a>
-          </div>
-
-          <div class="form-grid">
-            <div class="form-field" style="grid-column: 1 / -1;">
-              <label for="f-file-files">ไฟล์ AMR (แนบได้หลายไฟล์ หรือรวมเป็น .zip ไฟล์เดียวก็ได้)</label>
-              <input id="f-file-files" type="file" multiple accept=".xls,.xlsx,.html,.htm,.zip">
-            </div>
-
-            <div class="form-field">
-              <label for="f-file-business-type">ประเภทธุรกิจ (ไม่บังคับ — เว้นว่างให้ระบบหาจากทะเบียนก่อน)</label>
-              <select id="f-file-business-type"></select>
-            </div>
-
-            <div class="form-field">
-              <label for="f-file-rate-code">รหัสอัตรา (ไม่บังคับ — เว้นว่างให้ระบบหาจากทะเบียนก่อน)</label>
-              <input id="f-file-rate-code" type="text" placeholder="เว้นว่างได้">
-            </div>
-
-            <div class="form-field">
-              <label for="f-file-kva">KVA ตามสัญญา (ถ้าทราบ)</label>
-              <input id="f-file-kva" type="number" min="0" step="any" placeholder="2000">
-            </div>
-
-            <div class="form-field">
-              <label for="f-file-site-label">ป้ายกำกับไซต์ (ไม่บังคับ)</label>
-              <input id="f-file-site-label" type="text" placeholder="เช่น YMLC4 — ใช้แยกกรณีบริษัทเดียวกันมีหลายมิเตอร์">
-            </div>
-
-            <div class="form-field" style="grid-column: 1 / -1;">
-              <label for="f-file-source-label">คำอธิบายที่มา (ไม่บังคับ)</label>
-              <input id="f-file-source-label" type="text" placeholder="ห้ามใส่ชื่อ/เลขบัญชีลูกค้า">
-            </div>
-
-            <div class="form-field" style="grid-column: 1 / -1;">
-              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-                <input type="checkbox" id="f-file-has-solar">
-                บัญชีนี้ติดตั้ง Solar / Net Metering แล้ว
-              </label>
-            </div>
-          </div>
-
-          <div class="submit-row" style="margin-top: 20px;">
-            <button id="submit-file-btn" class="search-button">นำเข้าจากไฟล์ที่แนบ</button>
-          </div>
-        </div>
-
-        <div id="import-mode-bulk" style="display:none;">
-          <div class="hint" style="margin-bottom: 16px;">
-            ใช้ตอนมีโฟลเดอร์รวมไฟล์ AMR ของ<b>หลายบริษัท/ไซต์</b>ไว้ด้วยกัน (เช่น โฟลเดอร์ที่แยกเป็น
-            โฟลเดอร์ย่อยทีละบริษัทใน Google Drive) — <b>คลิกขวาที่โฟลเดอร์นั้นใน Drive → Download</b>
-            จะได้ไฟล์ .zip เดียวที่รวมทุกโฟลเดอร์ย่อยไว้ แนบไฟล์นั้นตรงนี้ได้เลย ระบบจะถือว่าแต่ละ
-            โฟลเดอร์ย่อยชั้นแรกที่มีไฟล์ AMR อยู่ตรงๆ คือคนละบริษัท/ไซต์ แล้วอ่านเลขบัญชีจากหัวรายงาน
-            ของแต่ละไฟล์เองแยกกัน (ถ้าอ่านไม่ได้จะใช้ชื่อโฟลเดอร์แทน) — บริษัทไหนยังไม่ทราบประเภท
-            ธุรกิจจะเข้าคิว <a href="/pending-amr" target="_blank" rel="noopener">"รอทราบอัตรา"</a>
-            ให้อัตโนมัติ ไม่ทำให้บริษัทอื่นที่เหลือหยุดนำเข้าไปด้วย
-          </div>
-
-          <div class="form-grid">
-            <div class="form-field" style="grid-column: 1 / -1;">
-              <label for="f-bulk-zip">ไฟล์ .zip ที่รวมหลายโฟลเดอร์/บริษัท</label>
-              <input id="f-bulk-zip" type="file" accept=".zip">
-            </div>
-
-            <div class="form-field">
-              <label for="f-bulk-kva">KVA ตามสัญญา (ถ้าทราบ — ใช้ค่าเดียวกันทุกบริษัท)</label>
-              <input id="f-bulk-kva" type="number" min="0" step="any" placeholder="เว้นว่างได้ถ้าไม่ทราบ/ไม่เท่ากัน">
-            </div>
-
-            <div class="form-field">
-              <label for="f-bulk-source-label">คำอธิบายที่มา (ไม่บังคับ)</label>
-              <input id="f-bulk-source-label" type="text" placeholder="ห้ามใส่ชื่อ/เลขบัญชีลูกค้า">
-            </div>
-
-            <div class="form-field" style="grid-column: 1 / -1;">
-              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
-                <input type="checkbox" id="f-bulk-has-solar">
-                ทุกบัญชีในซิปนี้ติดตั้ง Solar / Net Metering แล้ว
-              </label>
-              <div class="hint">ถ้าบางบริษัทติด บางบริษัทไม่ติด ให้นำเข้าแยกทีละบริษัทผ่านแท็บ "แนบไฟล์ที่มีอยู่แล้ว" แทน</div>
-            </div>
-          </div>
-
-          <div class="submit-row" style="margin-top: 20px;">
-            <button id="submit-bulk-btn" class="search-button">นำเข้าทั้งหมดในซิป</button>
-          </div>
-        </div>
-
-        <div id="form-hint" class="search-hint"></div>
-      </div>
-
-      <div id="job-area" class="card" style="padding: 28px; display: none; flex-direction: column; gap: 16px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;">
-          <div style="font-size: 15px; font-weight: 700;">สถานะการนำเข้า</div>
-          <span id="job-status-pill" class="status-pill"></span>
-        </div>
-        <div id="job-log" class="log-console"></div>
-        <div id="job-result"></div>
-      </div>
-
-      <div class="card" style="padding: 28px; display: flex; flex-direction: column; gap: 16px;">
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
-          <div>
-            <div style="font-size: 15px; font-weight: 700;">ประวัติการนำเข้า AMR ในเครื่องนี้</div>
-            <div class="hint">ประวัติสิ่งที่เคยนำเข้าจากเครื่องนี้ — ไม่ถูก commit เข้า repo public <a target="_blank" rel="noopener" href="/manual#import-history">อ่านรายละเอียดในคู่มือ →</a></div>
-          </div>
-          <button type="button" id="import-log-refresh-btn" class="day-type-btn">🔄 รีเฟรช</button>
-        </div>
-        <div id="import-log-groups" style="display:flex;flex-direction:column;gap:10px;"></div>
-      </div>
-
       <div class="card" style="padding: 28px; display: flex; flex-direction: column; gap: 16px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
           <div>
@@ -365,7 +144,7 @@
           <div style="font-weight:700;">เพิ่มประเภทธุรกิจใหม่ (รหัส TSIC ที่ยังไม่มีในระบบ)</div>
           <div class="form-grid">
             <div class="form-field">
-              <label for="new-bt-code">รหัส (TSIC 5 หลัก หรือรหัสภายใน กฟภ.)</label>
+              <label for="new-bt-code">รหัส (TSIC 5 หลัก)</label>
               <input id="new-bt-code" type="text" placeholder="เช่น 10773">
             </div>
             <div class="form-field">
@@ -396,17 +175,12 @@
           </div>
         </div>
 
-        <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#55647a;cursor:pointer;">
-          <input type="checkbox" id="hide-no-curve-checkbox" checked>
-          แสดงเฉพาะประเภทธุรกิจที่มีกราฟจาก AMR จริงแล้ว (ซ่อนแถว placeholder/ยังไม่มีข้อมูลรายชั่วโมง)
-        </label>
         <div id="business-types-by-section" style="display:flex;flex-direction:column;gap:10px;"></div>
       </div>
 
     </main>
   </div>
 
-  <script src="curve-chart.js"></script>
   <script src="admin.js"></script>
 </body>
 </html>

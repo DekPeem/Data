@@ -1,33 +1,13 @@
-// หน้า "ภาพรวมลูกค้าทั้งหมด" — รวม 2 แหล่งข้อมูลเข้าด้วยกัน (key ด้วย account_no):
-//   1. /api/customers        — ทะเบียนลูกค้าที่ "ลงทะเบียนไว้ล่วงหน้า" (customers.csv ของ repo
-//      มีแต่แถว DEMO สมมติ + customers_local.csv ถ้ามี) อาจยังไม่มี AMR จริงก็ได้
-//   2. /api/import-log-local — ประวัติการนำเข้า AMR จริงในเครื่องนี้ (import_log_local.csv มี
-//      ชื่อบริษัท/เลขบัญชีจริง) นี่คือแหล่งข้อมูลจริงส่วนใหญ่ที่ผู้ใช้เจอเวลานำเข้าไฟล์ AMR เอง
-//      ไม่เคยถูกเขียนลง customers_local.csv เลย ถ้าดึงแค่ /api/customers อย่างเดียวจะไม่เห็น
-//      ข้อมูลจริงที่นำเข้าไปแล้วเลย (เจอปัญหานี้จริงตอนทดสอบ — เห็นแต่ DEMO)
-// ถ้าบัญชีเดียวกันมีทั้ง 2 แหล่ง ใช้ข้อมูลจาก import log (ใหม่กว่า/เป็นของจริงที่เพิ่งนำเข้า) ทับ
-// ทะเบียนลูกค้า — import log อาจมีหลายแถวต่อบัญชี (นำเข้าซ้ำหลายรอบ) เอาแถวล่าสุดต่อบัญชี
-// (API คืนใหม่สุดก่อนอยู่แล้ว) ไม่มี endpoint ใหม่สำหรับอ่าน ใช้ของที่มีอยู่แล้วทั้งหมด
+// หน้า "ภาพรวมลูกค้าทั้งหมด" — แสดงทะเบียนลูกค้าทั้งหมด (/api/customers: customers.csv ของ repo
+// มีแต่แถว DEMO สมมติ + customers_local.csv ถ้ามี) จัดกลุ่มตาม TSIC Section พร้อมแก้ไขประเภทธุรกิจ
+// ได้ในตาราง (บันทึกผ่าน PATCH /api/admin/overview-entry ซึ่งเขียนลง customers_local.csv มีผลกับ
+// ทั้งระบบทันที)
 //
 // แถว DEMO (customers.csv สาธิต — account_no ขึ้นต้นด้วย "DEMO-" เสมอตามธรรมเนียมของ repo นี้)
 // ถูกกรองทิ้งไม่ให้ขึ้นในตารางนี้ เพราะเป็นข้อมูลสมมติ ไม่ใช่ลูกค้าจริง
 //
 // จัดกลุ่มแถวตาม Section (TSIC A-U) พร้อมแถบปุ่มกรองด่วน — คำนวณจากรายชื่อ section ที่เจอจริง
 // ในข้อมูลปัจจุบันเท่านั้น (ไม่ fix รายชื่อ 21 หมวดไว้ตายตัว กันปุ่มเยอะเกินจำเป็นตอนข้อมูลน้อย)
-//
-// "ใช้ไฟเฉลี่ย/เดือน" และ "Peak สูงสุด/วัน" คำนวณจากกราฟรายชั่วโมงจริงของแต่ละไซต์ (ดึงจาก
-// /api/admin/site-curve/<account_no> ซึ่งอ่านจาก site_curves_local.csv) — ใช้ค่าเฉลี่ยกำลังไฟฟ้า
-// (kW) รายชั่วโมงของ day_type "all" (ค่าเฉลี่ยรวมทุกวันในช่วงที่นำเข้า ไม่แยกวันธรรมดา/วันหยุด):
-//   Peak สูงสุด/วัน = max(hours["all"]) หน่วย kW
-//   ใช้ไฟเฉลี่ย/เดือน = sum(hours["all"]) หน่วย kWh/วัน (avg kW ต่อชม. x 1 ชม. = kWh ของชม.นั้น)
-//                       คูณ 30 วัน โดยประมาณ
-// มีเฉพาะบัญชีที่นำเข้า AMR จริงแบบรู้เลขบัญชี (ผ่านโหมด auto/ไฟล์ที่อ่านเลขบัญชีได้) เท่านั้น —
-// บัญชีที่ลงทะเบียนไว้ล่วงหน้าอย่างเดียวไม่มีกราฟให้คำนวณ จะแสดง "ไม่มีข้อมูล"
-//
-// แก้ไขได้ในตาราง (ปุ่ม "แก้ไข" ต่อแถว) — บันทึกผ่าน PATCH /api/admin/overview-entry ซึ่งเขียนลง
-// customers_local.csv (upsert ตาม account_no) มีผลกับทั้งระบบทันที ต้องใส่รหัสผ่านก่อนบันทึกได้
-// (รหัสผ่านตั้งค่าไว้ที่เครื่อง server ผ่าน env var ADMIN_EDIT_PASSWORD — ดู .env.example) แคช
-// รหัสผ่านที่พิมพ์ถูกไว้ใน sessionStorage เพื่อไม่ต้องพิมพ์ซ้ำทุกแถวในเซสชันเดียวกัน
 
 const tbody = document.getElementById("overview-tbody");
 const emptyState = document.getElementById("overview-empty");
@@ -40,53 +20,11 @@ const UNCLASSIFIED_SECTION_KEY = "__unclassified__";
 
 let customers = [];
 let businessTypeByCode = {};
-let usageStatsByAccount = {};
 let editingAccountNo = null;
 let activeSectionFilter = null; // null = ทั้งหมด
 
-function mergeCustomersWithImportLog(registryCustomers, importLogEntries) {
-  const byAccount = new Map();
-  for (const c of registryCustomers) {
-    if (c.account_no && !c.account_no.startsWith("DEMO-")) byAccount.set(c.account_no, { ...c });
-  }
-
-  // importLogEntries มาจาก /api/import-log-local ซึ่งเรียงใหม่สุดก่อนอยู่แล้ว — ใช้ Set กันไม่ให้
-  // แถวเก่ากว่าของบัญชีเดียวกัน (นำเข้าซ้ำหลายรอบ) มาทับแถวล่าสุดที่ประมวลผลไปแล้ว
-  //
-  // ลำดับความสำคัญ: "ทะเบียนลูกค้า" (customers_local.csv ผ่าน /api/customers) ต้องชนะ
-  // import_log_local.csv เสมอถ้ามีค่าอยู่แล้ว เพราะ customers_local.csv คือไฟล์ที่ PATCH
-  // /api/admin/overview-entry เขียนทับตอนกด "แก้ไข" ในหน้านี้ (ดู web/app.py) — import_log_local
-  // เป็นแค่ประวัติตอนนำเข้าครั้งแรก ไม่เคยถูกอัปเดตตามหลังการแก้ไขเลย ถ้าให้ import log ชนะ
-  // ค่าที่เพิ่งแก้ไขไปจะ "เด้งกลับ" เป็นค่าเดิมตอนโหลดหน้าใหม่ทันที (บั๊กที่เจอจริง)
-  const seenFromLog = new Set();
-  for (const entry of importLogEntries) {
-    const accountNo = entry.account_no;
-    if (!accountNo || seenFromLog.has(accountNo)) continue;
-    seenFromLog.add(accountNo);
-
-    const existing = byAccount.get(accountNo) || { account_no: accountNo };
-    const existingHasSolar = existing.has_solar !== undefined && existing.has_solar !== null;
-    byAccount.set(accountNo, {
-      ...existing,
-      name: existing.name || entry.company_name,
-      business_type_code: existing.business_type_code || entry.business_type_code,
-      rate_code: existing.rate_code || entry.rate_code,
-      has_solar: existingHasSolar ? existing.has_solar : entry.has_solar === "true" ? true : entry.has_solar === "false" ? false : existing.has_solar,
-      has_amr: true,
-    });
-  }
-
-  return Array.from(byAccount.values());
-}
-
 function escapeHtml(s) {
   return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
-
-function solarCell(hasSolar) {
-  if (hasSolar === true) return `<span class="pill-yes">☀️ ติดแล้ว</span>`;
-  if (hasSolar === false) return `<span class="pill-no">— ยังไม่ติด</span>`;
-  return `<span class="pill-unknown">ไม่ทราบ</span>`;
 }
 
 function businessLabelOf(c) {
@@ -108,31 +46,8 @@ function sectionLabelOf(c) {
   return bt && bt.section_name_th ? `${bt.section_code} · ${bt.section_name_th}` : "-";
 }
 
-function usageCells(accountNo) {
-  const stats = usageStatsByAccount[accountNo];
-  if (!stats) {
-    return {
-      monthlyKwh: `<span class="pill-muted" title="ไม่มีกราฟรายชั่วโมงของบัญชีนี้ (ยังไม่เคยนำเข้า AMR แบบรู้เลขบัญชี)">ไม่มีข้อมูล</span>`,
-      peakKw: `<span class="pill-muted">ไม่มีข้อมูล</span>`,
-    };
-  }
-  return {
-    monthlyKwh: `${stats.monthlyKwh.toLocaleString("th-TH", { maximumFractionDigits: 0 })} kWh`,
-    peakKw: `${stats.peakKw.toLocaleString("th-TH", { maximumFractionDigits: 1 })} kW`,
-  };
-}
-
-// UNKNOWN_RATE_CODE (mapping.py) — รู้ประเภทธุรกิจแต่ "ตั้งใจไม่ทราบ" รหัสอัตรา ไม่ใช่ค่าว่าง
-// เปล่าๆ (ต่างจาก "ยังไม่มี") แสดงเป็น pill สีเทาแบบเดียวกัน ไม่โชว์คำว่า UNKNOWN ดิบๆ ให้ดูรก
-function rateCell(rateCode) {
-  if (!rateCode) return `<span class="pill-muted">ยังไม่มี</span>`;
-  if (rateCode === "UNKNOWN") return `<span class="pill-muted" title="รู้ประเภทธุรกิจ แต่ยังไม่ทราบรหัสอัตรา">ไม่ทราบรหัสอัตรา</span>`;
-  return escapeHtml(rateCode);
-}
-
 function renderViewRow(c) {
   const amrCell = c.has_amr ? `<span class="pill-yes">✅ มีแล้ว</span>` : `<span class="pill-muted">ยังไม่มี</span>`;
-  const usage = usageCells(c.account_no);
 
   return `
     <td>
@@ -142,10 +57,6 @@ function renderViewRow(c) {
     </td>
     <td>${escapeHtml(businessLabelOf(c))}</td>
     <td>${escapeHtml(sectionLabelOf(c))}</td>
-    <td>${rateCell(c.rate_code)}</td>
-    <td>${usage.monthlyKwh}</td>
-    <td>${usage.peakKw}</td>
-    <td>${solarCell(c.has_solar)}</td>
     <td>${amrCell}</td>
     <td>
       <div class="row-actions">
@@ -157,8 +68,6 @@ function renderViewRow(c) {
 
 function renderEditRow(c) {
   const resolvedLabel = businessLabelOf(c);
-  const solarValue = c.has_solar === true ? "true" : c.has_solar === false ? "false" : "";
-  const usage = usageCells(c.account_no);
 
   return `
     <td>
@@ -173,16 +82,6 @@ function renderEditRow(c) {
       <div class="edit-resolved-label" data-role="dbd-lookup-status" style="margin-top:4px;"></div>
     </td>
     <td>${escapeHtml(sectionLabelOf(c))}</td>
-    <td><input type="text" class="edit-input" data-field="rate_code" value="${escapeHtml(c.rate_code || "")}" placeholder="เช่น 50"></td>
-    <td>${usage.monthlyKwh}</td>
-    <td>${usage.peakKw}</td>
-    <td>
-      <select class="edit-input" data-field="has_solar">
-        <option value="" ${solarValue === "" ? "selected" : ""}>ไม่ทราบ</option>
-        <option value="true" ${solarValue === "true" ? "selected" : ""}>ติดแล้ว</option>
-        <option value="false" ${solarValue === "false" ? "selected" : ""}>ยังไม่ติด</option>
-      </select>
-    </td>
     <td>${c.has_amr ? `<span class="pill-yes">✅ มีแล้ว</span>` : `<span class="pill-muted">ยังไม่มี</span>`}</td>
     <td>
       <div class="row-actions">
@@ -194,7 +93,7 @@ function renderEditRow(c) {
   `;
 }
 
-const COLUMN_COUNT = 9;
+const COLUMN_COUNT = 5;
 
 function renderSectionFilterBar() {
   const seen = new Map(); // section_code -> section_name_th
@@ -311,9 +210,6 @@ async function saveEdit(accountNo, row, passwordOverride) {
   const name = row.querySelector('input[data-field="name"]').value.trim();
   const registrationNo = row.querySelector('input[data-field="registration_no"]').value.trim();
   const businessTypeCode = row.querySelector('input[data-field="business_type_code"]').value.trim();
-  const rateCode = row.querySelector('input[data-field="rate_code"]').value.trim();
-  const solarRaw = row.querySelector('select[data-field="has_solar"]').value;
-  const hasSolar = solarRaw === "" ? null : solarRaw === "true";
 
   const saveBtn = row.querySelector('[data-action="save"]');
   saveBtn.disabled = true;
@@ -329,8 +225,6 @@ async function saveEdit(accountNo, row, passwordOverride) {
         name,
         registration_no: registrationNo,
         business_type_code: businessTypeCode,
-        rate_code: rateCode,
-        has_solar: hasSolar,
       }),
     });
     const data = await res.json();
@@ -480,50 +374,18 @@ function applyDbdCandidateToRow(accountNo, candidate) {
   if (status) status.textContent = `เลือกแล้ว: ${candidate.juristic_name} — กด "บันทึก" เพื่อยืนยัน`;
 }
 
-function computeUsageStatsFromCurve(dayTypes) {
-  const hours = (dayTypes && dayTypes.all) || [];
-  const values = hours.filter((v) => v !== null && v !== undefined);
-  if (values.length === 0) return null;
-  const peakKw = Math.max(...values);
-  const dailyKwh = values.reduce((sum, v) => sum + v, 0);
-  return { peakKw, monthlyKwh: dailyKwh * 30 };
-}
-
-async function loadUsageStats(accountNos) {
-  const entries = await Promise.all(
-    accountNos.map(async (accountNo) => {
-      try {
-        const res = await fetch(`/api/admin/site-curve/${encodeURIComponent(accountNo)}`);
-        const data = await res.json();
-        if (!data.available) return [accountNo, null];
-        return [accountNo, computeUsageStatsFromCurve(data.day_types)];
-      } catch (err) {
-        console.error(`โหลดกราฟของบัญชี ${accountNo} ไม่สำเร็จ`, err);
-        return [accountNo, null];
-      }
-    })
-  );
-  usageStatsByAccount = Object.fromEntries(entries.filter(([, stats]) => stats !== null));
-}
-
 async function load() {
   try {
-    const [customersRes, importLogRes, businessTypesRes] = await Promise.all([
+    const [customersRes, businessTypesRes] = await Promise.all([
       fetch("/api/customers"),
-      fetch("/api/import-log-local"),
       fetch("/api/business-types-full"),
     ]);
     const registryCustomers = await customersRes.json();
-    const importLogEntries = await importLogRes.json();
     const businessTypes = await businessTypesRes.json();
     businessTypeByCode = Object.fromEntries(businessTypes.map((bt) => [bt.code, bt]));
 
-    customers = mergeCustomersWithImportLog(registryCustomers, importLogEntries);
+    customers = registryCustomers.filter((c) => c.account_no && !c.account_no.startsWith("DEMO-"));
     customers.sort((a, b) => (a.name || "").localeCompare(b.name || "", "th"));
-    applyFilter();
-
-    // โหลดกราฟรายชั่วโมง (เพื่อคำนวณ ใช้ไฟเฉลี่ย/เดือน + Peak) แยกทีหลัง ไม่บล็อกการแสดงตารางหลัก
-    await loadUsageStats(customers.map((c) => c.account_no).filter(Boolean));
     applyFilter();
   } catch (err) {
     console.error("โหลดข้อมูลภาพรวมไม่สำเร็จ", err);

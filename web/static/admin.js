@@ -1,198 +1,9 @@
-const PERIOD_TH = { P: "Peak (P)", OP: "Off-Peak (OP)", H: "Holiday (H)" };
+// หน้า Admin — จัดการฐานข้อมูล DBD Open Data (ค้นชื่อบริษัทแบบออฟไลน์) และดูแล/แก้ไข "หมวดหมู่
+// ธุรกิจทั้งหมดในระบบ" (business_types.csv) — ไม่มีการนำเข้า AMR/พยากรณ์ตัวเลขใดๆ อีกต่อไป
+// (ตัดฟีเจอร์นั้นออกจากทั้งระบบแล้ว)
 
-const businessTypeSelect = document.getElementById("f-business-type");
-const fileBusinessTypeSelect = document.getElementById("f-file-business-type");
-const submitBtn = document.getElementById("submit-btn");
-const submitFileBtn = document.getElementById("submit-file-btn");
-const formHint = document.getElementById("form-hint");
-const jobArea = document.getElementById("job-area");
-const jobStatusPill = document.getElementById("job-status-pill");
-const jobLog = document.getElementById("job-log");
-const jobResult = document.getElementById("job-result");
-const usernameInput = document.getElementById("f-username");
-const accountsInput = document.getElementById("f-accounts");
-
-// ── สลับโหมดนำเข้า: ดึงจากเว็บ PEA (username/password) vs แนบไฟล์ที่มีอยู่แล้ว ──
-
-const importModeWebEl = document.getElementById("import-mode-web");
-const importModeFileEl = document.getElementById("import-mode-file");
-const importModeBulkEl = document.getElementById("import-mode-bulk");
-
-document.querySelectorAll(".import-mode-tab-btn").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll(".import-mode-tab-btn").forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
-    const mode = btn.dataset.mode;
-    importModeWebEl.style.display = mode === "web" ? "block" : "none";
-    importModeFileEl.style.display = mode === "file" ? "block" : "none";
-    importModeBulkEl.style.display = mode === "bulk" ? "block" : "none";
-    formHint.textContent = "";
-  });
-});
-
-// username ที่ใช้ login เข้าเว็บ AMR ของ PEA ส่วนใหญ่คือเลขบัญชีผู้ใช้ไฟนั้นเอง (login
-// แบบลูกค้ารายบุคคล 1 login = 1 บัญชี) — เติมช่องเลขบัญชีให้อัตโนมัติเมื่อพิมพ์ username
-// เสร็จ (ออกจากช่อง) ถ้าช่องเลขบัญชียังว่างอยู่ หรือผู้ใช้ยังไม่เคยแก้เอง
-let accountsEditedByUser = false;
-accountsInput.addEventListener("input", () => {
-  accountsEditedByUser = true;
-});
-usernameInput.addEventListener("blur", () => {
-  const username = usernameInput.value.trim();
-  if (username && !accountsEditedByUser) {
-    accountsInput.value = username;
-  }
-});
-
-async function loadBusinessTypes() {
-  try {
-    const res = await fetch("/api/business-types");
-    const types = await res.json();
-    const optionsHtml = types.map((t) => `<option value="${t.code}">${t.name_th} (${t.code})</option>`).join("");
-    // โหมดดึงจากเว็บ: ปล่อยว่างได้ (ให้ระบบตรวจจับอัตโนมัติ) — โหมดแนบไฟล์ไม่มีการตรวจจับ
-    // อัตโนมัติเลย (ไม่ได้เข้าหน้าข้อมูลผู้ใช้ไฟของ PEA) จึงบังคับต้องเลือกเอง
-    businessTypeSelect.innerHTML = `<option value="">-- ให้ระบบตรวจจับอัตโนมัติ --</option>` + optionsHtml;
-    fileBusinessTypeSelect.innerHTML = `<option value="">-- เลือกประเภทธุรกิจ --</option>` + optionsHtml;
-  } catch (err) {
-    console.error("โหลดประเภทธุรกิจไม่สำเร็จ", err);
-  }
-}
-
-// ── ตาราง "ประวัติการนำเข้า AMR ในเครื่องนี้" (import_log_local.csv — ชื่อจริง ไม่ commit) ──
-
-const importLogRefreshBtn = document.getElementById("import-log-refresh-btn");
-const importLogGroupsEl = document.getElementById("import-log-groups");
-
-// เก็บ log ล่าสุดไว้ใช้เดา "ชื่อบริษัทที่น่าจะตรงกับหมวดธุรกิจนี้" ตอนเปิดแผงตรวจสอบ TSIC ด้านล่าง
-let importLogEntries = [];
-
-function formatImportedDate(iso) {
-  try {
-    return new Date(iso).toLocaleDateString("th-TH", { dateStyle: "medium" });
-  } catch (err) {
-    return iso || "";
-  }
-}
-
-function formatImportedTime(iso) {
-  try {
-    return new Date(iso).toLocaleTimeString("th-TH", { timeStyle: "short" });
-  } catch (err) {
-    return "";
-  }
-}
-
-// จัดกลุ่มประวัติการนำเข้าตามวัน (ใช้วันที่แสดงผลเป็น key) — entries เข้ามาเรียงใหม่สุดก่อนอยู่แล้ว
-// (จาก backend) จึงได้กลุ่มเรียงวันใหม่สุดก่อนไปโดยไม่ต้อง sort เพิ่ม
-function groupImportLogByDate(entries) {
-  const groups = [];
-  const indexByLabel = {};
-  entries.forEach((e) => {
-    const label = formatImportedDate(e.imported_at);
-    if (!(label in indexByLabel)) {
-      indexByLabel[label] = groups.length;
-      groups.push({ label, entries: [] });
-    }
-    groups[indexByLabel[label]].entries.push(e);
-  });
-  return groups;
-}
-
-// วันไหนเคยกดเปิดดูไว้ - เก็บไว้ให้ยังเปิดค้างอยู่ต่อ แม้จะกดรีเฟรชใหม่ก็ตาม
-const openImportLogDates = new Set();
-
-function toggleImportLogDate(label, index) {
-  const panel = document.getElementById(`import-log-panel-${index}`);
-  if (!panel) return;
-  if (openImportLogDates.has(label)) {
-    openImportLogDates.delete(label);
-    panel.classList.remove("open");
-  } else {
-    openImportLogDates.add(label);
-    panel.classList.add("open");
-  }
-}
-
-function renderImportLogGroups(entries) {
-  const groups = groupImportLogByDate(entries);
-
-  importLogGroupsEl.innerHTML = groups.length
-    ? groups
-        .map((g, i) => {
-          const isOpen = openImportLogDates.has(g.label);
-          const rows = g.entries
-            .map(
-              (e) => `
-            <tr style="border-bottom:1px solid rgba(15,23,42,0.06);">
-              <td style="padding:8px 10px;">${formatImportedTime(e.imported_at)}</td>
-              <td style="padding:8px 10px;font-weight:600;">${e.company_name || "-"}</td>
-              <td style="padding:8px 10px;">${e.account_no || "-"}</td>
-              <td style="padding:8px 10px;">${e.business_type_code}</td>
-              <td style="padding:8px 10px;">${e.rate_code}</td>
-            </tr>`
-            )
-            .join("");
-          return `
-            <div class="section-block">
-              <button type="button" class="section-pill-btn import-log-date-btn" data-label="${g.label}" data-index="${i}">
-                <span>${g.label}</span>
-                <span class="section-count">${g.entries.length} รายการ</span>
-              </button>
-              <div class="section-panel${isOpen ? " open" : ""}" id="import-log-panel-${i}" style="padding:0 18px 16px;">
-                <div style="overflow-x:auto;">
-                  <table style="width:100%;border-collapse:collapse;font-size:13px;">
-                    <thead>
-                      <tr style="text-align:left;border-bottom:2px solid rgba(15,23,42,0.1);">
-                        <th style="padding:8px 10px;">เวลา</th>
-                        <th style="padding:8px 10px;">ชื่อบริษัท/นิติบุคคล</th>
-                        <th style="padding:8px 10px;">เลขบัญชี</th>
-                        <th style="padding:8px 10px;">ประเภทธุรกิจ</th>
-                        <th style="padding:8px 10px;">รหัสอัตรา</th>
-                      </tr>
-                    </thead>
-                    <tbody>${rows}</tbody>
-                  </table>
-                </div>
-              </div>
-            </div>`;
-        })
-        .join("")
-    : `<div class="hint" style="padding:12px 10px;">ยังไม่เคยนำเข้าแบบอัตโนมัติจากเครื่องนี้เลย</div>`;
-
-  importLogGroupsEl.querySelectorAll(".import-log-date-btn").forEach((btn) => {
-    btn.addEventListener("click", () => toggleImportLogDate(btn.dataset.label, btn.dataset.index));
-  });
-}
-
-async function loadImportLogLocal() {
-  importLogGroupsEl.innerHTML = `<div class="hint" style="padding:12px 10px;">กำลังโหลด...</div>`;
-  try {
-    const res = await fetch("/api/import-log-local");
-    importLogEntries = await res.json();
-    renderImportLogGroups(importLogEntries);
-  } catch (err) {
-    importLogGroupsEl.innerHTML = `<div class="hint" style="padding:12px 10px;color:#d03b3b;">โหลดไม่สำเร็จ</div>`;
-    console.error("โหลดประวัติการนำเข้าไม่สำเร็จ", err);
-  }
-}
-
-importLogRefreshBtn.addEventListener("click", loadImportLogLocal);
-
-// หาชื่อบริษัทล่าสุดในประวัติการนำเข้าที่ตรงกับรหัสประเภทธุรกิจนี้ (ไว้เติมช่องค้นหาให้อัตโนมัติ)
-function guessCompanyNameForBusinessType(businessTypeCode) {
-  const match = importLogEntries.find((e) => e.business_type_code === businessTypeCode && e.company_name);
-  return match ? match.company_name : "";
-}
-
-// ── "หมวดหมู่ธุรกิจทั้งหมดในระบบ" จัดกลุ่มตาม Section (TSIC) ก่อน แล้วค่อยแยก Division/
-//    ประเภทธุรกิจย่อยด้านใน — แต่ละประเภทธุรกิจแสดงรายชื่อบริษัทที่เคยนำเข้า (จาก import log)
-//    และปุ่มดูกราฟการใช้ไฟจริงจาก AMR (ยังไม่ใช่ส่วนพยากรณ์ — แค่สำรวจรูปแบบก่อนนำไปใช้) ──
-
-const businessTypesRefreshBtn = document.getElementById("business-types-refresh-btn");
-const businessTypesBySectionEl = document.getElementById("business-types-by-section");
-
-// โครงสร้าง Section/Division ของ TSIC (อิง ISIC Rev.4 ที่ TSIC ใช้เป็นฐาน) — ใช้แค่เดา Section
-// จาก Division ให้อัตโนมัติตอนตรวจสอบ (แก้ไขเองได้เสมอถ้าไม่ตรง)
+// ── โครงสร้าง Section/Division ของ TSIC (อิง ISIC Rev.4 ที่ TSIC ใช้เป็นฐาน) — ใช้แค่เดา Section
+//    จาก Division ให้อัตโนมัติตอนตรวจสอบ (แก้ไขเองได้เสมอถ้าไม่ตรง) ──
 const TSIC_SECTIONS = [
   { code: "A", from: 1, to: 3, name_th: "เกษตรกรรม การป่าไม้ และการประมง" },
   { code: "B", from: 5, to: 9, name_th: "การทำเหมืองแร่และเหมืองหิน" },
@@ -237,7 +48,7 @@ function groupBySection(types) {
   return groups;
 }
 
-// กรองรายการในกล่อง dropdown ค้นหา (ใช้ร่วมกันทั้งกล่องค้นหาบริษัท/ไซต์ และกล่องค้นหาประเภทธุรกิจ)
+// กรองรายการในกล่อง dropdown ค้นหา (ใช้ร่วมกันทั้งกล่องค้นหา Section และกล่องค้นหาประเภทธุรกิจ)
 // ตามคำที่พิมพ์ — จับคู่แบบ "มีคำนี้อยู่ตรงไหนก็ได้" ในข้อความของแต่ละรายการ (ไม่ต้องพิมพ์ตรงตั้งแต่
 // ตัวแรก) ไม่สนตัวพิมพ์เล็ก-ใหญ่
 function filterComboboxDropdown(input, comboboxSelector, itemSelector, emptySelector) {
@@ -254,10 +65,6 @@ function filterComboboxDropdown(input, comboboxSelector, itemSelector, emptySele
   if (emptyMsg) emptyMsg.style.display = anyVisible ? "none" : "block";
 }
 
-function filterCompanyDropdown(input) {
-  filterComboboxDropdown(input, ".company-combobox", ".company-dropdown-item", ".company-dropdown-empty");
-}
-
 function filterBizTypeDropdown(input) {
   filterComboboxDropdown(input, ".biz-type-combobox", ".biz-type-dropdown-item", ".biz-type-dropdown-empty");
 }
@@ -269,75 +76,15 @@ function filterSectionDropdown(input) {
 // ปิด dropdown ที่เปิดค้างไว้เมื่อคลิกข้างนอกกล่องค้นหา (ผูกครั้งเดียวตอนโหลดสคริปต์ ไม่ใช่ทุกครั้ง
 // ที่ render การ์ดใหม่ เพราะ element การ์ดถูกสร้างใหม่ทุกครั้งอยู่แล้วแต่ document ตัวเดียวกันเสมอ)
 document.addEventListener("click", (e) => {
-  document.querySelectorAll(".company-combobox.open, .biz-type-combobox.open, .section-combobox.open").forEach((box) => {
+  document.querySelectorAll(".biz-type-combobox.open, .section-combobox.open").forEach((box) => {
     if (!box.contains(e.target)) box.classList.remove("open");
   });
 });
-
-// รายชื่อบริษัท (ไม่ซ้ำ) ที่เคยนำเข้าไว้สำหรับประเภทธุรกิจรหัสนี้ — มาจาก import log ในเครื่องนี้
-function companiesForBusinessType(code) {
-  const seen = new Set();
-  const result = [];
-  importLogEntries
-    .filter((e) => e.business_type_code === code)
-    .forEach((e) => {
-      const key = `${e.company_name}|${e.account_no}`;
-      if (!seen.has(key)) {
-        seen.add(key);
-        result.push(e);
-      }
-    });
-  return result;
-}
 
 function renderBizCard(t) {
   const divisionBadge = t.division_code
     ? `<span class="biz-division-badge">Division ${t.division_code}${t.division_name_th ? ` · ${t.division_name_th}` : ""}</span>`
     : `<span class="biz-division-badge">ยังไม่ทราบ Division</span>`;
-
-  const companies = companiesForBusinessType(t.code);
-  const companiesHtml = companies.length
-    ? `
-      <div class="company-combobox">
-        <input type="text" class="company-search-input" placeholder="🔍 ค้นหาบริษัท/ไซต์ (${companies.length} รายการ)..." autocomplete="off">
-        <div class="company-dropdown">
-          ${companies
-            .map(
-              (c) =>
-                `<button type="button" class="company-dropdown-item company-chip-btn" data-account="${c.account_no}">
-                  <span class="delete-import-log-icon" data-account="${c.account_no}" data-imported-at="${c.imported_at}" title="ลบรายการประวัตินี้ทิ้ง (แค่ประวัติ ไม่กระทบข้อมูลที่ใช้พยากรณ์จริง)" style="float:right;color:#a01818;font-weight:400;padding:0 2px;">✕</span>
-                  ${c.company_name}${c.account_no ? ` · ${c.account_no}` : ""} 📈
-                </button>`
-            )
-            .join("")}
-          <div class="company-dropdown-empty" style="display:none;">ไม่พบบริษัท/ไซต์ที่ตรงกับคำค้นหา</div>
-        </div>
-      </div>`
-    : `<span class="hint">ยังไม่มีประวัติการนำเข้าในเครื่องนี้สำหรับประเภทนี้</span>`;
-  const siteCurvePanels = companies
-    .filter((c) => c.account_no)
-    .map((c) => `<div id="site-curve-panel-${c.account_no}" style="display:none;"></div>`)
-    .join("");
-
-  const profileButtons = t.profiles.length
-    ? t.profiles
-        .map((p) => {
-          const solarLabel = p.has_solar ? " · ☀️ ติด Solar" : "";
-          return `
-            <span style="display:inline-flex;align-items:center;gap:4px;">
-              <button type="button" class="day-type-btn curve-toggle-btn" data-code="${t.code}" data-rate="${p.rate_code}" data-solar="${p.has_solar}">📈 ดูกราฟ · อัตรา ${p.rate_code}${solarLabel} (${p.sample_size} ตัวอย่าง)</button>
-              <button type="button" class="delete-profile-btn" data-code="${t.code}" data-rate="${p.rate_code}" data-solar="${p.has_solar}" title="ลบโปรไฟล์นี้ทิ้ง (เช่นนำเข้าผิดบัญชี/ผิดประเภทธุรกิจไป)" style="border:1px solid rgba(160,24,24,0.35);background:#fff;color:#a01818;border-radius:8px;width:26px;height:26px;cursor:pointer;font-size:13px;line-height:1;">✕</button>
-            </span>`;
-        })
-        .join("")
-    : `<span class="hint">ยังไม่มีโปรไฟล์อ้างอิง</span>`;
-
-  const curvePanels = t.profiles
-    .map((p) => {
-      const solarTag = p.has_solar ? "solar" : "nosolar";
-      return `<div id="curve-panel-${t.code}-${p.rate_code}-${solarTag}" style="display:none;"></div>`;
-    })
-    .join("");
 
   return `
     <div class="biz-card" data-code="${t.code}">
@@ -345,11 +92,7 @@ function renderBizCard(t) {
         <div><span class="biz-code">${t.code}</span>${t.name_th}${divisionBadge}</div>
         <button type="button" class="day-type-btn verify-toggle-btn" data-code="${t.code}">🔍 ตรวจสอบ TSIC</button>
       </div>
-      <div class="biz-companies">${companiesHtml}</div>
-      ${siteCurvePanels}
-      <div class="biz-profiles">${profileButtons}</div>
       <div id="verify-panel-${t.code}" style="display:none;"></div>
-      ${curvePanels}
     </div>`;
 }
 
@@ -398,21 +141,14 @@ function toggleBizTypeCard(code, btn) {
 }
 
 // Section (TSIC) ที่เลือกดูอยู่ตอนนี้ในหน้า "หมวดหมู่ธุรกิจทั้งหมดในระบบ" — เลือกได้ทีละ 1 อันจาก
-// dropdown เดียว (เดิมเป็นลิสต์ปุ่มกางออก/หุบเข้าทีละอัน ยาวเกินไปเวลามีหลาย Section)
+// dropdown เดียว
 let selectedSectionKey = null;
 
-// รายการประเภทธุรกิจล่าสุดที่ fetch มา (เก็บไว้ใช้กรองใหม่ตอนติ๊ก/ถอดติ๊ก checkbox โดยไม่ต้อง
-// ยิง request ไปเซิร์ฟเวอร์ซ้ำ)
+// รายการประเภทธุรกิจล่าสุดที่ fetch มา (เก็บไว้ใช้ re-render ได้โดยไม่ต้องยิง request ซ้ำ)
 let lastBusinessTypes = [];
 
-const hideNoCurveCheckbox = document.getElementById("hide-no-curve-checkbox");
-hideNoCurveCheckbox.addEventListener("change", () => renderBusinessTypesSections(lastBusinessTypes));
-
-// ประเภทธุรกิจหนึ่งตัว "มีกราฟจาก AMR จริง" ถ้ามีโปรไฟล์อย่างน้อย 1 อัตราที่ has_curve เป็น true
-// (แถว placeholder ใน load_profiles.csv มีแค่ตัวเลขเฉลี่ย ไม่มีข้อมูลรายชั่วโมงจริง จะไม่ผ่านเงื่อนไขนี้)
-function businessTypeHasAnyCurve(t) {
-  return t.profiles.some((p) => p.has_curve);
-}
+const businessTypesRefreshBtn = document.getElementById("business-types-refresh-btn");
+const businessTypesBySectionEl = document.getElementById("business-types-by-section");
 
 async function loadBusinessTypesTable() {
   businessTypesBySectionEl.innerHTML = `<div style="padding:12px 10px;color:#8996ab;">กำลังโหลด...</div>`;
@@ -428,8 +164,7 @@ async function loadBusinessTypesTable() {
 
 function renderBusinessTypesSections(allTypes) {
   try {
-    const types = hideNoCurveCheckbox.checked ? allTypes.filter(businessTypeHasAnyCurve) : allTypes;
-    const groups = groupBySection(types);
+    const groups = groupBySection(allTypes);
 
     const keys = Object.keys(groups)
       .filter((k) => k !== "UNVERIFIED")
@@ -445,7 +180,6 @@ function renderBusinessTypesSections(allTypes) {
 
     // กล่องค้นหาแบบกำหนดเอง (ไม่ใช่ <select> ของเบราว์เซอร์) เพราะ <select> เปิดลิสต์ขึ้นบน/ลง
     // ล่างเองอัตโนมัติตามพื้นที่ว่างบนจอ ควบคุมทิศทางไม่ได้เลย — แบบนี้เขียนเอง เปิดลงล่างเสมอ
-    // (รูปแบบเดียวกับกล่องค้นหาประเภทธุรกิจ/บริษัท-ไซต์ที่มีอยู่แล้วในหน้านี้)
     businessTypesBySectionEl.innerHTML = `
       <div class="form-field">
         <label>เลือก Section (TSIC) เพื่อดูประเภทธุรกิจในกลุ่มนั้น</label>
@@ -482,30 +216,6 @@ function renderBusinessTypesSections(allTypes) {
 
     businessTypesBySectionEl.querySelectorAll(".verify-toggle-btn").forEach((btn) => {
       btn.addEventListener("click", () => toggleVerifyPanel(btn.dataset.code));
-    });
-    businessTypesBySectionEl.querySelectorAll(".curve-toggle-btn").forEach((btn) => {
-      btn.addEventListener("click", () => toggleCurvePanel(btn.dataset.code, btn.dataset.rate, btn.dataset.solar === "true"));
-    });
-    businessTypesBySectionEl.querySelectorAll(".delete-profile-btn").forEach((btn) => {
-      btn.addEventListener("click", () => deleteLoadProfile(btn.dataset.code, btn.dataset.rate, btn.dataset.solar === "true"));
-    });
-    businessTypesBySectionEl.querySelectorAll(".company-chip-btn").forEach((btn) => {
-      btn.addEventListener("click", (e) => {
-        const delIcon = e.target.closest(".delete-import-log-icon");
-        if (delIcon) {
-          e.stopPropagation();
-          deleteImportLogEntry(delIcon.dataset.account, delIcon.dataset.importedAt);
-          return;
-        }
-        toggleSiteCurvePanel(btn.dataset.account);
-      });
-    });
-    businessTypesBySectionEl.querySelectorAll(".company-search-input").forEach((input) => {
-      input.addEventListener("focus", () => {
-        input.closest(".company-combobox").classList.add("open");
-        filterCompanyDropdown(input);
-      });
-      input.addEventListener("input", () => filterCompanyDropdown(input));
     });
     businessTypesBySectionEl.querySelectorAll(".biz-type-dropdown-item").forEach((btn) => {
       btn.addEventListener("click", () => toggleBizTypeCard(btn.dataset.code, btn));
@@ -600,7 +310,6 @@ addBtSubmitBtn.addEventListener("click", async () => {
     }
     addBtPanel.style.display = "none";
     resetAddBusinessTypeForm();
-    await loadBusinessTypes(); // รีเฟรช dropdown อื่นๆ ในหน้านี้ที่ cache รายชื่อไว้ (โหมดนำเข้า)
     loadBusinessTypesTable();
   } catch (err) {
     addBtHint.textContent = "เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ";
@@ -610,130 +319,9 @@ addBtSubmitBtn.addEventListener("click", async () => {
   }
 });
 
-// ลบโปรไฟล์+เส้นโค้งอ้างอิงของคู่ประเภทธุรกิจ+อัตราหนึ่งคู่ทิ้ง — ใช้ตอนนำเข้าผิดบัญชี/ผิดประเภท
-// ธุรกิจไปแล้ว (เช่นเลือกประเภทธุรกิจผิดตอน resolve รายการรอทราบอัตรา) ไฟล์ AMR ดิบเดิมไม่ได้ถูก
-// ลบไปด้วย ยังนำเข้าใหม่ให้ถูกต้องได้ทีหลัง
-async function deleteLoadProfile(code, rateCode, hasSolar) {
-  if (!confirm(`ลบโปรไฟล์ + เส้นโค้งของ "${code}" อัตรา "${rateCode}"${hasSolar ? " (ติด Solar)" : ""} ทิ้งจริงหรือไม่?\n\n(ข้อมูล AMR ดิบที่เคยนำเข้ายังอยู่ครบ นำเข้าใหม่ให้ถูกต้องได้ทีหลัง)`)) {
-    return;
-  }
-  try {
-    const res = await fetch(
-      `/api/admin/load-profile/${encodeURIComponent(code)}/${encodeURIComponent(rateCode)}?has_solar=${hasSolar}`,
-      { method: "DELETE" }
-    );
-    if (!res.ok) {
-      const data = await res.json();
-      alert(data.message || "ลบไม่สำเร็จ");
-      return;
-    }
-    loadBusinessTypesTable();
-  } catch (err) {
-    alert("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ");
-    console.error(err);
-  }
-}
-
-// ลบ 1 แถวในประวัติการนำเข้า (import_log_local.csv) ทิ้ง — แค่ความสะอาดของประวัติที่แสดงใน
-// dropdown บริษัท/ไซต์ ไม่กระทบข้อมูลที่ใช้พยากรณ์จริงเลย (ดู deleteLoadProfile สำหรับลบตัวที่ใช้
-// พยากรณ์จริง)
-async function deleteImportLogEntry(accountNo, importedAt) {
-  if (!confirm("ลบรายการประวัตินี้ทิ้งหรือไม่? (แค่ลบประวัติที่แสดงตรงนี้ ไม่กระทบข้อมูลที่ใช้พยากรณ์จริงเลย)")) {
-    return;
-  }
-  try {
-    const res = await fetch("/api/admin/import-log-local", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ imported_at: importedAt, account_no: accountNo }),
-    });
-    if (!res.ok) {
-      const data = await res.json();
-      alert(data.message || "ลบไม่สำเร็จ");
-      return;
-    }
-    await loadImportLogLocal();
-    renderBusinessTypesSections(lastBusinessTypes);
-  } catch (err) {
-    alert("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ");
-    console.error(err);
-  }
-}
-
-// ── กราฟการใช้ไฟจาก AMR จริงของแต่ละคู่ประเภทธุรกิจ+อัตรา (ข้อมูลดิบ ไม่สเกล — ยังไม่ใช่การ
-//    พยากรณ์ แค่ดูว่าประเภทธุรกิจนี้มีรูปแบบการใช้ไฟแบบไหน) ──
-
-const openCurvePanels = new Set();
-
-async function toggleCurvePanel(code, rateCode, hasSolar) {
-  const solarTag = hasSolar ? "solar" : "nosolar";
-  const key = `${code}|${rateCode}|${solarTag}`;
-  const panel = document.getElementById(`curve-panel-${code}-${rateCode}-${solarTag}`);
-  if (openCurvePanels.has(key)) {
-    openCurvePanels.delete(key);
-    panel.style.display = "none";
-    return;
-  }
-  openCurvePanels.add(key);
-  panel.style.display = "block";
-  if (!panel.dataset.built) {
-    panel.dataset.built = "1";
-    panel.innerHTML = `<div class="hint" style="padding:12px 0;">⏳ กำลังโหลดกราฟ...</div>`;
-    try {
-      const res = await fetch(
-        `/api/admin/curve/${encodeURIComponent(code)}/${encodeURIComponent(rateCode)}?has_solar=${hasSolar}`
-      );
-      const curveData = await res.json();
-      initDailyCurveSection(panel, curveData, curveData.boxplot);
-    } catch (err) {
-      panel.innerHTML = `<div class="hint" style="color:#d03b3b;">โหลดกราฟไม่สำเร็จ</div>`;
-      console.error("โหลดกราฟไม่สำเร็จ", err);
-    }
-  }
-}
-
-// ── กราฟของแต่ละไซต์/บัญชีแยกต่างหาก (คนละกับ toggleCurvePanel ด้านบนที่เป็นค่าเฉลี่ยรวม) —
-//    กดที่ชื่อบริษัทในการ์ดเพื่อดูกราฟของไซต์นั้นไซต์เดียว ไม่ใช่ค่าเฉลี่ยรวมกับไซต์อื่น ──
-
-const openSiteCurvePanels = new Set();
-
-async function toggleSiteCurvePanel(accountNo) {
-  const panel = document.getElementById(`site-curve-panel-${accountNo}`);
-  if (!panel) return;
-
-  const dropdownItem = businessTypesBySectionEl.querySelector(`.company-dropdown-item[data-account="${accountNo}"]`);
-
-  if (openSiteCurvePanels.has(accountNo)) {
-    openSiteCurvePanels.delete(accountNo);
-    panel.style.display = "none";
-    if (dropdownItem) dropdownItem.classList.remove("active");
-    return;
-  }
-  openSiteCurvePanels.add(accountNo);
-  panel.style.display = "block";
-  if (dropdownItem) dropdownItem.classList.add("active");
-  if (!panel.dataset.built) {
-    panel.dataset.built = "1";
-    panel.innerHTML = `<div class="hint" style="padding:12px 0;">⏳ กำลังโหลดกราฟ...</div>`;
-    try {
-      const res = await fetch(`/api/admin/site-curve/${encodeURIComponent(accountNo)}`);
-      const curveData = await res.json();
-      if (!curveData.available) {
-        panel.innerHTML = `<div class="hint" style="padding:12px 0;">ยังไม่มีกราฟแยกของไซต์นี้ (นำเข้าไว้ก่อนฟีเจอร์นี้จะมี หรือใช้โหมดกรอกเองซึ่งไม่ทราบชื่อบริษัท — นำเข้าใหม่อีกครั้งด้วยโหมดอัตโนมัติเพื่อให้มีกราฟแยก)</div>`;
-        return;
-      }
-      // ใส่ชื่อบริษัท+เลขบัญชีเป็นหัวข้อเล็กๆ เหนือกราฟ — จำเป็นเวลาเปิดดูกราฟของหลายไซต์พร้อมกัน
-      // (เช่น บริษัทเดียวกันมีหลายมิเตอร์) จะได้รู้ว่ากราฟไหนเป็นของไซต์ไหน
-      panel.innerHTML = `<div class="hint" style="font-weight:600;color:#0f1b2d;margin-bottom:6px;">📍 ${curveData.company_name || "(ไม่ทราบชื่อ)"} · บัญชี ${accountNo}</div><div class="site-curve-chart-inner"></div>`;
-      initDailyCurveSection(panel.querySelector(".site-curve-chart-inner"), curveData);
-    } catch (err) {
-      panel.innerHTML = `<div class="hint" style="color:#d03b3b;">โหลดกราฟไม่สำเร็จ</div>`;
-      console.error("โหลดกราฟของไซต์ไม่สำเร็จ", err);
-    }
-  }
-}
-
-// ── แผงตรวจสอบ TSIC ในการ์ด (ค้นหาจากชื่อบริษัทที่เคยนำเข้า แล้วบันทึกกลับเข้า business_types.csv) ──
+// ── ตรวจสอบ/บันทึก TSIC Section-Division ของประเภทธุรกิจหนึ่งรายการ (ค้นหาจาก DBD DataWarehouse
+//    ด้วยชื่อบริษัทตัวอย่าง แล้วเติม Section/Division ให้อัตโนมัติ — ตรวจสอบ/แก้ไขเองได้เสมอก่อน
+//    บันทึก) ──
 
 const openVerifyPanels = new Set();
 
@@ -754,13 +342,12 @@ function toggleVerifyPanel(code) {
 
 function renderVerifyPanel(code) {
   const panel = document.getElementById(`verify-panel-${code}`);
-  const guessedName = guessCompanyNameForBusinessType(code);
   panel.innerHTML = `
     <div class="verify-panel">
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
         <div class="form-field" style="flex:1;min-width:220px;">
           <label for="verify-name-input-${code}">ชื่อบริษัท/นิติบุคคล (ค้นหาจาก DBD DataWarehouse — ไม่บังคับ)</label>
-          <input id="verify-name-input-${code}" type="text" value="${guessedName}" placeholder="เช่น บริษัท ตัวอย่าง จำกัด">
+          <input id="verify-name-input-${code}" type="text" placeholder="เช่น บริษัท ตัวอย่าง จำกัด">
         </div>
         <button type="button" class="day-type-btn verify-search-btn" data-code="${code}">ค้นหา TSIC</button>
       </div>
@@ -927,364 +514,7 @@ async function saveHierarchy(code) {
   }
 }
 
-function setStatusPill(status) {
-  const map = {
-    running: { text: "⏳ กำลังทำงาน...", bg: "#eef3fa", color: "#184f95" },
-    success: { text: "✅ สำเร็จ", bg: "#e8f7ec", color: "#006300" },
-    error: { text: "❌ ไม่สำเร็จ", bg: "#fdecea", color: "#a01818" },
-    pending_rate: { text: "📋 บันทึกไว้รอทราบอัตรา", bg: "#fff8e6", color: "#8a6100" },
-    needs_manual_entry: { text: "⚠️ ต้องกรอกประเภทธุรกิจ/อัตราเอง", bg: "#fff8e6", color: "#8a6100" },
-  };
-  const s = map[status] || map.running;
-  jobStatusPill.textContent = s.text;
-  jobStatusPill.style.background = s.bg;
-  jobStatusPill.style.color = s.color;
-}
-
-function renderResult(result, customerProfile) {
-  const nameBlock =
-    customerProfile && customerProfile.name
-      ? `<div class="field-item" style="margin-bottom:12px;">
-          <div class="field-label">ชื่อบริษัทจริงที่ตรวจพบ (แสดงในเครื่องนี้เท่านั้น — ไม่ถูกบันทึกลงไฟล์ใดๆ)</div>
-          <div class="field-value" style="font-size:16px;">${customerProfile.name}${customerProfile.account_no ? ` · บัญชี ${customerProfile.account_no}` : ""}</div>
-        </div>`
-      : "";
-
-  jobResult.innerHTML = `
-    ${nameBlock}
-    <div class="field-grid" style="grid-template-columns: repeat(3, minmax(0,1fr));">
-      ${["P", "OP", "H"]
-        .map(
-          (p) => `
-        <div class="field-item">
-          <div class="field-label">${PERIOD_TH[p]}</div>
-          <div class="field-value">Demand ${result.demand_kw[p]} kW · Energy ${result.energy_kwh[p].toLocaleString("th-TH")} kWh</div>
-        </div>`
-        )
-        .join("")}
-    </div>
-    <div class="field-label" style="margin-top:12px;">
-      บันทึกแล้วสำหรับ: ${result.business_type_code} / อัตรา ${result.rate_code}
-      ${result.has_solar ? " · ☀️ ติด Solar" : ""} (เฉลี่ยจาก ${result.sample_size} ไฟล์)
-    </div>
-  `;
-}
-
-// ข้อความ error นี้ไม่ใช่ความผิดพลาดจริง — แค่ยังไม่ทราบประเภทธุรกิจ/อัตราของบัญชีนี้เฉยๆ (รอกรอก
-// ทีหลังได้) ใช้กันไม่ให้ผู้ใช้ตกใจเห็นกล่องแดง "ไม่สำเร็จ" — แต่ status "error" ที่มีข้อความนี้
-// ไม่ได้แปลว่าถูกบันทึกเป็นรายการ "รอทราบอัตรา" เสมอไป (backend บันทึกได้ก็ต่อเมื่ออ่านเลขบัญชีจาก
-// ไฟล์ได้เท่านั้น — ดู web/app.py:_run_import_file_job) ต้องแยกจาก status "pending_rate" จริงๆ
-// ด้วย ไม่งั้นจะไปบอกผู้ใช้ให้เช็ครายการที่มันไม่เคยถูกบันทึกเข้าไปเลย
-function isUnknownBusinessRateError(msg) {
-  return typeof msg === "string" && msg.includes("ไม่ทราบประเภทธุรกิจ/รหัสอัตราของบัญชีนี้");
-}
-
-async function pollJob(jobId, activeBtn) {
-  const res = await fetch(`/api/admin/import/${jobId}`);
-  const data = await res.json();
-
-  const savedAsPending = data.status === "pending_rate";
-  const needsManualEntry = data.status === "error" && isUnknownBusinessRateError(data.error);
-
-  setStatusPill(savedAsPending ? "pending_rate" : needsManualEntry ? "needs_manual_entry" : data.status);
-  jobLog.textContent = (data.logs || []).join("\n");
-  jobLog.scrollTop = jobLog.scrollHeight;
-
-  if (data.status === "running") {
-    setTimeout(() => pollJob(jobId, activeBtn), 1000);
-    return;
-  }
-
-  activeBtn.disabled = false;
-
-  if (data.status === "success") {
-    renderResult(data.result, data.customer_profile);
-    // นำเข้าเสร็จอาจมีประวัติการนำเข้าแถวใหม่ (โหมดอัตโนมัติ) และประเภทธุรกิจ/โปรไฟล์ใหม่ —
-    // ต้องโหลด import log ให้เสร็จก่อน (เติมตัวแปร importLogEntries) แล้วค่อยวาดการ์ดประเภทธุรกิจ
-    // ไม่งั้นชื่อบริษัทในการ์ดจะยังว่างเพราะ fetch สองอันแข่งกัน (race condition)
-    loadImportLogLocal().then(loadBusinessTypesTable);
-  } else if (savedAsPending) {
-    jobResult.innerHTML = `
-      <div class="search-hint" style="min-height:auto;">
-        ${data.error || "ไม่ทราบประเภทธุรกิจ/รหัสอัตราของบัญชีนี้"}<br>
-        📋 ระบบอ่านเลขบัญชีจากไฟล์นี้ได้แล้ว บันทึกรายการนี้ไว้ในหน้า
-        <a href="/pending-amr" target="_blank" rel="noopener">"รอทราบอัตรา"</a> ให้แล้ว ไม่ต้องอัปโหลดไฟล์ใหม่ —
-        กลับมากรอกประเภทธุรกิจ/รหัสอัตราทีหลังได้เมื่อทราบแล้ว
-      </div>`;
-  } else if (needsManualEntry) {
-    jobResult.innerHTML = `
-      <div class="search-hint" style="min-height:auto;">
-        ${data.error || "ไม่ทราบประเภทธุรกิจ/รหัสอัตราของบัญชีนี้"}<br>
-        ⚠️ ระบบอ่าน "เลขบัญชี" จากไฟล์นี้ไม่ได้เลย จึงบันทึกเป็นรายการรอทราบอัตราให้ไม่ได้
-        (จะไม่เจอในหน้า "รอทราบอัตรา" แน่นอน) — กรุณากรอกประเภทธุรกิจและรหัสอัตราในฟอร์มด้านบน
-        แล้วอัปโหลดไฟล์นี้ใหม่อีกครั้ง
-      </div>`;
-  } else if (data.status === "error") {
-    jobResult.innerHTML = `<div class="search-hint" style="min-height:auto;">${data.error || "เกิดข้อผิดพลาด"}</div>`;
-  }
-}
-
-async function startImport() {
-  formHint.textContent = "";
-
-  const username = document.getElementById("f-username").value.trim();
-  const password = document.getElementById("f-password").value;
-  const accounts = document.getElementById("f-accounts").value.trim();
-  const business_type_code = businessTypeSelect.value;
-  const rate_code = document.getElementById("f-rate-code").value.trim();
-  const contract_kva = document.getElementById("f-kva").value;
-  const source_label = document.getElementById("f-source-label").value.trim();
-  const has_solar = document.getElementById("f-has-solar").checked;
-  const start_date = document.getElementById("f-start").value;
-  const end_date = document.getElementById("f-end").value;
-
-  if (!start_date || !end_date) {
-    formHint.textContent = "กรุณาเลือกวันที่เริ่มต้นและสิ้นสุด";
-    return;
-  }
-
-  // ระบุประเภทธุรกิจหรืออัตรามาอย่างใดอย่างหนึ่ง (โหมดกรอกเอง) ต้องกรอกให้ครบทั้งคู่ +
-  // เลขบัญชี — ถ้าไม่ระบุทั้งคู่เลย ปล่อยให้ backend ใช้โหมดตรวจจับอัตโนมัติแทน
-  if (business_type_code || rate_code) {
-    if (!accounts || !business_type_code || !rate_code) {
-      formHint.textContent = "โหมดกรอกเอง: กรุณากรอกเลขบัญชี, ประเภทธุรกิจ และรหัสอัตราให้ครบทั้งหมด";
-      return;
-    }
-  }
-
-  submitBtn.disabled = true;
-  jobArea.style.display = "flex";
-  jobLog.textContent = "";
-  jobResult.innerHTML = "";
-  setStatusPill("running");
-
-  try {
-    const res = await fetch("/api/admin/import", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        username,
-        password,
-        accounts,
-        business_type_code,
-        rate_code,
-        contract_kva: contract_kva ? Number(contract_kva) : null,
-        source_label,
-        has_solar,
-        start_date,
-        end_date,
-      }),
-    });
-
-    // ล้างช่อง password ออกจากหน้าจอทันทีหลังส่งไปแล้ว (ไม่ให้ค้างอยู่บนจอโดยไม่จำเป็น)
-    document.getElementById("f-password").value = "";
-
-    const data = await res.json();
-
-    if (!res.ok) {
-      submitBtn.disabled = false;
-      setStatusPill("error");
-      jobLog.textContent = data.message || "เกิดข้อผิดพลาด";
-      return;
-    }
-
-    pollJob(data.job_id, submitBtn);
-  } catch (err) {
-    submitBtn.disabled = false;
-    formHint.textContent = "เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ";
-    console.error(err);
-  }
-}
-
-submitBtn.addEventListener("click", startImport);
-
-// ── โหมดแนบไฟล์ที่มีอยู่แล้ว (ไม่ต้อง login เว็บ PEA เลย) ──
-
-async function startFileImport() {
-  formHint.textContent = "";
-
-  const filesInput = document.getElementById("f-file-files");
-  const files = filesInput.files;
-  const business_type_code = fileBusinessTypeSelect.value;
-  const rate_code = document.getElementById("f-file-rate-code").value.trim();
-  const contract_kva = document.getElementById("f-file-kva").value;
-  const source_label = document.getElementById("f-file-source-label").value.trim();
-  const site_label = document.getElementById("f-file-site-label").value.trim();
-  const has_solar = document.getElementById("f-file-has-solar").checked;
-
-  if (!files || files.length === 0) {
-    formHint.textContent = "กรุณาแนบไฟล์ AMR อย่างน้อย 1 ไฟล์";
-    return;
-  }
-  // ไม่บังคับกรอกประเภทธุรกิจ/รหัสอัตราแล้ว — ปล่อยว่างได้ ระบบจะอ่านเลขบัญชีจากในไฟล์แล้วค้น
-  // ในทะเบียนลูกค้าให้อัตโนมัติก่อน ถ้าหาไม่เจอจริงๆ job จะ error กลับมาบอกให้กรอกเอง
-
-  const formData = new FormData();
-  for (const file of files) formData.append("files", file);
-  if (business_type_code) formData.append("business_type_code", business_type_code);
-  if (rate_code) formData.append("rate_code", rate_code);
-  if (contract_kva) formData.append("contract_kva", contract_kva);
-  formData.append("source_label", source_label);
-  formData.append("site_label", site_label);
-  formData.append("has_solar", has_solar ? "true" : "false");
-
-  submitFileBtn.disabled = true;
-  jobArea.style.display = "flex";
-  jobLog.textContent = "";
-  jobResult.innerHTML = "";
-  setStatusPill("running");
-
-  try {
-    const res = await fetch("/api/admin/import-file", { method: "POST", body: formData });
-    const data = await res.json();
-
-    if (!res.ok) {
-      submitFileBtn.disabled = false;
-      setStatusPill("error");
-      jobLog.textContent = data.message || "เกิดข้อผิดพลาด";
-      return;
-    }
-
-    pollJob(data.job_id, submitFileBtn);
-  } catch (err) {
-    submitFileBtn.disabled = false;
-    formHint.textContent = "เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ";
-    console.error(err);
-  }
-}
-
-submitFileBtn.addEventListener("click", startFileImport);
-
-// ── โหมดนำเข้าหลายบริษัทพร้อมกัน (ไฟล์ .zip เดียว รวมหลายโฟลเดอร์/บริษัท) ──
-
-const submitBulkBtn = document.getElementById("submit-bulk-btn");
-
-const BULK_GROUP_STATUS_TH = {
-  success: { text: "✅ สำเร็จ", color: "#006300" },
-  pending: { text: "📋 รอทราบอัตรา", color: "#8a6100" },
-  error: { text: "❌ ไม่สำเร็จ", color: "#a01818" },
-  skipped: { text: "⏭️ ข้าม (มีอยู่แล้ว)", color: "#55647a" },
-};
-
-function renderBulkResult(groups) {
-  if (!groups || groups.length === 0) {
-    jobResult.innerHTML = `<div class="search-hint" style="min-height:auto;">ไม่พบกลุ่ม/โฟลเดอร์ที่นำเข้าได้เลย</div>`;
-    return;
-  }
-
-  const rows = groups
-    .map((g) => {
-      const s = BULK_GROUP_STATUS_TH[g.status] || { text: g.status, color: "#55647a" };
-      const label = g.company_name || g.folder || "(ไม่ทราบชื่อโฟลเดอร์)";
-      const sub = g.account_no ? `บัญชี ${g.account_no}` : g.folder && g.folder !== label ? `โฟลเดอร์ ${g.folder}` : "";
-      const detail =
-        g.status === "success"
-          ? `ธุรกิจ ${g.business_type_code || "-"} · อัตรา ${g.rate_code || "-"} · ${g.sample_size ?? "-"} ไฟล์`
-          : g.status === "error"
-            ? g.error || ""
-            : g.status === "skipped"
-              ? "บัญชีนี้มีข้อมูลอยู่แล้วในหน้าภาพรวม ไม่ได้นำเข้าซ้ำ"
-              : "";
-      return `
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid rgba(15,23,42,0.06);">
-          <div>
-            <div style="font-weight:600;">${label}</div>
-            ${sub ? `<div class="hint" style="margin-top:2px;">${sub}</div>` : ""}
-            ${detail ? `<div class="hint" style="margin-top:2px;">${detail}</div>` : ""}
-          </div>
-          <div style="color:${s.color};font-weight:600;white-space:nowrap;">${s.text}</div>
-        </div>`;
-    })
-    .join("");
-
-  const successCount = groups.filter((g) => g.status === "success").length;
-  const pendingCount = groups.filter((g) => g.status === "pending").length;
-  const errorCount = groups.filter((g) => g.status === "error").length;
-  const skippedCount = groups.filter((g) => g.status === "skipped").length;
-
-  jobResult.innerHTML = `
-    <div class="hint" style="margin-bottom:8px;">
-      รวม ${groups.length} กลุ่ม — สำเร็จ ${successCount}, รอทราบอัตรา ${pendingCount}, ไม่สำเร็จ ${errorCount}, ข้าม (มีอยู่แล้ว) ${skippedCount}
-      ${pendingCount > 0 ? `· <a href="/pending-amr" target="_blank" rel="noopener">ไปกรอกประเภทธุรกิจของรายการที่รออยู่ →</a>` : ""}
-    </div>
-    <div>${rows}</div>`;
-}
-
-async function pollBulkJob(jobId, activeBtn) {
-  const res = await fetch(`/api/admin/import/${jobId}`);
-  const data = await res.json();
-
-  setStatusPill(data.status === "running" ? "running" : data.status === "success" ? "success" : "error");
-  jobLog.textContent = (data.logs || []).join("\n");
-  jobLog.scrollTop = jobLog.scrollHeight;
-
-  if (data.status === "running") {
-    setTimeout(() => pollBulkJob(jobId, activeBtn), 1000);
-    return;
-  }
-
-  activeBtn.disabled = false;
-
-  if (data.status === "success") {
-    renderBulkResult(data.groups);
-    loadImportLogLocal().then(loadBusinessTypesTable);
-  } else {
-    jobResult.innerHTML = `<div class="search-hint" style="min-height:auto;">${data.error || "เกิดข้อผิดพลาด"}</div>`;
-  }
-}
-
-async function startBulkImport() {
-  formHint.textContent = "";
-
-  const zipInput = document.getElementById("f-bulk-zip");
-  const files = zipInput.files;
-  const contract_kva = document.getElementById("f-bulk-kva").value;
-  const source_label = document.getElementById("f-bulk-source-label").value.trim();
-  const has_solar = document.getElementById("f-bulk-has-solar").checked;
-
-  if (!files || files.length !== 1) {
-    formHint.textContent = "กรุณาแนบไฟล์ .zip ไฟล์เดียว";
-    return;
-  }
-
-  const formData = new FormData();
-  formData.append("files", files[0]);
-  if (contract_kva) formData.append("contract_kva", contract_kva);
-  formData.append("source_label", source_label);
-  formData.append("has_solar", has_solar ? "true" : "false");
-
-  submitBulkBtn.disabled = true;
-  jobArea.style.display = "flex";
-  jobLog.textContent = "";
-  jobResult.innerHTML = "";
-  setStatusPill("running");
-
-  try {
-    const res = await fetch("/api/admin/import-bulk", { method: "POST", body: formData });
-    const data = await res.json();
-
-    if (!res.ok) {
-      submitBulkBtn.disabled = false;
-      setStatusPill("error");
-      jobLog.textContent = data.message || "เกิดข้อผิดพลาด";
-      return;
-    }
-
-    jobLog.textContent = `📦 พบ ${data.group_count} กลุ่ม/โฟลเดอร์ — กำลังนำเข้าทีละกลุ่ม...`;
-    pollBulkJob(data.job_id, submitBulkBtn);
-  } catch (err) {
-    submitBulkBtn.disabled = false;
-    formHint.textContent = "เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ";
-    console.error(err);
-  }
-}
-
-submitBulkBtn.addEventListener("click", startBulkImport);
-
-loadBusinessTypes();
-// ต้องโหลด import log ให้เสร็จก่อน (เติม importLogEntries) แล้วค่อยวาดการ์ดประเภทธุรกิจ ไม่งั้น
-// ชื่อบริษัทในการ์ดจะว่างเพราะ fetch สองอันแข่งกัน (race condition)
-loadImportLogLocal().then(loadBusinessTypesTable);
+loadBusinessTypesTable();
 
 // ── ฐานข้อมูล DBD Open Data (ดึงมาเก็บในเครื่องเพื่อค้นชื่อบริษัทแบบออฟไลน์) ──
 

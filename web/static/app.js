@@ -1,182 +1,25 @@
-// หน้าเดียว มี 2 โหมดสลับด้วยแท็บ:
-//   "adhoc"  (ค่าเริ่มต้น) พิมพ์ชื่อบริษัท + เลือกธุรกิจ/อัตรา ดูผลทันที ไม่บันทึกอะไรลงไฟล์เลย —
-//            ชื่อบริษัทที่พิมพ์ "ไม่เคย" ถูกส่งไปที่เซิร์ฟเวอร์ (ดู runForecast(): body ที่ fetch
-//            ไปยัง /api/forecast-adhoc มีแค่ business_type_code/rate_code/contract_kva เท่านั้น)
-//   "search" ค้นหาผู้ใช้ไฟที่บันทึกไว้แล้วในทะเบียน (customers.csv/customers_local.csv) ด้วยเลขบัญชี
-
-const PERIOD_COLOR = { P: "#2a78d6", OP: "#eb6834", H: "#1baf7a" };
-const PERIOD_TH = { P: "Peak (P)", OP: "Off-Peak (OP)", H: "Holiday (H)" };
-
-const resultArea = document.getElementById("result");
-const emptyState = document.getElementById("empty-state");
-const emptyStateText = document.getElementById("empty-state-text");
-
-// formatNumber/renderDailyCurveSVG/initDailyCurveSection ฯลฯ อยู่ใน curve-chart.js (ใช้ร่วมกับ admin.js)
-
-function iconCheck(color) {
-  return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>`;
-}
-
-function iconInfo(color) {
-  return `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/></svg>`;
-}
-
-function iconBuilding(color) {
-  return `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-    <rect x="4" y="3" width="10" height="18" rx="1"/>
-    <rect x="14" y="9" width="6" height="12" rx="1"/>
-    <path d="M7 7h.01M10.5 7h.01M7 11h.01M10.5 11h.01M7 15h.01M10.5 15h.01M16.5 12h.01M16.5 16h.01"/>
-  </svg>`;
-}
-
-// ── สลับโหมดด้วยแท็บ (ไม่เปลี่ยนหน้า/URL) ──
-
-const modeTabs = document.querySelectorAll(".mode-tab");
-const adhocPanel = document.getElementById("adhoc-panel");
-const searchPanel = document.getElementById("search-panel");
-const drPanel = document.getElementById("dr-panel");
-
-let currentMode = "adhoc";
-
-function clearResult() {
-  resultArea.innerHTML = "";
-  resultArea.style.display = "none";
-  emptyState.style.display = "flex";
-}
-
-// โหมด "dr" (จำลองหยุดผลิตชั่วคราว) มีพื้นที่แสดงผลของตัวเอง (#dr-result ใน demand-response.js)
-// ไม่ใช้ #result/#empty-state ที่ใช้ร่วมกันของโหมด adhoc/search — ต้องซ่อนทั้งคู่ไว้ตอนอยู่โหมดนี้
-function setMode(mode) {
-  currentMode = mode;
-  modeTabs.forEach((btn) => btn.classList.toggle("active", btn.dataset.mode === mode));
-  adhocPanel.hidden = mode !== "adhoc";
-  searchPanel.hidden = mode !== "search";
-  drPanel.hidden = mode !== "dr";
-  if (mode === "dr") {
-    resultArea.innerHTML = "";
-    resultArea.style.display = "none";
-    emptyState.style.display = "none";
-    return;
-  }
-  emptyStateText.textContent =
-    mode === "adhoc"
-      ? 'กรอกข้อมูลด้านบนแล้วกด "พยากรณ์" เพื่อดูผลพยากรณ์'
-      : 'พิมพ์เลขบัญชีผู้ใช้ไฟแล้วกด "ค้นหา" เพื่อดูผลพยากรณ์';
-  clearResult();
-}
-
-modeTabs.forEach((btn) => btn.addEventListener("click", () => setMode(btn.dataset.mode)));
-
-// ── โหมดค้นหาในทะเบียนลูกค้า ──
-
-const searchInput = document.getElementById("search-input");
-const searchBtn = document.getElementById("search-btn");
-const searchHint = document.getElementById("search-hint");
-const customerList = document.getElementById("customer-list");
-
-async function loadCustomerList() {
-  try {
-    const res = await fetch("/api/customers");
-    const customers = await res.json();
-    customerList.innerHTML = customers.map((c) => `<option value="${c.account_no}">${c.name}</option>`).join("");
-  } catch (err) {
-    // ถ้าโหลดรายชื่อไม่สำเร็จ ยังพิมพ์เลขบัญชีค้นหาเองได้ตามปกติ ไม่ต้องบล็อกอะไร
-    console.warn("โหลดรายชื่อผู้ใช้ไฟไม่สำเร็จ", err);
-  }
-}
-
-async function runSearch() {
-  const q = searchInput.value.trim();
-  searchHint.textContent = "";
-  if (!q) {
-    searchHint.textContent = "กรุณาพิมพ์เลขบัญชีผู้ใช้ไฟ";
-    return;
-  }
-
-  try {
-    const res = await fetch(`/api/forecast/${encodeURIComponent(q)}`);
-    const data = await res.json();
-
-    if (!res.ok) {
-      clearResult();
-      searchHint.textContent = data.message || "เกิดข้อผิดพลาด";
-      return;
-    }
-
-    const c = data.customer;
-    renderResult(data, {
-      name: c.name,
-      subLabel: `บัญชีผู้ใช้ไฟ ${c.account_no}`,
-      businessTypeCode: c.business_type_code,
-      fields: [
-        { label: "เลขบัญชีผู้ใช้ไฟ", value: c.account_no },
-        { label: "ประเภทอัตรา", value: c.rate_code || "ไม่ทราบ" },
-        { label: "KVA ตามสัญญา", value: c.contract_kva ? formatNumber(c.contract_kva) + " kVA" : "ไม่ทราบ" },
-      ],
-      extraField: null,
-      disclaimerExtra: "",
-    });
-  } catch (err) {
-    searchHint.textContent = "เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ";
-    console.error(err);
-  }
-}
-
-searchBtn.addEventListener("click", runSearch);
-searchInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") runSearch();
-});
-
-// ── โหมดพยากรณ์แบบไม่บันทึกข้อมูล ──
-// ประเภทธุรกิจ/รหัสอัตราที่เลือกได้ในโหมดนี้ ต้อง "มีโปรไฟล์อ้างอิงจริงรองรับ" เท่านั้น (มาจาก
-// /api/load-profile-keys ซึ่งอ่านตรงจาก load_profiles.csv) — กันไม่ให้เลือกคู่ที่ไม่มีข้อมูลจริง
-// มาจับกัน แล้วได้ผลแบบ fallback (BUSINESS_ONLY/RATE_ONLY) ที่ดูเหมือนจับคู่ผิดพลาดทั้งที่จริงๆ
-// คือยังไม่มีข้อมูลของคู่นั้นให้จับแบบตรงเป๊ะได้ตั้งแต่แรก
-
-const nameInput = document.getElementById("f-name");
-// ค่าจริงเก็บใน hidden input ตัวนี้เหมือน native <select> เดิมทุกจุด (.value อ่าน/เขียนได้แบบ
-// เดิม) — ส่วน UI ที่มองเห็น/คลิกได้คือ section-combobox + biz-type-combobox ด้านล่าง (ดู
-// setupBusinessTypeCombobox) แยกออกจาก native <select> เพราะ dropdown ของ native select เปิด
-// ขึ้นด้านบนเองเวลาพื้นที่ด้านล่างจอไม่พอ (ผู้ใช้แจ้งว่าเปิดขึ้นบนแล้วเห็นตัวเลือกไม่ครบ) ซึ่งเป็น
-// พฤติกรรมเบราว์เซอร์ล้วนๆ บังคับทิศทางไม่ได้เลยถ้ายังใช้ native select อยู่
-const businessTypeSelect = document.getElementById("f-business-type");
-const rateCodeSelect = document.getElementById("f-rate-code");
-const kvaInput = document.getElementById("f-kva");
-const hasSolarSelect = document.getElementById("f-has-solar");
-const adhocSubmitBtn = document.getElementById("adhoc-submit-btn");
-const adhocSubmitCategoryBtn = document.getElementById("adhoc-submit-category-btn");
-const adhocFormHint = document.getElementById("adhoc-form-hint");
-
-let PROFILE_KEYS = []; // [{business_type_code, rate_code, sample_size}, ...]
-let BUSINESS_TYPE_NAMES = {}; // code -> name_th
-let BUSINESS_TYPE_GROUPS = new Map(); // section_code (หรือ "UNVERIFIED") -> [{code, bt}, ...]
-let BUSINESS_TYPE_BY_CODE = {}; // code -> business type เต็ม (รวม alias_of) จาก /api/business-types-full
-
-// เลือกแค่ Section (เช่น "C" การผลิต) ไว้ แต่ยังไม่ได้เลือกประเภทธุรกิจย่อย — ใช้พยากรณ์แบบหยาบ
-// (SECTION_ONLY) ได้เลยโดยไม่ต้องรู้รหัส TSIC 5 หลัก (ดู runForecast) ล้างค่านี้ทิ้งทันทีที่เลือก
-// ประเภทธุรกิจย่อยจริงๆ (business_type_code แม่นยำกว่าเสมอ) — ไม่นับ "UNVERIFIED" (ไม่ใช่ Section
-// TSIC จริง เป็นแค่กลุ่มรวมธุรกิจที่ยังไม่ตรวจสอบ)
-let selectedSectionCode = "";
-
-// รหัสธุรกิจที่ถือว่า "เรื่องเดียวกัน" กับ code (ตัวเอง + alias ทุกทิศทาง) — พอร์ตมาจาก
-// mapping._equivalent_codes ฝั่ง Python (ดู src/amr_mapping/mapping.py) ใช้ตอนหารายชื่อบริษัทจริง
-// ที่ backing โปรไฟล์นี้ (renderMatchedCompanies) เพื่อให้สอดคล้องกับตรรกะจับคู่จริงที่ backend
-// ใช้ตอนพยากรณ์ — ไม่งั้นถ้าเทียบ business_type_code ตรงตัวเฉยๆ จะพลาดบัญชีที่นำเข้าไว้ด้วยรหัส
-// alias คู่กัน (เช่น 86101/93311) ไปทั้งที่จริงๆ เป็นข้อมูลของธุรกิจเดียวกันที่ไปหนุนโปรไฟล์นี้ด้วย
-function equivalentBusinessTypeCodes(code) {
-  const codes = new Set([code]);
-  const bt = BUSINESS_TYPE_BY_CODE[code];
-  const canonical = bt && bt.alias_of ? bt.alias_of : code;
-  codes.add(canonical);
-  for (const [otherCode, otherBt] of Object.entries(BUSINESS_TYPE_BY_CODE)) {
-    if (otherCode === canonical || otherBt.alias_of === canonical) codes.add(otherCode);
-  }
-  return codes;
-}
+// หน้าเดียว: ค้นหา/เลือกประเภทธุรกิจ (TSIC) ของบริษัท จากชื่อหรือเลขทะเบียนนิติบุคคล ผ่าน DBD
+// DataWarehouse (หรือแหล่งสำรอง: dataforthai.com / ฐานข้อมูล DBD Open Data ในเครื่อง / Wikipedia
+// ตอน DBD DataWarehouse บล็อก) — ไม่มีผลพยากรณ์ตัวเลข kWh/kW ใดๆ อีกต่อไป (ตัดฟีเจอร์นั้นออกจาก
+// ทั้งระบบแล้ว) เหลือแค่จับคู่ประเภทธุรกิจเท่านั้น
+//
+// ⚠️ ชื่อบริษัท/เลขทะเบียนที่พิมพ์ในช่องด้านบน "ถูกส่งไป server" ทันทีที่กดปุ่มค้นหา (แล้ว server
+// ส่งต่อไปค้นหาที่เว็บ DBD จริง) เพราะไม่มีทางค้นหาบริษัทจากชื่อ/เลขทะเบียนได้โดยไม่ส่งไปที่แหล่ง
+// ข้อมูลนั้น — มีคำเตือนนี้แสดงในหน้าเว็บชัดเจนแล้ว ปุ่มค้นหาไม่บังคับกด (เลือกประเภทธุรกิจเองได้เลย
+// จากกล่องด้านล่างโดยไม่ต้องค้นหา)
 
 function escapeHtml(s) {
   return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
+
+const nameInput = document.getElementById("f-name");
+// ค่าจริงเก็บใน hidden input ตัวนี้ (.value อ่าน/เขียนได้แบบเดิม) — ส่วน UI ที่มองเห็น/คลิกได้คือ
+// section-combobox + biz-type-combobox ด้านล่าง (ดู setupBusinessTypeCombobox) แยกออกจาก native
+// <select> เพราะ dropdown ของ native select เปิดขึ้นด้านบนเองเวลาพื้นที่ด้านล่างจอไม่พอ (ผู้ใช้
+// แจ้งว่าเปิดขึ้นบนแล้วเห็นตัวเลือกไม่ครบ) ซึ่งเป็นพฤติกรรมเบราว์เซอร์ล้วนๆ บังคับทิศทางไม่ได้เลย
+const businessTypeSelect = document.getElementById("f-business-type");
+
+let BUSINESS_TYPE_GROUPS = new Map(); // section_code (หรือ "UNVERIFIED") -> [{code, bt}, ...]
 
 function sectionGroupLabel(key, items) {
   if (key === "UNVERIFIED") return "ยังไม่ตรวจสอบ TSIC";
@@ -184,27 +27,19 @@ function sectionGroupLabel(key, items) {
   return `${key} · ${name}`;
 }
 
-// ใช้ /api/business-types-full (มี section_code/section_name_th) แทน /api/business-types แบบ
-// เดิม เพื่อจัดกลุ่มตัวเลือกตาม TSIC Section (A, B, C, ...) — รายการยาวขึ้นเรื่อยๆ ตามจำนวน
-// ประเภทธุรกิจที่มีโปรไฟล์จริงในระบบ กรองเฉพาะรหัสที่มีข้อมูลจริงรองรับ (businessCodesWithData)
-// เหมือนเดิมทุกประการ แค่เปลี่ยนวิธีแสดงผลจาก native <select> เป็น 2-step combobox
-async function loadBusinessTypesAndKeys() {
+// ใช้ /api/business-types-full (มี section_code/section_name_th) เพื่อจัดกลุ่มตัวเลือกตาม TSIC
+// Section (A, B, C, ...) — แสดงทุกประเภทธุรกิจที่มีในระบบ (business_types.csv) ไม่กรองตาม "มี
+// โปรไฟล์อ้างอิงจริงรองรับไหม" อีกต่อไป (ไม่มีแนวคิดนั้นแล้วหลังตัดฟีเจอร์พยากรณ์ตัวเลขออก)
+async function loadBusinessTypes() {
   try {
-    const [typesRes, keysRes] = await Promise.all([fetch("/api/business-types-full"), fetch("/api/load-profile-keys")]);
-    const types = await typesRes.json();
-    PROFILE_KEYS = await keysRes.json();
-    const typeByCode = Object.fromEntries(types.map((t) => [t.code, t]));
-    BUSINESS_TYPE_NAMES = Object.fromEntries(types.map((t) => [t.code, t.name_th]));
-    BUSINESS_TYPE_BY_CODE = typeByCode;
-
-    const businessCodesWithData = [...new Set(PROFILE_KEYS.map((k) => k.business_type_code))];
+    const res = await fetch("/api/business-types-full");
+    const types = await res.json();
 
     const groups = new Map();
-    for (const code of businessCodesWithData) {
-      const bt = typeByCode[code];
-      const key = bt && bt.section_code ? bt.section_code : "UNVERIFIED";
+    for (const bt of types) {
+      const key = bt.section_code || "UNVERIFIED";
       if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push({ code, bt });
+      groups.get(key).push({ code: bt.code, bt });
     }
     for (const items of groups.values()) {
       items.sort((a, b) => (a.bt ? a.bt.name_th : a.code).localeCompare(b.bt ? b.bt.name_th : b.code, "th"));
@@ -212,13 +47,12 @@ async function loadBusinessTypesAndKeys() {
     BUSINESS_TYPE_GROUPS = groups;
 
     setupBusinessTypeCombobox();
-    updateRateCodeOptions();
   } catch (err) {
-    console.warn("โหลดประเภทธุรกิจ/รหัสอัตราที่มีข้อมูลจริงไม่สำเร็จ", err);
+    console.warn("โหลดประเภทธุรกิจไม่สำเร็จ", err);
   }
 }
 
-// ── Section-first 2-ขั้น combobox สำหรับเลือกประเภทธุรกิจ (เหมือนหน้า Admin/รอทราบอัตรา) ──
+// ── Section-first 2-ขั้น combobox สำหรับเลือกประเภทธุรกิจ (เหมือนหน้า Admin) ──
 
 function filterComboboxList(input, wrap) {
   const query = input.value.trim().toLowerCase();
@@ -233,16 +67,9 @@ function filterComboboxList(input, wrap) {
   if (emptyMsg) emptyMsg.style.display = anyVisible ? "none" : "block";
 }
 
-// ตั้งค่าประเภทธุรกิจที่เลือก (ทั้ง hidden input ที่โค้ดส่วนอื่นอ่าน .value และข้อความที่แสดงใน
-// กล่องค้นหาทั้ง 2 ขั้น) — dispatchChange=true เฉพาะตอนผู้ใช้คลิกเลือกเองในกล่อง (จำลอง
-// พฤติกรรม native <select> เดิมที่ยิง "change" เมื่อผู้ใช้เลือกเอง แต่ไม่ยิงตอนโค้ดตั้งค่าให้เอง
-// ผ่าน .value = ... ตรงๆ เช่น applyBusinessTypeToForm ซึ่งจัดการเรียก updateRateCodeOptions/
-// runForecast เองอยู่แล้ว ยิงซ้ำจะเบิ้ล)
-function setBusinessType(code, { dispatchChange = false } = {}) {
+// ตั้งค่าประเภทธุรกิจที่เลือก (ทั้ง hidden input และข้อความที่แสดงในกล่องค้นหาทั้ง 2 ขั้น)
+function setBusinessType(code) {
   businessTypeSelect.value = code || "";
-  // เลือกประเภทธุรกิจย่อยจริงแล้ว (หรือเคลียร์ทั้งหมด) — Section ที่เลือกไว้เฉยๆ ไม่มีความหมาย
-  // อีกต่อไป (business_type_code แม่นยำกว่าเสมอ ดู runForecast)
-  selectedSectionCode = "";
   const sectionInput = document.querySelector("#f-business-type-section .biz-type-search-input");
   const bizInput = document.querySelector("#f-business-type-biz .biz-type-search-input");
   const clearBtn = document.getElementById("f-business-type-clear");
@@ -261,8 +88,6 @@ function setBusinessType(code, { dispatchChange = false } = {}) {
     bizInput.placeholder = "เลือก Section ก่อน...";
     clearBtn.style.display = "none";
   }
-
-  if (dispatchChange) businessTypeSelect.dispatchEvent(new Event("change"));
 }
 
 let businessTypeComboboxReady = false;
@@ -298,16 +123,8 @@ function setupBusinessTypeCombobox() {
       sectionInput.value = sectionGroupLabel(key, items);
       sectionWrap.classList.remove("open");
 
-      // เปลี่ยน Section แล้วล้างประเภทธุรกิจที่เคยเลือกไว้ (อาจไม่อยู่กลุ่มใหม่แล้ว) — ล้างแค่
-      // hidden value ตรงๆ ไม่เรียก setBusinessType("") เพราะฟังก์ชันนั้นจะรีเซ็ต sectionInput.value
-      // ที่เพิ่งตั้งไว้ข้างบนทิ้งไปด้วย (กรณี "ไม่มีอะไรเลือกเลย" ต่างจากกรณีนี้ที่เลือก Section
-      // ไว้แล้ว แค่ยังไม่เลือกประเภทธุรกิจย่อย)
       businessTypeSelect.value = "";
-      // เก็บ Section ที่เลือกไว้ — ถ้าไม่เลือกประเภทธุรกิจย่อยต่อ ก็ยังพยากรณ์แบบหยาบได้เลย
-      // (SECTION_ONLY) ไม่นับ "UNVERIFIED" เพราะไม่ใช่ Section TSIC จริง
-      selectedSectionCode = key === "UNVERIFIED" ? "" : key;
-      // มีตัวเลือกให้ล้างแล้ว (อย่างน้อยก็ Section) แสดงปุ่มล้างไว้เพื่อให้กลับไปจุดเริ่มต้นได้
-      clearBtn.style.display = selectedSectionCode ? "" : "none";
+      clearBtn.style.display = "";
       bizInput.disabled = false;
       bizInput.value = "";
       bizInput.placeholder = `🔍 ค้นหาประเภทธุรกิจ (${items.length} รายการ)...`;
@@ -316,7 +133,7 @@ function setupBusinessTypeCombobox() {
         `<div class="biz-type-dropdown-empty" style="display:none;">ไม่พบประเภทธุรกิจที่ตรงกับคำค้นหา</div>`;
       bizDropdown.querySelectorAll(".biz-type-dropdown-item").forEach((itemBtn) => {
         itemBtn.addEventListener("click", () => {
-          setBusinessType(itemBtn.dataset.code, { dispatchChange: true });
+          setBusinessType(itemBtn.dataset.code);
           bizWrap.classList.remove("open");
         });
       });
@@ -326,7 +143,7 @@ function setupBusinessTypeCombobox() {
   });
 
   clearBtn.addEventListener("click", () => {
-    setBusinessType("", { dispatchChange: true });
+    setBusinessType("");
   });
 
   if (businessTypeComboboxReady) return; // event listener ต่อไปนี้ผูกครั้งเดียวพอ ไม่งั้นซ้ำซ้อนทุกครั้งที่โหลดข้อมูลใหม่
@@ -346,68 +163,15 @@ function setupBusinessTypeCombobox() {
   });
 }
 
-function updateRateCodeOptions() {
-  const businessTypeCode = businessTypeSelect.value;
-  const relevant = businessTypeCode ? PROFILE_KEYS.filter((k) => k.business_type_code === businessTypeCode) : PROFILE_KEYS;
-  const rateCodes = [...new Set(relevant.map((k) => k.rate_code))];
-
-  // ตัวเลือกว่าง "ไม่ระบุ" — เผื่อไม่ทราบรหัสอัตรา จะได้พยากรณ์แบบจับคู่แค่ระดับประเภทธุรกิจได้
-  // (เดิมช่องนี้บังคับเลือกรหัสอัตราจริงเสมอ ไม่มีทางปล่อยว่างได้เลยถ้าเลือกประเภทธุรกิจไว้แล้ว)
-  const previousValue = rateCodeSelect.value;
-  rateCodeSelect.innerHTML =
-    `<option value="">-- ไม่ระบุ (จับคู่จากประเภทธุรกิจอย่างเดียว) --</option>` +
-    rateCodes.map((code) => `<option value="${code}">${code}</option>`).join("");
-  if (rateCodes.includes(previousValue)) {
-    rateCodeSelect.value = previousValue;
-  } else if (rateCodes.length) {
-    // ค่าเริ่มต้น: เลือกรหัสอัตราตัวแรกที่มีข้อมูลจริงให้ก่อนเสมอ (พฤติกรรมเดิม ก่อนเพิ่มตัวเลือก
-    // "ไม่ระบุ") ไม่งั้น dropdown จะไปตกที่ "ไม่ระบุ" เป็นค่าเริ่มต้นแทน ทำให้ auto-forecast
-    // (ตอนเลือกประเภทธุรกิจ/เดาจาก DBD-Wikipedia) ที่เคยทำงานอยู่แล้วพังไปด้วย
-    rateCodeSelect.value = rateCodes[0];
-  }
-}
-
-// เลือกประเภทธุรกิจเอง (เช่นตอน DBD DataWarehouse บล็อกและไม่มีรหัส TSIC ให้จับคู่อัตโนมัติ
-// จึงต้องให้ผู้ใช้เลือกเองจากคำใบ้ที่แสดงไว้) → พยากรณ์ให้ทันทีเลย ไม่ต้องกดปุ่ม "พยากรณ์" ซ้ำ
-businessTypeSelect.addEventListener("change", () => {
-  updateRateCodeOptions();
-  if (rateCodeSelect.value) {
-    runForecast().then(() => {
-      resultArea.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-  }
-});
-
 // ── ค้นหาประเภทธุรกิจอัตโนมัติจากชื่อบริษัท (ผ่าน DBD DataWarehouse) ──
-// ⚠️ ต่างจากทุกอย่างในโหมดนี้: ชื่อบริษัทที่พิมพ์ "จะถูกส่งไป server" (แล้ว server ส่งต่อไป
-// ค้นหาที่เว็บ DBD จริง) เพราะไม่มีทางค้นหาบริษัทจากชื่อได้โดยไม่ส่งชื่อไปที่แหล่งข้อมูลนั้น —
-// มีคำเตือนนี้แสดงในหน้าเว็บชัดเจนแล้ว (ดู index.html) ปุ่มนี้ไม่บังคับกด
 
 const lookupBtn = document.getElementById("lookup-business-type-btn");
 const lookupStatus = document.getElementById("business-type-lookup-status");
 const registrationNoInput = document.getElementById("f-registration-no");
 
-// ตั้งค่า dropdown ประเภทธุรกิจ + พยากรณ์ให้อัตโนมัติถ้ามีรหัสอัตรา default อยู่แล้ว (side effect
-// ล้วนๆ ไม่คืนข้อความ) — แยกออกมาให้ทั้ง buildBusinessTypeSuggestionMessage (แนะนำจาก TSIC จริง)
-// และ buildKeywordGuessMessage (เดาจากคำสำคัญใน Wikipedia) เรียกใช้ร่วมกันได้ คืนค่า true ถ้า
-// พยากรณ์ให้อัตโนมัติจริง (มีรหัสอัตรา default ให้ใช้)
-function applyBusinessTypeToForm(businessTypeCode) {
-  setBusinessType(businessTypeCode);
-  updateRateCodeOptions();
-
-  const autoForecasted = Boolean(rateCodeSelect.value);
-  if (autoForecasted) {
-    runForecast().then(() => {
-      resultArea.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-  }
-  return autoForecasted;
-}
-
 // แสดงรายละเอียดดิบจากฐานข้อมูล DBD Open Data ที่ backend ส่งมาให้อยู่แล้ว (reg_date/capital/
-// ที่อยู่) แต่ก่อนหน้านี้หน้าเว็บยังไม่เคยเอามาโชว์เลย (มีแค่ชื่อ+TSIC) — ไม่พยายาม parse/แปลง
-// รูปแบบวันที่หรือตัวเลขใดๆ เอง (ไม่รู้ format ที่แน่นอนจากไฟล์ DBD ต้นทาง) แสดงค่าดิบตรงๆ ตามที่
-// backend ส่งมาให้ปลอดภัยกว่า คืนสตริงว่างถ้าไม่มีข้อมูลอะไรให้แสดงเลย
+// ที่อยู่) — ไม่พยายาม parse/แปลงรูปแบบวันที่หรือตัวเลขใดๆ เอง (ไม่รู้ format ที่แน่นอนจากไฟล์ DBD
+// ต้นทาง) แสดงค่าดิบตรงๆ ตามที่ backend ส่งมาให้ปลอดภัยกว่า คืนสตริงว่างถ้าไม่มีข้อมูลอะไรให้แสดงเลย
 function formatDbdOpendataDetails(m) {
   const rows = [];
   if (m.reg_date) rows.push(`จดทะเบียนเมื่อ ${m.reg_date}`);
@@ -418,24 +182,21 @@ function formatDbdOpendataDetails(m) {
   return `<div style="color:#8996ab;">${rows.join(" · ")}</div>`;
 }
 
-// สร้างข้อความแจ้งผล + ตั้งค่า dropdown/พยากรณ์ให้อัตโนมัติ (side effect) — แยกออกมาจาก
+// สร้างข้อความแจ้งผล + ตั้งค่าประเภทธุรกิจให้อัตโนมัติ (side effect) — แยกออกมาจาก
 // applyBusinessTypeSuggestion เพื่อให้จุดอื่น (เช่น ผลจากฐานข้อมูล DBD Open Data ตอน DBD
 // DataWarehouse บล็อก) เอาข้อความนี้ไปต่อท้าย html อื่นได้ แทนที่จะเขียนทับ lookupStatus ทั้งหมด
 function buildBusinessTypeSuggestionMessage(candidate) {
   const details = formatDbdOpendataDetails(candidate);
 
   if (!candidate.suggested_business_type_code) {
-    return `<div class="lookup-status-text">พบข้อมูล TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} แต่ยังไม่มีโปรไฟล์อ้างอิงของหมวดนี้ในระบบ กรุณาเลือกประเภทธุรกิจที่ใกล้เคียงเองด้านบน${details}</div>`;
+    return `<div class="lookup-status-text">พบข้อมูล TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} แต่ยังไม่มีในระบบ กรุณาเลือกประเภทธุรกิจที่ใกล้เคียงเองด้านบน หรือเพิ่มประเภทธุรกิจใหม่${details}</div>`;
   }
-  const autoForecasted = applyBusinessTypeToForm(candidate.suggested_business_type_code);
-  const autoForecastNote = autoForecasted
-    ? ` — พยากรณ์ให้อัตโนมัติแล้วด้านล่าง (ปรับรหัสอัตรา/KVA/Solar แล้วกดพยากรณ์ซ้ำได้ถ้าค่าเริ่มต้นไม่ตรง)`
-    : "";
+  setBusinessType(candidate.suggested_business_type_code);
 
   if (candidate.suggested_is_approximate) {
-    return `<div class="lookup-status-text">⚠️ ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} — ไม่มีธุรกิจนี้ตรงๆ ในระบบ จึงตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" แทนแบบประมาณการ (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)${autoForecastNote}<br><span style="color:#8996ab;">${candidate.suggested_explanation}</span>${details}</div>`;
+    return `<div class="lookup-status-text">⚠️ ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} — ไม่มีธุรกิจนี้ตรงๆ ในระบบ จึงตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" แทนแบบประมาณการ (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)<br><span style="color:#8996ab;">${candidate.suggested_explanation}</span>${details}</div>`;
   }
-  return `<div class="lookup-status-text">✅ ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} → ตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" ให้อัตโนมัติแล้ว (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)${autoForecastNote}${details}</div>`;
+  return `<div class="lookup-status-text">✅ ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} → ตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" ให้อัตโนมัติแล้ว (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)${details}</div>`;
 }
 
 // สร้างข้อความแจ้งผลของการเดาจากคำสำคัญใน Wikipedia (ดู keyword_classify.py ฝั่ง backend) — ต่าง
@@ -446,14 +207,11 @@ function buildKeywordGuessMessage(wikipediaResult) {
   if (!wikipediaResult.suggested_business_type_code) {
     return "";
   }
-  const autoForecasted = applyBusinessTypeToForm(wikipediaResult.suggested_business_type_code);
-  const autoForecastNote = autoForecasted
-    ? ` — พยากรณ์ให้อัตโนมัติแล้วด้านล่าง (ปรับรหัสอัตรา/KVA/Solar แล้วกดพยากรณ์ซ้ำได้ถ้าค่าเริ่มต้นไม่ตรง)`
-    : "";
+  setBusinessType(wikipediaResult.suggested_business_type_code);
   const approxNote = wikipediaResult.suggested_is_approximate
     ? `<br><span style="color:#8996ab;">${wikipediaResult.suggested_explanation}</span>`
     : "";
-  return `<div class="lookup-status-text" style="margin-top:4px;">🔤 เดาประเภทธุรกิจจากคำว่า "${wikipediaResult.guessed_keyword}" ที่พบในข้อความ Wikipedia (ไม่ใช่รหัส TSIC ทางการ เดาแบบจับคำสำคัญตรงตัวเท่านั้น) → ตั้งประเภทธุรกิจเป็น "${wikipediaResult.suggested_business_type_name}" ให้ชั่วคราว${autoForecastNote} — ตรวจสอบ/เปลี่ยนเองได้ด้านบนเสมอ${approxNote}</div>`;
+  return `<div class="lookup-status-text" style="margin-top:4px;">🔤 เดาประเภทธุรกิจจากคำว่า "${wikipediaResult.guessed_keyword}" ที่พบในข้อความ Wikipedia (ไม่ใช่รหัส TSIC ทางการ เดาแบบจับคำสำคัญตรงตัวเท่านั้น) → ตั้งประเภทธุรกิจเป็น "${wikipediaResult.suggested_business_type_name}" ให้ชั่วคราว — ตรวจสอบ/เปลี่ยนเองได้ด้านบนเสมอ${approxNote}</div>`;
 }
 
 function applyBusinessTypeSuggestion(candidate) {
@@ -544,7 +302,7 @@ async function pollBusinessTypeLookupJob(jobId) {
           html += `<div class="lookup-status-text" style="margin-top:8px;">🗂️ พบชื่อตรงเป๊ะในฐานข้อมูล DBD Open Data ที่เก็บไว้ในเครื่อง (เฉพาะบริษัทที่ตั้งใหม่/เลิกกิจการ ไม่ใช่ทะเบียนเต็ม):</div>`;
           html += `<div style="margin-top:6px;">${buildBusinessTypeSuggestionMessage(dbd_opendata_matches[dbd_opendata_exact_match_index])}</div>`;
         } else {
-          html += `<div class="lookup-status-text" style="margin-top:8px;">🗂️ พบในฐานข้อมูล DBD Open Data ที่เก็บไว้ในเครื่อง (เฉพาะบริษัทที่ตั้งใหม่/เลิกกิจการ ไม่ใช่ทะเบียนเต็ม) — เลือกอันที่ใช่เพื่อพยากรณ์อัตโนมัติ:</div>`;
+          html += `<div class="lookup-status-text" style="margin-top:8px;">🗂️ พบในฐานข้อมูล DBD Open Data ที่เก็บไว้ในเครื่อง (เฉพาะบริษัทที่ตั้งใหม่/เลิกกิจการ ไม่ใช่ทะเบียนเต็ม) — เลือกอันที่ใช่:</div>`;
           dbdOpendataButtonsHtml = `
             <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px;">
               ${dbd_opendata_matches
@@ -582,8 +340,8 @@ async function pollBusinessTypeLookupJob(jobId) {
       html += `<div class="lookup-status-text" style="margin-top:4px;color:#8996ab;">${wpSummary}</div>`;
 
       // ถ้าฐานข้อมูล DBD Open Data เจอชื่อตรงเป๊ะไปแล้วด้านบน (ข้อมูลทางการ น่าเชื่อถือกว่า) จะไม่
-      // เอาการเดาจากคำสำคัญใน Wikipedia (แม่นยำน้อยกว่ามาก) มาตั้งค่า/พยากรณ์ทับอีกรอบ — กันสับสน
-      // ว่าใช้ผลจากไหนกันแน่ และกันพยากรณ์ซ้ำสองรอบโดยไม่จำเป็น
+      // เอาการเดาจากคำสำคัญใน Wikipedia (แม่นยำน้อยกว่ามาก) มาตั้งค่าทับอีกรอบ — กันสับสนว่าใช้
+      // ผลจากไหนกันแน่
       const dbdOpendataAlreadyApplied =
         dbd_opendata_exact_match_index !== null && dbd_opendata_exact_match_index !== undefined;
       if (!dbdOpendataAlreadyApplied) {
@@ -627,7 +385,7 @@ async function pollBusinessTypeLookupJob(jobId) {
     if (hasPendingChoice) {
       headline = `<div class="lookup-status-text">⚠️ เว็บ DBD DataWarehouse บล็อกการเข้าถึงอัตโนมัติ — เลือกประเภทธุรกิจที่ใกล้เคียงที่สุดจากตัวเลือกด้านล่าง</div>`;
     } else if (autoApplied) {
-      headline = `<div class="lookup-status-text" style="color:#0ca30c;">✅ เว็บ DBD DataWarehouse บล็อก แต่หาข้อมูลจากแหล่งอื่นได้ — ตั้งประเภทธุรกิจ + พยากรณ์ให้อัตโนมัติแล้วด้านล่าง</div>`;
+      headline = `<div class="lookup-status-text" style="color:#0ca30c;">✅ เว็บ DBD DataWarehouse บล็อก แต่หาข้อมูลจากแหล่งอื่นได้ — ตั้งประเภทธุรกิจให้อัตโนมัติแล้วด้านบน</div>`;
     } else {
       headline = `<div class="lookup-status-text">🚫 เว็บ DBD DataWarehouse บล็อก และหาข้อมูลจากแหล่งอื่นไม่สำเร็จ — กรุณาเลือกประเภทธุรกิจเองด้านบน</div>`;
     }
@@ -648,12 +406,11 @@ async function pollBusinessTypeLookupJob(jobId) {
       lookupStatus.querySelectorAll(".lookup-pick-btn[data-rankidx]").forEach((btn) => {
         btn.addEventListener("click", () => {
           const candidate = wikipedia_result.ranked_candidates[Number(btn.dataset.rankidx)];
-          const autoForecasted = applyBusinessTypeToForm(candidate.business_type_code);
-          const note = autoForecasted ? " — พยากรณ์ให้อัตโนมัติแล้วด้านล่าง" : "";
+          setBusinessType(candidate.business_type_code);
           const msg = document.createElement("div");
           msg.className = "lookup-status-text";
           msg.style.marginTop = "8px";
-          msg.textContent = `✅ ตั้งประเภทธุรกิจเป็น "${candidate.business_type_name}" แล้ว${note}`;
+          msg.textContent = `✅ ตั้งประเภทธุรกิจเป็น "${candidate.business_type_name}" แล้ว`;
           lookupStatus.appendChild(msg);
         });
       });
@@ -688,8 +445,8 @@ async function runBusinessTypeLookup() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       // ถ้ากรอกเลขนิติบุคคลไว้ ใช้เป็นคำค้นหาแทนชื่อทันที (แม่นยำกว่ามาก) — ดู
-      // _run_business_type_lookup_job ฝั่ง backend (search_keyword = registration_no หรือ
-      // company_name) company_name ยังต้องส่งไปเสมอ (ใช้เป็นคำค้นหาสำรองถ้าไม่กรอกเลขทะเบียน)
+      // _run_business_type_lookup_job ฝั่ง backend company_name ยังต้องส่งไปเสมอ (ใช้เป็นคำค้นหา
+      // สำรองถ้าไม่กรอกเลขทะเบียน)
       body: JSON.stringify({ company_name: companyName || registrationNo, registration_no: registrationNo || undefined }),
     });
     const data = await res.json();
@@ -710,336 +467,4 @@ async function runBusinessTypeLookup() {
 
 lookupBtn.addEventListener("click", runBusinessTypeLookup);
 
-// forceCategoryOnly = true ตอนกดปุ่ม "พยากรณ์ (ใช้ประเภทธุรกิจอย่างเดียว)" — บังคับไม่ส่งรหัสอัตรา
-// ไปเลย ต่อให้ผู้ใช้เผลอเลือกอัตราไว้ในช่องอยู่ก็ตาม เพื่อให้ได้ผลจับคู่ระดับ BUSINESS_ONLY ชัดเจน
-// แยกจากปุ่ม "พยากรณ์ (ใช้อัตรา)" ที่ต้องเลือกรหัสอัตราจริงก่อนถึงจะกดได้ (ไม่ใช่ "ไม่ระบุ")
-async function runForecast(forceCategoryOnly) {
-  adhocFormHint.textContent = "";
-  const displayName = nameInput.value.trim(); // ใช้แสดงผลเท่านั้น — ไม่ส่งไป server
-  const businessTypeCode = businessTypeSelect.value.trim();
-  // เลือกแค่ Section ไว้ (ยังไม่เลือกประเภทธุรกิจย่อย) — ยังพยากรณ์แบบหยาบได้ (SECTION_ONLY)
-  const sectionCodeOnly = !businessTypeCode ? selectedSectionCode : "";
-  const rateCode = forceCategoryOnly ? "" : rateCodeSelect.value.trim();
-  const kvaRaw = kvaInput.value.trim();
-  const hasSolarRaw = hasSolarSelect.value; // "" = ไม่ทราบ, "true"/"false" = ทราบแน่ชัด
-
-  if (!businessTypeCode && !sectionCodeOnly && !rateCode) {
-    adhocFormHint.textContent = "กรุณาเลือกประเภทธุรกิจ (อย่างน้อย Section) หรือ กรอกรหัสอัตรา อย่างน้อยหนึ่งอย่าง";
-    return;
-  }
-
-  if (!forceCategoryOnly && !rateCode) {
-    adhocFormHint.textContent = 'ปุ่มนี้ต้องเลือก "รหัสอัตรา" ก่อน (ไม่ใช่ "ไม่ระบุ") — ถ้าไม่ทราบรหัสอัตรา ให้กดปุ่ม "พยากรณ์ (ใช้ประเภทธุรกิจอย่างเดียว)" แทน';
-    return;
-  }
-
-  const body = {
-    business_type_code: businessTypeCode || undefined,
-    section_code: sectionCodeOnly || undefined,
-    rate_code: rateCode || undefined,
-    contract_kva: kvaRaw || undefined,
-    has_solar: hasSolarRaw === "" ? undefined : hasSolarRaw === "true",
-  };
-
-  try {
-    const res = await fetch("/api/forecast-adhoc", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json();
-
-    if (!res.ok) {
-      clearResult();
-      adhocFormHint.textContent = data.message || "เกิดข้อผิดพลาด";
-      return;
-    }
-
-    const kva = kvaRaw ? Number(kvaRaw) : null;
-    // ในโหมดนี้ KVA เป็นช่องไม่บังคับกรอกอยู่แล้ว (เห็นค่า "ไม่ทราบ" ในฟิลด์ด้านล่างชัดเจนอยู่แล้ว)
-    // เตือนซ้ำเป็นกล่อง ⚠️ ทุกครั้งที่ไม่กรอกจึงเป็นแค่ noise ไม่ใช่ปัญหาจริง — กรองออกเฉพาะโหมดนี้
-    // (ไม่แตะต้อง warnings ของโหมดค้นหาด้วยเลขบัญชีจริง ซึ่งควรได้เห็นคำเตือนนี้ถ้าลูกค้าจริงขาด
-    // contract_kva เพราะนั่นคือข้อมูลที่ควรมีแต่ขาดไปจริงๆ)
-    data.match.warnings = data.match.warnings.filter((w) => !w.includes("ไม่ทราบ contract_kva ของลูกค้า"));
-    renderResult(data, {
-      name: displayName || "(ไม่ได้ระบุชื่อ)",
-      subLabel: "พยากรณ์แบบไม่บันทึกข้อมูล — ไม่มีเลขบัญชีผู้ใช้ไฟ",
-      businessTypeCode,
-      fields: [
-        { label: "ประเภทอัตราที่กรอก", value: rateCode || "ไม่ทราบ" },
-        { label: "KVA ตามสัญญาที่กรอก", value: kva ? formatNumber(kva) + " kVA" : "ไม่ทราบ" },
-        { label: "สถานะ Solar ที่ระบุ", value: hasSolarRaw === "" ? "ไม่ทราบ" : hasSolarRaw === "true" ? "ติดตั้งแล้ว" : "ยังไม่ติดตั้ง" },
-      ],
-      extraField: { label: "จำนวนตัวอย่างในโปรไฟล์", getValue: (p) => p.sample_size || "-" },
-      disclaimerExtra: " และ<b>ไม่มีการบันทึกชื่อบริษัท/ข้อมูลที่กรอกในหน้านี้ลงไฟล์หรือฐานข้อมูลใดๆ ทั้งสิ้น</b>",
-    });
-  } catch (err) {
-    adhocFormHint.textContent = "เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ";
-    console.error(err);
-  }
-}
-
-adhocSubmitBtn.addEventListener("click", () => runForecast(false));
-adhocSubmitCategoryBtn.addEventListener("click", () => runForecast(true));
-
-// ── กราฟแท่ง P/OP/H ──
-
-function renderBarChart(title, values, unit) {
-  const max = Math.max(...Object.values(values), 1);
-  const bars = ["P", "OP", "H"]
-    .map((period) => {
-      const height = Math.round((values[period] / max) * 160);
-      return `
-        <div class="bar-col">
-          <div class="bar-value">${formatNumber(values[period], unit === "kWh" ? 0 : 2)}</div>
-          <div class="bar" style="height:${height}px;background:${PERIOD_COLOR[period]};"></div>
-          <div class="bar-label">${period}</div>
-        </div>`;
-    })
-    .join("");
-  return `
-    <div class="card chart-card">
-      <div class="chart-title">${title}</div>
-      <div class="chart-bars">${bars}</div>
-    </div>`;
-}
-
-// ── กราฟเส้น "การใช้ไฟฟ้ารายชั่วโมงใน 1 วัน" แยกดูตามวันในสัปดาห์ได้ (จันทร์-อาทิตย์ หรือ
-//    เฉลี่ยทั้งเดือน) พร้อมชี้จุดที่ใช้ไฟฟ้าสูงสุดจริงของวัน + แถบช่วงอัตรา Peak ตาม TOU ──
-
-function renderStatTiles(demand, energy) {
-  const ordered = [
-    ...["P", "OP", "H"].map((p) => ({ period: p, value: demand[p], unit: "kW", label: "กำลังไฟฟ้าสูงสุด", digits: 2 })),
-    ...["P", "OP", "H"].map((p) => ({ period: p, value: energy[p], unit: "kWh", label: "พลังงานไฟฟ้า / เดือน", digits: 0 })),
-  ];
-  return ordered
-    .map(
-      (t) => `
-      <div class="stat-tile">
-        <div class="stat-head"><span class="dot" style="background:${PERIOD_COLOR[t.period]};"></span><span class="stat-label">${PERIOD_TH[t.period]}</span></div>
-        <div><span class="stat-value">${formatNumber(t.value, t.digits)}</span> <span class="stat-unit">${t.unit}</span></div>
-        <div class="stat-label">${t.label}</div>
-      </div>`
-    )
-    .join("");
-}
-
-// ── ผลลัพธ์รวม ใช้ร่วมกันทั้ง 2 โหมด — identity คือข้อมูลที่ต่างกันระหว่างโหมด (ชื่อ/เลขบัญชี
-//    ที่มาของธุรกิจ/อัตรา ฯลฯ) ส่วน data (match/matched_profile/forecast/curve) รูปแบบเดียวกัน
-//    ทั้งสอง endpoint (/api/forecast/<account_no> และ /api/forecast-adhoc) อยู่แล้ว ──
-
-// ระดับการจับคู่ที่ "รหัสอัตรา" ของโปรไฟล์ที่แสดง ตรงกับอัตราที่ระบุ/ทราบจริงๆ (ไม่ใช่แค่หยิบ
-// ตัวแรกที่เจอในประเภทธุรกิจเดียวกันมาโชว์เฉยๆ) — ใช้แยกกรณี "มีอัตราจริง" ออกจากกรณี "ไม่ทราบ
-// อัตรา จับคู่แค่ประเภทธุรกิจ" ตามที่ผู้ใช้ขอ ไม่ให้สับสนว่าอัตราที่โชว์คืออัตราจริงของลูกค้า
-const RATE_CONFIRMED_LEVELS = ["exact_business_and_rate", "exact_business_and_rate_solar_mismatch", "rate_only"];
-
-function renderResult(data, identity) {
-  const m = data.match;
-  const p = data.matched_profile;
-  const f = data.forecast;
-
-  const matchColor = m.is_exact ? "#0ca30c" : "#fab219";
-  const matchBg = m.is_exact ? "#e8f7ec" : "#fff7e6";
-  const rateIsReference = !RATE_CONFIRMED_LEVELS.includes(m.level);
-
-  const businessBadge = identity.businessTypeCode
-    ? `<span class="badge" style="background:#eef3fa;color:#184f95;">${p.business_type_name || identity.businessTypeCode} · ${identity.businessTypeCode}</span>`
-    : `<span class="badge" style="background:rgba(15,23,42,0.05);color:#55647a;">ยังไม่จัดประเภทธุรกิจ</span>`;
-
-  const solarSuffix = p.has_solar ? " · ☀️ ติด Solar" : "";
-  const profileFieldLabel = rateIsReference
-    ? "โปรไฟล์ที่ใช้อ้างอิง (ไม่ทราบอัตรา — จับคู่จากประเภทธุรกิจเท่านั้น)"
-    : "โปรไฟล์ที่ใช้อ้างอิง (ตรงตามอัตราที่ระบุ)";
-  const profileFieldValue = rateIsReference
-    ? `${p.business_type_name || p.business_type_code || "-"} / <span style="color:#b4650c;">อัตรา ${p.rate_code} (ตัวอย่าง ไม่ใช่อัตราจริง)</span>${solarSuffix}`
-    : `${p.business_type_name || p.business_type_code || "-"} / อัตรา ${p.rate_code}${solarSuffix}`;
-  const fields = [...identity.fields, { label: profileFieldLabel, value: profileFieldValue }];
-  if (identity.extraField) {
-    fields.push({ label: identity.extraField.label, value: identity.extraField.getValue(p) });
-  }
-
-  resultArea.innerHTML = `
-    <div class="card customer-card">
-      <div class="customer-head">
-        <div class="customer-head-left">
-          <div class="customer-icon">${iconBuilding("#2a78d6")}</div>
-          <div>
-            <div class="customer-name">${identity.name}</div>
-            <div class="customer-sub">${identity.subLabel}</div>
-          </div>
-        </div>
-        <div class="customer-badges">
-          ${businessBadge}
-          <span class="badge" style="background:rgba(15,23,42,0.05);color:#55647a;">ไม่มี AMR ของตัวเอง</span>
-          <button type="button" id="export-csv-btn" class="day-type-btn" style="white-space:nowrap;">📥 ดาวน์โหลด Excel</button>
-        </div>
-      </div>
-      <div class="divider"></div>
-      <div class="field-grid">
-        ${fields.map((fl) => `<div class="field-item"><div class="field-label">${fl.label}</div><div class="field-value">${fl.value}</div></div>`).join("")}
-      </div>
-    </div>
-
-    <div class="card match-card">
-      <div class="match-left">
-        <div class="match-icon" style="background:${matchBg};">${iconCheck(matchColor)}</div>
-        <div>
-          <div class="match-title">${m.level_label_th}</div>
-          <div class="match-sub">${p.notes || ""}</div>
-        </div>
-      </div>
-      <div class="match-right">
-        <div class="match-right-label">ตัวคูณปรับสเกลตาม KVA</div>
-        <div class="match-right-value">${m.scale_factor.toFixed(2)}×</div>
-      </div>
-    </div>
-
-    ${
-      rateIsReference
-        ? `<div class="warn-box" style="background:#fff7e6;border-color:rgba(180,101,12,0.35);color:#8a4b06;">
-            ⚠️ <b>ไม่ใช่การจับคู่อัตราแบบตรงเป๊ะ (${m.level_label_th})</b> — ตัวเลข "อัตรา ${p.rate_code}"
-            ที่แสดงเป็นเพียง<b>ตัวอย่างอัตราหนึ่งที่บังเอิญมีข้อมูลอยู่</b>ในกลุ่มที่จับคู่ได้
-            <u>ไม่ใช่อัตราจริงของลูกค้ารายนี้</u> — ถ้าทราบรหัสอัตราที่แท้จริง กรุณาเลือกในช่อง
-            "รหัสอัตรา" เพื่อผลที่แม่นยำขึ้น (จับคู่ตรง Exact Match)
-          </div>`
-        : ""
-    }
-
-    ${
-      m.warnings.length
-        ? `<div class="card warnings" style="padding:16px 28px;">${m.warnings.map((w) => `<div class="warning-item">⚠️ ${w}</div>`).join("")}</div>`
-        : ""
-    }
-
-    <div id="matched-companies-block"></div>
-
-    <div>
-      <div class="stats-title" style="margin-bottom:12px;">ผลพยากรณ์โปรไฟล์การใช้ไฟฟ้า</div>
-      <div class="stats-grid">${renderStatTiles(f.demand_kw, f.energy_kwh)}</div>
-    </div>
-
-    <div>
-      <div class="legend-row" style="margin-bottom:12px;">
-        <div class="legend-item"><span class="dot" style="background:${PERIOD_COLOR.P};"></span>Peak — วันทำการ 09:00-22:00</div>
-        <div class="legend-item"><span class="dot" style="background:${PERIOD_COLOR.OP};"></span>Off-Peak — วันทำการ นอกช่วง Peak</div>
-        <div class="legend-item"><span class="dot" style="background:${PERIOD_COLOR.H};"></span>Holiday — วันหยุด/เสาร์-อาทิตย์</div>
-      </div>
-      <div class="charts-grid">
-        ${renderBarChart("กำลังไฟฟ้าสูงสุด (kW)", f.demand_kw, "kW")}
-        ${renderBarChart("พลังงานไฟฟ้า (kWh / เดือน)", f.energy_kwh, "kWh")}
-      </div>
-    </div>
-
-    <div id="daily-curve-root" style="margin-top:4px;"></div>
-
-    <div class="disclaimer">
-      ${iconInfo("#55647a")}
-      <div class="disclaimer-text">ค่าที่แสดงเป็นค่าพยากรณ์ คำนวณจากค่าเฉลี่ยของผู้ใช้ไฟกลุ่มธุรกิจและอัตราเดียวกัน ไม่ใช่ข้อมูลจากมิเตอร์ AMR ของผู้ใช้ไฟรายนี้โดยตรง เนื่องจากยังไม่มีการติดตั้ง AMR${identity.disclaimerExtra}</div>
-    </div>
-  `;
-
-  emptyState.style.display = "none";
-  resultArea.style.display = "flex";
-
-  initDailyCurveSection(document.getElementById("daily-curve-root"), data.curve, data.boxplot);
-  renderMatchedCompanies(p.business_type_code, p.rate_code);
-
-  document.getElementById("export-csv-btn").addEventListener("click", () => exportResultToCsv(data, identity));
-}
-
-// สร้างค่าฟิลด์ CSV ให้ปลอดภัย — ครอบด้วย " เสมอ แล้ว escape " ที่อยู่ในค่าเอง (กันข้อมูลที่มี
-// comma/quote/ขึ้นบรรทัดใหม่ปนอยู่ เช่น ชื่อบริษัทที่พิมพ์เอง ทำให้ไฟล์ CSV เพี้ยน)
-function csvField(value) {
-  return `"${String(value ?? "").replace(/"/g, '""')}"`;
-}
-
-// ส่งออกผลพยากรณ์เป็นไฟล์ CSV (เปิดด้วย Excel ได้เลย) — ทำฝั่ง browser ล้วนๆ ไม่ส่งอะไรไป server
-// เพิ่มเติมเลย แม้แต่ตอนอยู่ในโหมด "พยากรณ์แบบไม่บันทึกข้อมูล" ก็ตาม (ชื่อบริษัทที่พิมพ์ไม่เคยถูก
-// ส่งไป server อยู่แล้ว — ดู comment หัวไฟล์ — การสร้าง CSV ในเครื่อง browser เองจึงไม่ทำให้หลักการ
-// นี้เสียไป ต่างจากถ้าให้ server เป็นคนสร้างไฟล์แทนซึ่งต้องส่งชื่อไปก่อน)
-function exportResultToCsv(data, identity) {
-  const m = data.match;
-  const p = data.matched_profile;
-  const f = data.forecast;
-  const solarText = p.has_solar ? "ติดตั้งแล้ว" : "ยังไม่ติดตั้ง";
-
-  const rows = [
-    ["รายการ", "ค่า"],
-    ["ชื่อ/รายการ", identity.name],
-    ["รายละเอียด", identity.subLabel],
-    ["ประเภทธุรกิจที่จับคู่", `${p.business_type_name || p.business_type_code || "-"}`],
-    ["รหัสอัตราที่จับคู่", p.rate_code],
-    ["สถานะ Solar ของโปรไฟล์ที่ใช้อ้างอิง", solarText],
-    ["ระดับการจับคู่", m.level_label_th],
-    ["ตัวคูณปรับสเกลตาม KVA", m.scale_factor.toFixed(2)],
-    ["จำนวนตัวอย่างในโปรไฟล์", p.sample_size ?? "-"],
-    [],
-    ["ช่วงเวลา", "กำลังไฟฟ้าสูงสุด (kW)", "พลังงานไฟฟ้า (kWh/เดือน)"],
-    ["Peak (P)", f.demand_kw.P, f.energy_kwh.P],
-    ["Off-Peak (OP)", f.demand_kw.OP, f.energy_kwh.OP],
-    ["Holiday (H)", f.demand_kw.H, f.energy_kwh.H],
-    [],
-    ["คำเตือน", m.warnings.length ? m.warnings.join(" | ") : "-"],
-    ["วันที่สร้างรายงาน", new Date().toLocaleString("th-TH")],
-  ];
-
-  // ﻿ (UTF-8 BOM) ให้ Excel อ่านภาษาไทยถูกต้อง ไม่งั้นเปิดมาจะเป็นอักษรมั่ว
-  const csvText = "﻿" + rows.map((row) => row.map(csvField).join(",")).join("\r\n");
-  const blob = new Blob([csvText], { type: "text/csv;charset=utf-8;" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  const safeName = (identity.name || "ผลพยากรณ์").replace(/[\\/:*?"<>|]/g, "_");
-  a.href = url;
-  a.download = `พยากรณ์ไฟฟ้า_${safeName}_${new Date().toISOString().slice(0, 10)}.csv`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-}
-
-// แสดงว่าโปรไฟล์ที่ใช้พยากรณ์ (business_type_code+rate_code นี้) มาจากการนำเข้า AMR จริงของ
-// บริษัทไหนบ้างในเครื่องนี้ — ใช้ /api/import-log-local ตัวเดียวกับที่หน้า Admin ใช้อยู่แล้ว (ข้อมูล
-// local-only มีชื่อบริษัท/เลขบัญชีจริง ไม่ถูก commit เข้า repo — ดู .gitignore) คืนรายการว่างเงียบๆ
-// ถ้ายังไม่เคยนำเข้า AMR จริงเลย (ไฟล์ import_log_local.csv ไม่มี) ไม่ใช่ error
-async function renderMatchedCompanies(businessTypeCode, rateCode) {
-  const container = document.getElementById("matched-companies-block");
-  if (!container || !businessTypeCode || !rateCode) return;
-
-  try {
-    const res = await fetch("/api/import-log-local");
-    if (!res.ok) return;
-    const entries = await res.json();
-
-    // เทียบแบบรู้จัก alias (86101/93311 ฯลฯ) ให้ตรงกับตรรกะจับคู่จริงที่ backend ใช้ตอนพยากรณ์
-    // (mapping._equivalent_codes) ไม่งั้นถ้าบัญชีถูกนำเข้า/แก้ไว้ด้วยรหัส alias คู่กัน (ไม่ใช่รหัส
-    // เป๊ะๆ ที่ businessTypeCode ระบุมา) จะไม่โผล่ในรายชื่อนี้ทั้งที่จริงๆ ก็เป็นข้อมูลธุรกิจเดียวกัน
-    const equivalentCodes = equivalentBusinessTypeCodes(businessTypeCode);
-    const matched = entries.filter(
-      (e) => equivalentCodes.has(e.business_type_code) && e.rate_code === rateCode
-    );
-    const seen = new Set();
-    const names = [];
-    for (const e of matched) {
-      const key = `${e.company_name}|${e.account_no}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      names.push(e.company_name || e.account_no || "(ไม่ทราบชื่อ)");
-    }
-    if (!names.length) return;
-
-    const escapedNames = names.map((n) => n.replace(/</g, "&lt;")).join(", ");
-    container.innerHTML = `
-      <div class="card" style="padding:16px 28px;background:#f7f9fc;">
-        <div class="lookup-status-text" style="font-weight:600;">🔗 แมทกับข้อมูล AMR จริงในเครื่องนี้ของ:</div>
-        <div class="lookup-status-text" style="margin-top:4px;color:#55647a;">${escapedNames}</div>
-      </div>`;
-  } catch (err) {
-    console.warn("โหลดรายชื่อบริษัทที่แมทกับโปรไฟล์นี้ไม่สำเร็จ", err);
-  }
-}
-
-// ── เริ่มต้น ──
-
-setMode("adhoc");
-loadBusinessTypesAndKeys();
-loadCustomerList();
+loadBusinessTypes();
