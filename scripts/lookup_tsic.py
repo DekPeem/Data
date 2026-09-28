@@ -44,8 +44,13 @@ def main():
 
     interactive = (not args.headless) and (not args.no_interactive)
     print(f"ค้นหาเลขทะเบียน {args.registration_no} (headless={args.headless}, interactive={interactive}) ...\n")
+
+    def on_blocked() -> None:
+        print("\n⚠️  ยังโดนเว็บบล็อกอยู่ (ลองอัตโนมัติหมดแล้ว)")
+        input("👉 คลิกปุ่ม reload เอง (วงกลมข้างช่อง URL) ในหน้าต่าง Chrome ที่เปิดอยู่ แล้วกด Enter ที่นี่เพื่อไปต่อ...")
+
     results = lookup_tsic_by_registration_no(
-        args.registration_no, log=print, headless=args.headless, interactive=interactive
+        args.registration_no, log=print, headless=args.headless, on_blocked=on_blocked if interactive else None
     )
 
     print(f"\n=== ผลลัพธ์: พบ {len(results)} รายการ ===")

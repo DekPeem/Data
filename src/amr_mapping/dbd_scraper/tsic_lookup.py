@@ -161,18 +161,21 @@ def lookup_tsic_by_registration_no(
     registration_no: str,
     log: ProgressCallback = _noop,
     headless: bool = True,
-    interactive: bool = False,
+    on_blocked: Optional[Callable[[], None]] = None,
 ) -> List[CompanyBusinessInfo]:
     """entry point ที่ web/app.py เรียก — เปิดเบราว์เซอร์ใหม่ทุกครั้ง ค้นหาด้วยเลขทะเบียน แล้วปิด
     เบราว์เซอร์ทิ้งเสมอไม่ว่าจะสำเร็จหรือพัง คืน [] (ไม่ raise) เมื่อไม่พบบริษัทนี้/หา TSIC ไม่ได้
     เลย — raise BlockedByAntiBot ถ้าตรวจพบข้อความของระบบป้องกันบอทแม้จะปลอมตัวแล้วก็ตาม (ยังไม่เคย
     เกิดขึ้นจากการทดสอบของผู้ใช้ แต่เช็คไว้กันเหนียว เหมือน dbd_lookup.py เดิม)
 
-    interactive=True — ถ้าลองผ่านหน้าบล็อกของ Incapsula อัตโนมัติหมดโควตาแล้วยังไม่ผ่าน จะหยุดรอ
-    ให้ผู้ใช้คลิก reload เองในหน้าต่างเบราว์เซอร์จริงด้วยมือ (ยืนยันแล้วว่าผ่านได้ทุกครั้ง ต่างจาก
-    การ reload/กด F5 ผ่านโค้ด) แล้วกด Enter ใน terminal เพื่อไปต่อ — ใช้ได้เฉพาะตอน headless=False
-    (มีหน้าต่างให้คลิกจริง) และรันแบบ interactive (มี terminal ให้กด Enter) เท่านั้น — เปิดจาก
-    scripts/lookup_tsic.py ไม่ใช่จากเว็บ (background job ของเว็บไม่มี terminal ให้กด Enter)
+    on_blocked (ไม่บังคับ) — ถ้าลองผ่านหน้าบล็อกของ Incapsula อัตโนมัติหมดโควตาแล้วยังไม่ผ่าน จะ
+    เรียก callback นี้ (ดู scraper._reload_if_blocked) ซึ่งต้อง "block จนกว่าจะมีคนคลิก reload เอง
+    ในหน้าต่างเบราว์เซอร์จริงด้วยมือจริงๆ" (วิธีเดียวที่ยืนยันแล้วว่าผ่านได้ทุกครั้ง ต่างจากการ
+    reload/กด F5 ผ่านโค้ด) — ใช้ได้จริงเฉพาะตอน headless=False (มีหน้าต่างให้คลิกจริง) เท่านั้น
+    scripts/lookup_tsic.py ส่ง callback ที่ print+input() รอกด Enter ใน terminal ส่วน web/app.py
+    ส่ง callback ที่ตั้งสถานะ job ให้หน้าเว็บโชว์ปุ่มยืนยัน แล้วรอ threading.Event ที่ endpoint ของ
+    ปุ่มนั้นเป็นคน set() ให้แทน — ไม่ส่ง (None ค่าเริ่มต้น) แปลว่าไม่มีทางให้คนช่วยเลย ปล่อยผ่านไป
+    เงียบๆ ถ้ายังโดนบล็อกอยู่หลังลองอัตโนมัติครบ (เช่น ตอนเปิดเบราว์เซอร์แบบ headless)
 
     ⚠️ ต้องรันในเครื่องที่ติดตั้ง Playwright + Google Chrome จริง (ดู docstring หัวไฟล์นี้) —
     ใช้งานไม่ได้ในสภาพแวดล้อมที่ไม่มีเบราว์เซอร์จริง/ไม่มี network ออกไปเว็บภายนอกได้"""
@@ -190,7 +193,7 @@ def lookup_tsic_by_registration_no(
         try:
             page = context.new_page()
             try:
-                scraper.search_company(page, normalized, interactive=interactive)
+                scraper.search_company(page, normalized, on_still_blocked=on_blocked)
             except scraper.OverlayBlocked as e:
                 log(f"⚠️ {e}")
                 return []

@@ -1450,7 +1450,7 @@ def test_business_type_lookup_uses_registration_no_profile_fetch_when_provided(c
     received_registration_nos = []
     name_search_called = []
 
-    def fake_profile_fetch(registration_no, log=lambda m: None, headless=True):
+    def fake_profile_fetch(registration_no, log=lambda m: None, headless=True, on_blocked=None):
         received_registration_nos.append(registration_no)
         return [
             CompanyBusinessInfo(

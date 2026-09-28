@@ -17,7 +17,7 @@ pass avoids a second HTML parser dependency.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, Callable, Optional
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import Page
@@ -178,7 +178,9 @@ def _looks_blocked(page: Page, *, poll_ms: int = 3000, interval_ms: int = 500) -
         elapsed += interval_ms
 
 
-def _reload_if_blocked(page: Page, *, max_attempts: int = 3, interactive: bool = False) -> None:
+def _reload_if_blocked(
+    page: Page, *, max_attempts: int = 3, on_still_blocked: Optional[Callable[[], None]] = None
+) -> None:
     """หน้าแรกบางครั้งโดน Imperva บล็อก ("Access denied — Error 15") ตอนโหลดครั้งแรก — ทั่วไปคือ
     Incapsula ทำ JS challenge เบื้องหลังแล้วค่อยปล่อยผ่านตอนโหลดซ้ำ เมื่อ challenge ทำงานเสร็จ (ตั้ง
     cookie ยืนยันแล้ว) แต่ challenge อาจใช้เวลาไม่เท่ากันทุกครั้ง — reload ครั้งเดียวทันทีอาจยังไม่พอ
@@ -199,11 +201,13 @@ def _reload_if_blocked(page: Page, *, max_attempts: int = 3, interactive: bool =
     เรื่องค้างไม่จบ แก้ด้วยการผูก timeout สั้นแทน (ไม่ใช่เลิกใช้ networkidle ไปเลย) — timeout แล้ว
     fallback ไป domcontentloaded ธรรมดา
 
-    interactive=True (ใช้เฉพาะตอนรัน standalone script แบบเห็นหน้าต่างจริงเท่านั้น — เปิดจาก
-    scripts/lookup_tsic.py) — ถ้าลองอัตโนมัติครบ max_attempts รอบแล้วยังโดนบล็อกอยู่ จะหยุดรอให้
-    ผู้ใช้คลิก reload เองในหน้าต่างเบราว์เซอร์จริงด้วยมือ (วิธีเดียวที่ยืนยันแล้วว่าผ่านได้ทุกครั้ง)
-    แล้วกด Enter ใน terminal เพื่อไปต่อ — ถามซ้ำได้เรื่อยๆ จนกว่าจะผ่านจริง (เผื่อต้องคลิกมากกว่า
-    1 ครั้ง)"""
+    on_still_blocked (ไม่บังคับ) — ถ้าลองอัตโนมัติครบ max_attempts รอบแล้วยังโดนบล็อกอยู่ จะเรียก
+    callback นี้ซ้ำไปเรื่อยๆ (เช็คบล็อกก่อนเรียกทุกครั้ง) จนกว่าจะไม่โดนบล็อกแล้ว — ตัว callback เอง
+    ต้อง "block จนกว่าจะมีคนคลิก reload เองในหน้าต่างเบราว์เซอร์จริงด้วยมือจริงๆ" (วิธีเดียวที่ยืนยัน
+    แล้วว่าผ่านได้ทุกครั้ง) เช่น scripts/lookup_tsic.py ส่ง callback ที่ print+input() รอกด Enter ใน
+    terminal ส่วน web/app.py ส่ง callback ที่ตั้งสถานะ job แล้วรอ threading.Event ที่ปุ่มยืนยันใน
+    หน้าเว็บเป็นคน set() ให้ — ไม่ส่ง (None ค่าเริ่มต้น) แปลว่าไม่มีทางให้คนช่วยเลย คืนเงียบๆ ทันที
+    (เช่น ตอนเปิดเบราว์เซอร์แบบ headless ที่ไม่มีหน้าต่างให้คลิก)"""
 
     for attempt in range(max_attempts):
         if not _looks_blocked(page):
@@ -227,18 +231,19 @@ def _reload_if_blocked(page: Page, *, max_attempts: int = 3, interactive: bool =
                 return
         page.wait_for_timeout(config.SETTLE_MS)
 
-    while interactive:
+    while on_still_blocked is not None:
         if not _looks_blocked(page):
             return
-        print("\n⚠️  ยังโดนเว็บบล็อกอยู่ (ลองอัตโนมัติหมดแล้ว)")
-        input("👉 คลิกปุ่ม reload เอง (วงกลมข้างช่อง URL) ในหน้าต่าง Chrome ที่เปิดอยู่ แล้วกด Enter ที่นี่เพื่อไปต่อ...")
+        on_still_blocked()
         page.wait_for_timeout(500)
 
 
 # --------------------------------------------------------------------------
 # Step 1 — search
 # --------------------------------------------------------------------------
-def search_company(page: Page, company_id: str, *, interactive: bool = False) -> None:
+def search_company(
+    page: Page, company_id: str, *, on_still_blocked: Optional[Callable[[], None]] = None
+) -> None:
     """Land on the company's page.
 
     For a 13-digit registration id (this package's whole use case) goes
@@ -248,7 +253,7 @@ def search_company(page: Page, company_id: str, *, interactive: bool = False) ->
     back to the home search bar: type into the box, click the autocomplete
     entry if one opens, or press Enter to submit if it does not.
 
-    interactive=True — ดู _reload_if_blocked (ใช้เฉพาะ standalone script แบบเห็นหน้าต่างจริง)
+    on_still_blocked — ดู _reload_if_blocked
     """
     if _IS_REGISTRATION_ID.match(company_id):
         # เลขทะเบียน 13 หลัก: ไปที่ URL โปรไฟล์ตรงๆ (PROFILE_URL) ก่อนเสมอ แทนที่จะพึ่งกล่องค้นหา +
@@ -266,7 +271,7 @@ def search_company(page: Page, company_id: str, *, interactive: bool = False) ->
         except PlaywrightError:
             pass
         page.wait_for_timeout(config.SETTLE_MS)
-        _reload_if_blocked(page, interactive=interactive)
+        _reload_if_blocked(page, on_still_blocked=on_still_blocked)
         if _on_company_page(page):
             _wait_for_company_page(page, company_id)
             print(f"  opened {page.url}")
@@ -286,7 +291,7 @@ def search_company(page: Page, company_id: str, *, interactive: bool = False) ->
         pass
     page.wait_for_timeout(config.SETTLE_MS)
     print("  หน้าแรกโหลดแล้ว กำลังเช็คว่าโดนบล็อกไหม...")
-    _reload_if_blocked(page, interactive=interactive)
+    _reload_if_blocked(page, on_still_blocked=on_still_blocked)
     dismiss_overlays(page)
 
     try:
@@ -300,7 +305,7 @@ def search_company(page: Page, company_id: str, *, interactive: bool = False) ->
         # เดียว ก่อนค่อยยอมแพ้จริงๆ
         if _looks_blocked(page):
             print("  ⚠️ หน้าบล็อกเพิ่งปรากฏช้ากว่าที่เช็คไว้ตอนแรก — ลอง reload อีกรอบ")
-            _reload_if_blocked(page, interactive=interactive)
+            _reload_if_blocked(page, on_still_blocked=on_still_blocked)
             dismiss_overlays(page)
             try:
                 box = bu.find(page, config.SEARCH_INPUT, what="the home search box")
