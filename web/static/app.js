@@ -385,6 +385,7 @@ businessTypeSelect.addEventListener("change", () => {
 
 const lookupBtn = document.getElementById("lookup-business-type-btn");
 const lookupStatus = document.getElementById("business-type-lookup-status");
+const registrationNoInput = document.getElementById("f-registration-no");
 
 // ตั้งค่า dropdown ประเภทธุรกิจ + พยากรณ์ให้อัตโนมัติถ้ามีรหัสอัตรา default อยู่แล้ว (side effect
 // ล้วนๆ ไม่คืนข้อความ) — แยกออกมาให้ทั้ง buildBusinessTypeSuggestionMessage (แนะนำจาก TSIC จริง)
@@ -461,7 +462,7 @@ function applyBusinessTypeSuggestion(candidate) {
 
 function renderLookupCandidates(candidates) {
   lookupStatus.innerHTML = `
-    <div class="lookup-status-text" style="margin-bottom:8px;">พบหลายบริษัทที่ชื่อใกล้เคียงกัน — เลือกบริษัทที่ใช่:</div>
+    <div class="lookup-status-text" style="margin-bottom:8px;">พบหลายบริษัทที่ตรงกับคำค้นหา — เลือกบริษัทที่ใช่:</div>
     <div style="display:flex;flex-direction:column;gap:8px;">
       ${candidates
         .map(
@@ -673,8 +674,9 @@ async function pollBusinessTypeLookupJob(jobId) {
 
 async function runBusinessTypeLookup() {
   const companyName = nameInput.value.trim();
-  if (!companyName) {
-    lookupStatus.innerHTML = `<div class="lookup-status-text" style="color:#d03b3b;">กรุณาพิมพ์ชื่อบริษัทก่อน</div>`;
+  const registrationNo = registrationNoInput.value.trim();
+  if (!companyName && !registrationNo) {
+    lookupStatus.innerHTML = `<div class="lookup-status-text" style="color:#d03b3b;">กรุณาพิมพ์ชื่อบริษัทหรือเลขนิติบุคคลก่อน</div>`;
     return;
   }
 
@@ -685,7 +687,10 @@ async function runBusinessTypeLookup() {
     const res = await fetch("/api/business-type-lookup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ company_name: companyName }),
+      // ถ้ากรอกเลขนิติบุคคลไว้ ใช้เป็นคำค้นหาแทนชื่อทันที (แม่นยำกว่ามาก) — ดู
+      // _run_business_type_lookup_job ฝั่ง backend (search_keyword = registration_no หรือ
+      // company_name) company_name ยังต้องส่งไปเสมอ (ใช้เป็นคำค้นหาสำรองถ้าไม่กรอกเลขทะเบียน)
+      body: JSON.stringify({ company_name: companyName || registrationNo, registration_no: registrationNo || undefined }),
     });
     const data = await res.json();
 
