@@ -239,15 +239,40 @@ def _reload_if_blocked(page: Page, *, max_attempts: int = 3, interactive: bool =
 # Step 1 — search
 # --------------------------------------------------------------------------
 def search_company(page: Page, company_id: str, *, interactive: bool = False) -> None:
-    """Land on the company's page, starting from the home search bar.
+    """Land on the company's page.
 
-    Typing into the box opens an autocomplete list; clicking its first entry is
-    the path a user takes and the one the SPA is built around. If no suggestion
-    appears (the box occasionally stays quiet on a cold cache) we fall back to
-    submitting the search, and finally to the profile URL directly.
+    For a 13-digit registration id (this package's whole use case) goes
+    straight to the profile URL — one navigation, no search box, no
+    autocomplete. Only when that guessed URL does not land on a company page
+    (or the id was not a registration number, e.g. a bare name) does it fall
+    back to the home search bar: type into the box, click the autocomplete
+    entry if one opens, or press Enter to submit if it does not.
 
     interactive=True — ดู _reload_if_blocked (ใช้เฉพาะ standalone script แบบเห็นหน้าต่างจริง)
     """
+    if _IS_REGISTRATION_ID.match(company_id):
+        # เลขทะเบียน 13 หลัก: ไปที่ URL โปรไฟล์ตรงๆ (PROFILE_URL) ก่อนเสมอ แทนที่จะพึ่งกล่องค้นหา +
+        # autocomplete ของหน้าแรก — README เดิมของผู้ใช้เองยืนยันไว้แล้วว่า autocomplete "ไม่เปิดเลย
+        # สำหรับ input ที่พิมพ์ผ่าน automation" (กด Enter ไปหน้าผลลัพธ์เป็นทางเดียวที่ได้ผลจริง) และ
+        # PROFILE_URL ก็ยืนยันใช้งานได้จริงแล้ว (เป็น fallback เดิมที่เคยผ่าน, ตรงกับ URL ที่ผู้ใช้เดิน
+        # ด้วยมือเองก็ลงเอยที่รูปแบบเดียวกันนี้) — พิมพ์+คลิก suggestion/กด Enter บนหน้าแรกมีหลายขั้น
+        # ตอนกว่า แต่ละขั้นเป็นจุดที่พลาด/ถูกตรวจจับได้เพิ่ม ไปตรงๆ ครั้งเดียวจึงน่าเชื่อถือกว่า แล้ว
+        # ค่อย fallback ไปกล่องค้นหาของหน้าแรกถ้าทางตรงไม่ได้ผล (เช่น entity ไม่ใช่บริษัทจำกัด ที่
+        # prefix "5" ยังไม่เคยยืนยันว่าใช้ได้กับทุกประเภท)
+        url = config.PROFILE_URL.format(company_id=company_id)
+        print(f"  ลองเปิดโปรไฟล์ตรงๆ ที่ {url} ...")
+        try:
+            page.goto(url, wait_until="networkidle", timeout=15_000)
+        except PlaywrightError:
+            pass
+        page.wait_for_timeout(config.SETTLE_MS)
+        _reload_if_blocked(page, interactive=interactive)
+        if _on_company_page(page):
+            _wait_for_company_page(page, company_id)
+            print(f"  opened {page.url}")
+            return
+        print("  ไปตรงๆ ไม่ถึงหน้าบริษัท — ลองผ่านกล่องค้นหาของหน้าแรกแทน")
+
     # ยืนยันจาก debug dump จริงของผู้ใช้: ตอนโดนบล็อก หน้า "Access denied" ของ Incapsula ยังไม่ทัน
     # render ตอน domcontentloaded fire (อาจมี redirect/JS เพิ่มอีกขั้น) — เช็คบล็อกครั้งเดียวทันที
     # ตอนนั้นจึงพลาดได้ ใช้ wait_until="networkidle" ให้หน้า/challenge settle ก่อน (วิดีโอทดสอบจริง
