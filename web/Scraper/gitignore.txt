@@ -1,0 +1,4 @@
+.venv/
+output/
+debug/
+__pycache__/
