@@ -15,16 +15,27 @@
     div#table-filter-data > table.table.table-bordered... > tbody > tr > td (11 คอลัมน์)
     คอลัมน์: [ปุ่มเปรียบเทียบ, ลำดับที่, เลขทะเบียนนิติบุคคล, ชื่อนิติบุคคล, ประเภทนิติบุคคล,
               สถานะ, รหัสประเภทธุรกิจ(TSIC), ชื่อประเภทธุรกิจ, ทุนจดทะเบียน, สินทรัพย์รวม, รายได้รวม]
+
+ถ้ามีเลขทะเบียนนิติบุคคลอยู่แล้ว (registration_no) ให้ใช้ fetch_company_profile_by_registration_no
+แทน search_company_business_type เสมอ — เข้าหน้าโปรไฟล์ตรงๆ ที่ /company/profile/<เลขทะเบียน> แทน
+การพิมพ์ค้นหาในช่องค้นหา (/juristic/searchInfo?keyword=...) ยืนยันจากผู้ใช้จริงว่าค้นหาด้วยเลข
+ทะเบียน (ตัวเลขล้วน) ผ่านช่องค้นหามักโดน Incapsula (ระบบป้องกันบอท) บล็อก ทั้งที่เข้าหน้าโปรไฟล์
+ตรงๆ ด้วยเลขทะเบียนเดียวกันสำเร็จปกติ ไม่บล็อกเลย — ดู docstring ของฟังก์ชันนั้นสำหรับรายละเอียด
+โครงสร้างหน้าโปรไฟล์ (ยืนยันจาก screenshot จริงของผู้ใช้ ไม่ใช่จาก DOM ที่ inspect เอง เพราะ
+สภาพแวดล้อมที่พัฒนาโค้ดนี้ไม่มี Chrome/อินเทอร์เน็ตออกไปเว็บจริงได้เลย — ต้องให้ผู้ใช้ทดสอบยืนยันซ้ำ
+อีกครั้งจริงๆ ก่อนเชื่อว่า parsing ถูกต้อง 100%)
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 from urllib.parse import quote
 
 BASE_URL = "https://datawarehouse.dbd.go.th"
 SEARCH_PATH = "/juristic/searchInfo"
+COMPANY_PROFILE_PATH = "/company/profile"
 
 # selector ของตารางผลลัพธ์ — ถ้าเว็บเปลี่ยนโครงสร้างในอนาคต แก้ตรงนี้ที่เดียว
 _RESULT_ROW_SELECTOR = "div#table-filter-data table tbody tr"
@@ -95,6 +106,10 @@ def setup_driver(headless: bool = True):
 
 def build_search_url(keyword: str) -> str:
     return f"{BASE_URL}{SEARCH_PATH}?keyword={quote(keyword)}"
+
+
+def build_company_profile_url(registration_no: str) -> str:
+    return f"{BASE_URL}{COMPANY_PROFILE_PATH}/{quote(registration_no.strip())}"
 
 
 # คำนำหน้า/ต่อท้ายที่บ่งบอกประเภทนิติบุคคล — เรียงจากยาวไปสั้น เพื่อให้ตัดรูปเต็มก่อนรูปย่อ
@@ -314,6 +329,157 @@ def lookup_business_type_for_company(
     driver = setup_driver(headless=headless)
     try:
         return search_company_business_type(driver, company_name, log=log)
+    finally:
+        driver.quit()
+
+
+# ── ค้นหาจากเลขทะเบียนนิติบุคคลโดยตรง (เข้าหน้าโปรไฟล์เลย ไม่ผ่านช่องค้นหา) ──
+#
+# หน้า /company/profile/<เลขทะเบียน> แสดงข้อมูลเป็นข้อความล้วนๆ แบบ "label ตามด้วยค่า" (ยืนยันจาก
+# screenshot จริงของผู้ใช้ ไม่ใช่จาก DOM inspection เพราะสภาพแวดล้อมที่พัฒนาโค้ดนี้ไม่มี Chrome/
+# อินเทอร์เน็ตจริง) ตัวอย่างที่เจอจริง:
+#   ชื่อนิติบุคคล : บริษัท สยามคาสท์ไนล่อน จำกัด
+#   เลขทะเบียนนิติบุคคล : 0145537000805
+#   ...
+#   ประเภทนิติบุคคล    บริษัทจำกัด
+#   สถานะนิติบุคคล    ยังดำเนินกิจการอยู่
+#   ...
+#   ประเภทธุรกิจตอนจดทะเบียน
+#   ประเภทธุรกิจ    28250 การผลิตเครื่องจักรที่ใช้ในกระบวนการผลิตอาหาร เครื่องดื่ม และ ยาสูบ
+#   วัตถุประสงค์    การผลิตและจำหน่ายเครื่องกรองน้ำทุกชนิด
+#   ประเภทธุรกิจที่ส่งงบการเงินปีล่าสุด
+#   ประเภทธุรกิจ    32909 การผลิตผลิตภัณฑ์อื่นๆซึ่งไม่ได้จัดประเภทไว้ในที่อื่น
+#   วัตถุประสงค์    ผลิตและจำหน่ายเครื่องกรองน้ำ ไส้กรองน้ำ
+# อ่านด้วย regex บนข้อความที่ render เสร็จแล้วทั้งหน้า (driver.find_element(By.TAG_NAME,
+# "body").text) แทนการอ้างอิง CSS class/id — ทนทานต่อการเปลี่ยน CSS มากกว่า แต่ถ้าเว็บเปลี่ยนคำที่
+# ใช้เป็น label จะอ่านไม่เจอ (ต้องแก้ตรงนี้ตามข้อความจริงที่เจอ ถ้าผู้ใช้ทดสอบแล้วอ่านไม่ได้)
+
+_HEADER_LATEST_FINANCIAL_STATEMENT = "ประเภทธุรกิจที่ส่งงบการเงินปีล่าสุด"
+_HEADER_AT_REGISTRATION = "ประเภทธุรกิจตอนจดทะเบียน"
+
+
+def _extract_labeled_value(text: str, label: str) -> Optional[str]:
+    """หาค่าที่อยู่หลัง label หนึ่ง (รูปแบบ "label : value" หรือ "label\\nvalue" ก็ได้ เพราะ .text
+    ของ Selenium render ตาราง/กริดออกมาไม่แน่นอนว่าจะมีตัวคั่นบรรทัดตรงไหนเป๊ะ) คืน None ถ้าไม่เจอ
+    label เลย หรือเจอแต่ไม่มีอะไรตามหลัง (บรรทัดว่าง)"""
+
+    m = re.search(re.escape(label) + r"\s*[:：]?\s*\n?\s*(.+)", text)
+    if not m:
+        return None
+    value = m.group(1).strip()
+    return value or None
+
+
+def _extract_tsic_after_header(text: str, header: str, next_header: Optional[str] = None) -> Optional[Tuple[str, str]]:
+    """หารหัส+ชื่อ TSIC (บรรทัด "ประเภทธุรกิจ" ตามด้วยรหัส 5 หลัก + ชื่อ) ในช่วงข้อความหลังหัวข้อ
+    header จนถึงก่อน next_header ถัดไป (กันอ่านข้ามโซนผิดถ้ามีหัวข้อ "ประเภทธุรกิจ" ซ้ำกันหลายจุด
+    ในหน้าเดียว) คืน (code, name) หรือ None ถ้าไม่เจอ header หรือไม่เจอรหัสในช่วงนั้นเลย"""
+
+    start = text.find(header)
+    if start == -1:
+        return None
+    segment_end = -1
+    if next_header:
+        segment_end = text.find(next_header, start + len(header))
+    segment = text[start:segment_end] if segment_end != -1 else text[start : start + 600]
+
+    m = re.search(r"ประเภทธุรกิจ\s*\n?\s*(\d{5})\s+(.+)", segment)
+    if not m:
+        return None
+    return m.group(1), m.group(2).strip()
+
+
+def fetch_company_profile_by_registration_no(
+    driver, registration_no: str, log: ProgressCallback = _noop, timeout: int = 15
+) -> List[CompanyBusinessInfo]:
+    """เข้าหน้าโปรไฟล์นิติบุคคลของ DBD DataWarehouse ตรงๆ ด้วยเลขทะเบียน (URL รูปแบบ
+    /company/profile/<เลขทะเบียน>) แทนการค้นหาผ่านช่องค้นหา — ดูเหตุผลในคอมเมนต์เหนือฟังก์ชันกลุ่ม
+    นี้ (ยืนยันจากผู้ใช้จริงว่าการค้นหาผ่านช่องค้นหาด้วยเลขทะเบียนมักโดนบล็อก แต่เข้าหน้าโปรไฟล์
+    ตรงๆ ด้วยเลขทะเบียนเดียวกันสำเร็จปกติ)
+
+    หน้านี้แสดง TSIC ได้ถึง 2 ชุด: "ตามงบการเงินปีล่าสุด" (จากงบการเงินฉบับล่าสุดที่ยื่น — ปกติเป็น
+    ปัจจุบันกว่า เพราะธุรกิจอาจเปลี่ยนไปจากตอนจดทะเบียนครั้งแรกได้) กับ "ตอนจดทะเบียน" (ตอนจดทะเบียน
+    ครั้งแรก) — คืนทั้ง 2 ชุดเป็นรายการแยกกัน (เอา "ปีล่าสุด" ขึ้นก่อนเสมอ ให้ผู้ใช้เลือกเอง) ถ้ารหัส
+    ตรงกันทั้งคู่คืนแค่ 1 รายการ (ไม่ต้องให้เลือกซ้ำที่ไม่มีประโยชน์) คืน list ว่างถ้าไม่พบหน้าโปรไฟล์
+    เลย (เช่น เลขทะเบียนผิด/ไม่มีอยู่จริง) หรือพบหน้าแต่อ่านรหัส TSIC ไม่ได้เลย (โครงสร้างหน้าเปลี่ยน)
+
+    raise BlockedByAntiBot ถ้าตรวจพบข้อความของระบบป้องกันบอท (เผื่อไว้ — ยังไม่เคยพบว่าหน้าโปรไฟล์
+    โดนบล็อกจริงจากการทดสอบของผู้ใช้ ต่างจากช่องค้นหาที่โดนบ่อย แต่เช็คไว้กันเหนียว)
+    """
+
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.common.by import By
+
+    normalized = registration_no.strip()
+    url = build_company_profile_url(normalized)
+    log(f"🔍 เปิดหน้าโปรไฟล์นิติบุคคลจากเลขทะเบียน: {normalized}")
+    driver.get(url)
+
+    wait = WebDriverWait(driver, timeout)
+    try:
+        wait.until(EC.presence_of_element_located((By.XPATH, "//*[contains(text(), 'เลขทะเบียนนิติบุคคล')]")))
+    except Exception:  # noqa: BLE001 — TimeoutException หรืออื่นๆ ถือว่าไม่พบหน้าโปรไฟล์เหมือนกัน
+        log(f"⚠️ ไม่พบหน้าโปรไฟล์ของเลขทะเบียน '{normalized}' (อาจไม่มีเลขนี้ในระบบ หรือเว็บช้า)")
+        _log_search_diagnostics(driver, log)
+        return []
+
+    body_text = driver.find_element(By.TAG_NAME, "body").text
+    lowered = body_text.lower()
+    if any(indicator in lowered for indicator in _BLOCK_INDICATORS):
+        log("🚫 เว็บ DBD บล็อกการเข้าถึงอัตโนมัติ (ตรวจพบข้อความของระบบป้องกันบอท)")
+        raise BlockedByAntiBot(" ".join(body_text.split())[:300])
+
+    juristic_name = _extract_labeled_value(body_text, "ชื่อนิติบุคคล") or ""
+    juristic_type = _extract_labeled_value(body_text, "ประเภทนิติบุคคล") or ""
+    status = _extract_labeled_value(body_text, "สถานะนิติบุคคล") or ""
+
+    latest = _extract_tsic_after_header(body_text, _HEADER_LATEST_FINANCIAL_STATEMENT)
+    registered = _extract_tsic_after_header(
+        body_text, _HEADER_AT_REGISTRATION, next_header=_HEADER_LATEST_FINANCIAL_STATEMENT
+    )
+
+    candidates: List[CompanyBusinessInfo] = []
+    seen_codes: set = set()
+
+    def add(entry: Optional[Tuple[str, str]], label: str) -> None:
+        if entry is None:
+            return
+        code, name = entry
+        if code in seen_codes:
+            return
+        seen_codes.add(code)
+        candidates.append(
+            CompanyBusinessInfo(
+                registration_no=normalized,
+                juristic_name=juristic_name,
+                juristic_type=juristic_type,
+                status=status,
+                tsic_code=code,
+                tsic_name_th=f"({label}) {name}",
+            )
+        )
+
+    add(latest, "ตามงบการเงินปีล่าสุด")
+    add(registered, "ตอนจดทะเบียน")
+
+    if not candidates:
+        log(f"⚠️ พบหน้าโปรไฟล์แต่อ่านรหัส TSIC ไม่สำเร็จ (โครงสร้างหน้าอาจเปลี่ยนไป) — ดูที่ {url} เอง")
+    else:
+        log(f"✅ อ่านข้อมูลจากหน้าโปรไฟล์สำเร็จ: {juristic_name} — พบ TSIC {len(candidates)} รายการ")
+    return candidates
+
+
+def lookup_business_type_by_registration_no(
+    registration_no: str, log: ProgressCallback = _noop, headless: bool = True
+) -> List[CompanyBusinessInfo]:
+    """เปิดเบราว์เซอร์ใหม่ เข้าหน้าโปรไฟล์นิติบุคคลตรงๆ ด้วยเลขทะเบียน แล้วปิดเบราว์เซอร์ทิ้งเสมอ —
+    entry point คู่กับ lookup_business_type_for_company (web/app.py เลือกเรียกตัวไหนตามว่ามีเลข
+    ทะเบียนมาหรือมีแค่ชื่อ)"""
+
+    driver = setup_driver(headless=headless)
+    try:
+        return fetch_company_profile_by_registration_no(driver, registration_no, log=log)
     finally:
         driver.quit()
 

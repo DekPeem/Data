@@ -39,7 +39,12 @@ from amr_mapping.clustering import cluster_business_types, nearest_business_type
 from amr_mapping.curve_stats import compute_hourly_boxplot
 from amr_mapping.dataforthai_lookup import lookup_business_category, suggest_companies_with_fallback
 from amr_mapping.dataforthai_lookup import setup_driver as setup_dataforthai_driver
-from amr_mapping.dbd_lookup import BlockedByAntiBot, find_exact_match, lookup_business_type_for_company
+from amr_mapping.dbd_lookup import (
+    BlockedByAntiBot,
+    find_exact_match,
+    lookup_business_type_by_registration_no,
+    lookup_business_type_for_company,
+)
 from amr_mapping.dbd_opendata import fetch_all as fetch_dbd_opendata
 from amr_mapping.dbd_opendata import is_db_available as dbd_opendata_is_available
 from amr_mapping.dbd_opendata import search_juristic_person
@@ -964,10 +969,16 @@ def _run_business_type_lookup_job(
     # ทั้งผลจาก DBD DataWarehouse โดยตรง (try ข้างล่าง) และผลจากฐานข้อมูล DBD Open Data ในเครื่อง
     # (except BlockedByAntiBot ข้างล่าง) จึงคำนวณไว้ครั้งเดียวตรงนี้ก่อนแยกสองเส้นทาง
     clusters = cluster_business_types(reference)
-    search_keyword = registration_no or company_name
 
     try:
-        results = lookup_business_type_for_company(search_keyword, log=log)
+        # มีเลขทะเบียนนิติบุคคล — เข้าหน้าโปรไฟล์ตรงๆ ด้วยเลขทะเบียนเลย (ไม่ผ่านช่องค้นหา) เพราะ
+        # ยืนยันจากผู้ใช้จริงว่าค้นหาด้วยเลขทะเบียนผ่านช่องค้นหามักโดนระบบป้องกันบอทบล็อก ทั้งที่เข้า
+        # หน้าโปรไฟล์ตรงๆ ด้วยเลขทะเบียนเดียวกันสำเร็จปกติ (ดู dbd_lookup.fetch_company_profile_by_registration_no)
+        results = (
+            lookup_business_type_by_registration_no(registration_no, log=log)
+            if registration_no
+            else lookup_business_type_for_company(company_name, log=log)
+        )
 
         candidates = []
         for r in results:
