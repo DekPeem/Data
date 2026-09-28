@@ -123,12 +123,38 @@ def _force_clear_overlays(page: Page) -> None:
 _BLOCK_INDICATORS = ("access denied", "request unsuccessful", "incapsula", "powered by imperva", "are you a robot")
 
 
+def _simulate_mouse_activity(page: Page, duration_ms: int) -> None:
+    """ขยับเมาส์ไปมาแบบสุ่มระหว่างรอ (ใช้ page.mouse ซึ่งส่งผ่าน CDP เป็น input event จริง
+    isTrusted=true เหมือนคนใช้เมาส์จริงๆ — ต่างจาก JS synthetic event ที่หน้าเว็บตรวจจับได้ว่าไม่จริง)
+
+    ยืนยันจากผู้ใช้จริง: คลิก reload เองด้วยมือผ่านหน้าบล็อกของ Incapsula ได้ทันที แต่โค้ดสั่ง
+    page.reload() (แม้รอเวลาเท่ากัน) ไม่ผ่าน — บ่งชี้ว่า Incapsula (ที่ใช้ behavioral fingerprinting
+    เป็นส่วนหนึ่งของการตรวจจับบอทอยู่แล้ว) น่าจะเช็ค "มีการขยับเมาส์จริงไหม" ไม่ใช่แค่เวลาที่ผ่านไป
+    เฉยๆ — จึงจำลองการขยับเมาส์แทนการรอเฉยๆ ก่อน reload ทุกรอบ (ยังไม่ยืนยัน 100% ว่าเป็นสาเหตุจริง
+    เพราะทดสอบกับเว็บจริงจากตรงนี้ไม่ได้ ต้องให้ผู้ใช้ทดสอบซ้ำ)"""
+
+    import random
+
+    x, y = 400.0, 300.0
+    elapsed = 0
+    step_ms = 300
+    while elapsed < duration_ms:
+        x = max(50.0, min(1200.0, x + random.uniform(-80, 80)))
+        y = max(50.0, min(800.0, y + random.uniform(-60, 60)))
+        try:
+            page.mouse.move(x, y, steps=5)
+        except PlaywrightError:
+            return
+        page.wait_for_timeout(step_ms)
+        elapsed += step_ms
+
+
 def _reload_if_blocked(page: Page, *, max_attempts: int = 3) -> None:
     """หน้าแรกบางครั้งโดน Imperva บล็อก ("Access denied — Error 15") ตอนโหลดครั้งแรก — ทั่วไปคือ
     Incapsula ทำ JS challenge เบื้องหลังแล้วค่อยปล่อยผ่านตอนโหลดซ้ำ เมื่อ challenge ทำงานเสร็จ (ตั้ง
     cookie ยืนยันแล้ว) แต่ challenge อาจใช้เวลาไม่เท่ากันทุกครั้ง — reload ครั้งเดียวทันทีอาจยังไม่พอ
-    (challenge ยังไม่ทันเสร็จ) จึงลองซ้ำได้ถึง max_attempts ครั้ง โดยรอนานขึ้นเรื่อยๆ ก่อน reload
-    แต่ละรอบ (ให้เวลา background JS challenge ทำงานให้เสร็จจริงๆ) เงียบๆ ถ้าไม่เจอหน้าบล็อกเลย"""
+    (challenge ยังไม่ทันเสร็จ) จึงลองซ้ำได้ถึง max_attempts ครั้ง โดยจำลองการขยับเมาส์ระหว่างรอ (ดู
+    _simulate_mouse_activity) แทนการรอเฉยๆ ก่อน reload แต่ละรอบ เงียบๆ ถ้าไม่เจอหน้าบล็อกเลย"""
 
     for attempt in range(max_attempts):
         try:
@@ -139,7 +165,7 @@ def _reload_if_blocked(page: Page, *, max_attempts: int = 3) -> None:
             return
 
         wait_ms = config.SETTLE_MS * (attempt + 3)  # รอนานขึ้นเรื่อยๆ ทุกรอบ (2.1s, 2.8s, 3.5s ที่ SETTLE_MS=700)
-        page.wait_for_timeout(wait_ms)
+        _simulate_mouse_activity(page, wait_ms)
         try:
             page.reload(wait_until="networkidle", timeout=config.DEFAULT_TIMEOUT_MS)
         except PlaywrightError:
