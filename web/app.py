@@ -94,12 +94,6 @@ def get_reference():
 _JOBS: dict = {}
 _JOBS_LOCK = threading.Lock()
 
-# ── threading.Event รอการยืนยัน "คลิก reload เองแล้ว" ของแต่ละ job ค้นหา TSIC ด้วยเลขทะเบียน (ดู
-#    _run_business_type_lookup_job/on_blocked และ api_confirm_business_type_lookup_reload) — เก็บ
-#    แยกจาก _JOBS เพราะ Event ไม่ใช่ค่าที่ jsonify(dict(job)) ในหน้า status ส่งออกไปตรงๆ ได้ ล็อก
-#    ร่วม _JOBS_LOCK เดียวกัน (แก้ไข dict คนละตัวพร้อมกันในบาง request จึงต้องล็อกเดียวกันกันชน)
-_RELOAD_EVENTS: dict = {}
-
 MATCH_LEVEL_LABEL_TH = {
     MatchLevel.EXACT: "ตรงตามธุรกิจและอัตรา (Exact Match)",
     MatchLevel.SOLAR_MISMATCH: "ตรงตามธุรกิจและอัตรา แต่ไม่มีข้อมูลของสถานะ Solar ที่ตรงกัน",
@@ -982,35 +976,15 @@ def _run_business_type_lookup_job(
         if registration_no:
             from amr_mapping.dbd_scraper import lookup_tsic_by_registration_no
 
-            # headless=False (หน้าต่างเบราว์เซอร์จริงที่มองเห็นได้) เสมอ ไม่ใช่แค่ default เฉยๆ —
-            # ยืนยันจากการทดสอบจริงหลายรอบว่า headless (ไม่ว่าจะใช้ channel="chrome" จริงหรือ
-            # bundled Chromium) ยังโดน Incapsula บล็อกได้บ่อยกว่ามาก และที่สำคัญกว่านั้น on_blocked
-            # ด้านล่าง (ให้ผู้ใช้คลิก reload เองในหน้าต่างเบราว์เซอร์) "ใช้ไม่ได้เลย" ถ้าไม่มีหน้าต่าง
-            # ให้คลิกจริง — ใช้ได้เพราะเว็บนี้ตั้งใจรันในเครื่อง (localhost) ของผู้ใช้เองเท่านั้น ไม่ใช่
-            # deploy ขึ้น server แบบไม่มีจอ (headless server) ถ้าจะเอาไป deploy แบบนั้นในอนาคต ต้องคิด
-            # ใหม่ทั้งกลไกนี้ ไม่ใช่แค่เปลี่ยน headless=True เฉยๆ
-            def on_blocked() -> None:
-                # ลองอัตโนมัติหมดโควตาแล้วยังโดนบล็อกอยู่ (ดู scraper._reload_if_blocked) — หยุด
-                # job ไว้ตรงนี้ ให้หน้าเว็บโชว์ปุ่ม "คลิก reload แล้ว" แทนที่จะเดาว่าผู้ใช้จะกด Enter
-                # ใน terminal ได้เหมือน scripts/lookup_tsic.py (background job ของเว็บไม่มี terminal
-                # ให้กด) — สร้าง Event ใหม่ทุกครั้งที่เรียก เผื่อโดนบล็อกซ้ำหลายรอบในหนึ่ง job เดียว
-                event = threading.Event()
-                with _JOBS_LOCK:
-                    _JOBS[job_id]["status"] = "waiting_for_manual_reload"
-                    _RELOAD_EVENTS[job_id] = event
-                log(
-                    "⚠️ เว็บ DBD DataWarehouse บล็อกการเข้าถึงอัตโนมัติชั่วคราว — มีหน้าต่างเบราว์เซอร์"
-                    "เปิดค้างอยู่ให้แล้ว กรุณาสลับไปที่หน้าต่างนั้น คลิกปุ่ม reload เอง (วงกลมข้างช่อง"
-                    " URL ด้านบน) แล้วกลับมากดปุ่ม \"ฉันคลิก reload แล้ว\" ด้านล่างนี้เพื่อไปต่อ"
-                )
-                event.wait()
-                with _JOBS_LOCK:
-                    _JOBS[job_id]["status"] = "running"
-                    _RELOAD_EVENTS.pop(job_id, None)
-
-            results = lookup_tsic_by_registration_no(
-                registration_no, log=log, headless=False, on_blocked=on_blocked
-            )
+            # headless=True (ไม่เปิดหน้าต่างเบราว์เซอร์ให้เห็นเลย) ตามที่ผู้ใช้ยืนยันไว้ — เคยลองทำ
+            # แบบเปิดหน้าต่างจริง (headless=False) แล้วหยุดรอให้คลิก reload เองตอนโดนบล็อก (เหมือน
+            # scripts/lookup_tsic.py ตอนรันแบบ interactive) แต่ผู้ใช้ไม่ต้องการให้มีหน้าต่าง popup
+            # โผล่ขึ้นมาตอนค้นหาผ่านเว็บ จึงตัดกลไกนั้นออกจากเว็บไปเลย (ไม่ส่ง on_blocked — ไม่มีทาง
+            # ให้คนช่วยคลิก reload ได้อยู่แล้วถ้าไม่มีหน้าต่างให้เห็น) แลกกับการที่ถ้าโดนบล็อกจริงจะ
+            # fallback ไปหาข้อมูลจาก dataforthai.com / ฐานข้อมูล DBD Open Data ในเครื่อง / Wikipedia
+            # แทน (ดู except BlockedByAntiBot ด้านล่าง) ไม่ได้ TSIC ตรงจาก DBD เป๊ะเหมือนตอนคลิก reload
+            # เองได้ — ยังใช้กลไก on_blocked ได้อยู่ถ้าจะรัน scripts/lookup_tsic.py debug ในเครื่องเอง
+            results = lookup_tsic_by_registration_no(registration_no, log=log)
         else:
             results = lookup_business_type_for_company(company_name, log=log)
 
@@ -1253,22 +1227,6 @@ def api_get_business_type_lookup_status(job_id: str):
         if job is None:
             return jsonify({"error": "not_found", "message": "ไม่พบ job นี้"}), 404
         return jsonify(dict(job))
-
-
-@app.route("/api/business-type-lookup/<job_id>/confirm-reload", methods=["POST"])
-def api_confirm_business_type_lookup_reload(job_id: str):
-    """กดปุ่ม "ฉันคลิก reload แล้ว" ในหน้าเว็บ (ดู on_blocked ใน _run_business_type_lookup_job) —
-    ปลุก background thread ของ job นี้ที่กำลังรอ threading.Event ค้างอยู่ให้ไปต่อ เพราะ job นั้น
-    ยืนยันแล้วว่าผู้ใช้คลิก reload เองในหน้าต่างเบราว์เซอร์ที่เปิดค้างไว้ให้เรียบร้อยแล้ว"""
-    with _JOBS_LOCK:
-        job = _JOBS.get(job_id)
-        event = _RELOAD_EVENTS.get(job_id)
-    if job is None:
-        return jsonify({"error": "not_found", "message": "ไม่พบ job นี้"}), 404
-    if event is None:
-        return jsonify({"error": "not_waiting", "message": "job นี้ไม่ได้รอการยืนยันการ reload อยู่"}), 400
-    event.set()
-    return jsonify({"ok": True})
 
 
 def _run_dbd_opendata_fetch_job(job_id: str, start_year: int, start_month: int) -> None:

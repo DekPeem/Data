@@ -504,29 +504,6 @@ async function pollBusinessTypeLookupJob(jobId) {
     return;
   }
 
-  // ⚠️ เว็บ DBD DataWarehouse บล็อกการเข้าถึงอัตโนมัติ ลองอัตโนมัติหมดโควตาแล้ว (ดู on_blocked ใน
-  // _run_business_type_lookup_job ฝั่ง backend) — backend เปิดหน้าต่างเบราว์เซอร์จริงทิ้งไว้ให้แล้ว
-  // (headless=False) และค้างรอ threading.Event อยู่ ต้องให้ผู้ใช้คลิก reload เองในหน้าต่างนั้นแล้ว
-  // มากดปุ่มนี้เพื่อปลุก job ให้ไปต่อ — ไม่ปิดปุ่มค้นหาหลัก (lookupBtn) เพราะ job ยังไม่จบ
-  if (data.status === "waiting_for_manual_reload") {
-    lookupStatus.innerHTML = `
-      <div class="lookup-status-text" style="color:#a5670b;">⚠️ เว็บ DBD DataWarehouse บล็อกการเข้าถึงอัตโนมัติชั่วคราว — มีหน้าต่างเบราว์เซอร์เปิดค้างอยู่ให้แล้ว กรุณาสลับไปที่หน้าต่างนั้น คลิกปุ่ม reload เอง (วงกลมข้างช่อง URL ด้านบน) แล้วกดปุ่มด้านล่างนี้เพื่อไปต่อ</div>
-      <button type="button" id="confirm-reload-btn" class="lookup-pick-btn" style="margin-top:8px;">✅ ฉันคลิก reload แล้ว</button>
-      ${renderSearchLogDetails(data.logs, false)}`;
-    const confirmBtn = document.getElementById("confirm-reload-btn");
-    confirmBtn.addEventListener("click", async () => {
-      confirmBtn.disabled = true;
-      confirmBtn.textContent = "กำลังไปต่อ...";
-      try {
-        await fetch(`/api/business-type-lookup/${jobId}/confirm-reload`, { method: "POST" });
-      } catch (err) {
-        console.error(err);
-      }
-      pollBusinessTypeLookupJob(jobId);
-    });
-    return;
-  }
-
   lookupBtn.disabled = false;
 
   if (data.status === "error") {
