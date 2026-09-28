@@ -34,6 +34,7 @@ function iconBuilding(color) {
 const modeTabs = document.querySelectorAll(".mode-tab");
 const adhocPanel = document.getElementById("adhoc-panel");
 const searchPanel = document.getElementById("search-panel");
+const drPanel = document.getElementById("dr-panel");
 
 let currentMode = "adhoc";
 
@@ -43,11 +44,20 @@ function clearResult() {
   emptyState.style.display = "flex";
 }
 
+// โหมด "dr" (จำลองหยุดผลิตชั่วคราว) มีพื้นที่แสดงผลของตัวเอง (#dr-result ใน demand-response.js)
+// ไม่ใช้ #result/#empty-state ที่ใช้ร่วมกันของโหมด adhoc/search — ต้องซ่อนทั้งคู่ไว้ตอนอยู่โหมดนี้
 function setMode(mode) {
   currentMode = mode;
   modeTabs.forEach((btn) => btn.classList.toggle("active", btn.dataset.mode === mode));
   adhocPanel.hidden = mode !== "adhoc";
   searchPanel.hidden = mode !== "search";
+  drPanel.hidden = mode !== "dr";
+  if (mode === "dr") {
+    resultArea.innerHTML = "";
+    resultArea.style.display = "none";
+    emptyState.style.display = "none";
+    return;
+  }
   emptyStateText.textContent =
     mode === "adhoc"
       ? 'กรอกข้อมูลด้านบนแล้วกด "พยากรณ์" เพื่อดูผลพยากรณ์'

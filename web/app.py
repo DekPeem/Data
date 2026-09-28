@@ -42,6 +42,7 @@ from amr_mapping.dbd_lookup import BlockedByAntiBot, find_exact_match, lookup_bu
 from amr_mapping.dbd_opendata import fetch_all as fetch_dbd_opendata
 from amr_mapping.dbd_opendata import is_db_available as dbd_opendata_is_available
 from amr_mapping.dbd_opendata import search_juristic_person
+from amr_mapping.demand_response import simulate_midday_stoppage
 from amr_mapping.keyword_classify import guess_tsic_division
 from amr_mapping.loader import (
     DEFAULT_DATA_DIR,
@@ -717,6 +718,91 @@ def api_forecast_adhoc():
         transient_customer, reference, section_code=section_code, clusters=cluster_business_types(reference)
     )
     return jsonify(_estimate_result_to_dict(result, reference))
+
+
+@app.route("/api/demand-response-simulate", methods=["POST"])
+def api_demand_response_simulate():
+    """จำลองผลของการ "หยุดการผลิตชั่วคราว" (เช่น พักเที่ยง) ในคาบ Peak ต่อกำลังไฟฟ้า/พลังงาน
+    P/OP/H — คำนวณจริงใน amr_mapping.demand_response.simulate_midday_stoppage (ดู docstring
+    ที่นั่นสำหรับหลักการคำนวณเต็ม) ที่นี่แค่รับ/ตรวจสอบ input, หารูปทรงกราฟรายชั่วโมงอ้างอิงของ
+    ประเภทธุรกิจที่เลือกมาป้อนให้ แล้วคืนผลลัพธ์กลับไป — ไม่มีการบันทึกอะไรลงดิสก์เลย (เหมือน
+    /api/forecast-adhoc)
+
+    body: {
+      business_type_code: str (บังคับ — ใช้หารูปทรงกราฟรายชั่วโมงอ้างอิงเท่านั้น ไม่เกี่ยวกับ
+        ประเภทธุรกิจจริงของลูกค้า),
+      demand_kw: {"P":.., "OP":.., "H":..} (บังคับ),
+      energy_kwh: {"P":.., "OP":.., "H":..} (บังคับ),
+      stop_start_hour / stop_end_hour: float (บังคับ เช่น 12 หรือ 12.5 = 12:30),
+      drop_percent: float (บังคับ 0-100),
+    }
+    """
+
+    body = request.get_json(force=True, silent=True) or {}
+
+    business_type_code = (body.get("business_type_code") or "").strip()
+    if not business_type_code:
+        return jsonify(
+            {"error": "invalid_request", "message": "กรุณาเลือกประเภทธุรกิจ (ใช้หารูปทรงกราฟรายชั่วโมงอ้างอิง)"}
+        ), 400
+
+    def _period_float_dict(key: str) -> Optional[Dict[str, float]]:
+        raw = body.get(key) or {}
+        try:
+            return {period: float(raw.get(period) or 0) for period in ("P", "OP", "H")}
+        except (TypeError, ValueError):
+            return None
+
+    demand_kw = _period_float_dict("demand_kw")
+    energy_kwh = _period_float_dict("energy_kwh")
+    if demand_kw is None or energy_kwh is None:
+        return jsonify({"error": "invalid_request", "message": "กำลังไฟฟ้าสูงสุด/พลังงานไฟฟ้าต้องเป็นตัวเลข"}), 400
+
+    try:
+        stop_start_hour = float(body.get("stop_start_hour"))
+        stop_end_hour = float(body.get("stop_end_hour"))
+        drop_percent = float(body.get("drop_percent"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid_request", "message": "ช่วงเวลาที่หยุด/เปอร์เซ็นต์ที่ลดลงต้องเป็นตัวเลข"}), 400
+
+    reference = get_reference()
+    # หารูปทรงกราฟรายชั่วโมงของประเภทธุรกิจนี้ (ตัวที่ไม่ติด Solar ก่อนถ้ามี — พฤติกรรมเดิมเหมือน
+    # /api/admin/curve) ไม่สนใจ rate_code เพราะเอาแค่ "รูปทรง" มาสเกลตาม P/OP/H ที่กรอกมาเอง
+    # ไม่ได้ใช้ค่าดิบของ rate_code ใดรหัสหนึ่งโดยเฉพาะ
+    matching_curves = [c for c in reference.load_curves if c.business_type_code == business_type_code]
+    curve = next((c for c in matching_curves if not c.has_solar), matching_curves[0] if matching_curves else None)
+    if curve is None or "all" not in curve.hours:
+        return jsonify(
+            {
+                "error": "no_curve",
+                "message": "ยังไม่มีข้อมูลกราฟรายชั่วโมงของประเภทธุรกิจนี้ในระบบ (ต้องนำเข้า AMR จริงที่มีข้อมูลราย 15 นาทีก่อน)",
+            }
+        ), 400
+
+    try:
+        result = simulate_midday_stoppage(
+            demand_kw=demand_kw,
+            energy_kwh=energy_kwh,
+            shape_hours=curve.hours["all"],
+            stop_start_hour=stop_start_hour,
+            stop_end_hour=stop_end_hour,
+            drop_percent=drop_percent,
+        )
+    except ValueError as e:
+        return jsonify({"error": "invalid_request", "message": str(e)}), 400
+
+    business_type = reference.business_types.get(business_type_code)
+    return jsonify(
+        {
+            "business_type_name": business_type.name_th if business_type else business_type_code,
+            "baseline_curve": result.baseline_curve,
+            "adjusted_curve": result.adjusted_curve,
+            "demand_kw": result.demand_kw,
+            "energy_kwh": result.energy_kwh,
+            "energy_saved_kwh": result.energy_saved_kwh,
+            "reduction_ratio": result.reduction_ratio,
+        }
+    )
 
 
 def _run_dataforthai_fallback(company_name: str, log) -> Optional[dict]:

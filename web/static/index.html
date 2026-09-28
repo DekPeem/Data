@@ -102,6 +102,7 @@
       <div class="mode-tabs">
         <button type="button" class="mode-tab" data-mode="adhoc">พยากรณ์แบบไม่บันทึกข้อมูล</button>
         <button type="button" class="mode-tab" data-mode="search">ค้นหาในทะเบียนลูกค้า</button>
+        <button type="button" class="mode-tab" data-mode="dr">จำลองหยุดผลิตชั่วคราว (Demand Response)</button>
       </div>
 
       <!-- โหมด: พยากรณ์แบบไม่บันทึกข้อมูล (ค่าเริ่มต้น — เหมาะกับผู้ใช้ไฟที่ยังไม่มีอยู่ในทะเบียน) -->
@@ -184,6 +185,64 @@
         <div id="search-hint" class="search-hint"></div>
       </div>
 
+      <!-- โหมด: จำลองหยุดผลิตชั่วคราว (เช่น พักเที่ยง) — ใช้รูปทรงกราฟรายชั่วโมงจริงของประเภทธุรกิจ
+           ที่เลือกเป็นฐาน แล้วคำนวณ P/OP/H ใหม่หลังหักลด (ดู web/static/demand-response.js) -->
+      <div id="dr-panel" class="mode-panel-wrap" hidden>
+        <div class="warn-box">
+          ℹ️ จำลองผลของการหยุดเครื่องจักร/หยุดผลิตชั่วคราว (เช่น พักเที่ยง) ต่อกำลังไฟฟ้าและพลังงานที่ใช้ โดยใช้รูปทรงกราฟรายชั่วโมงจริงของประเภทธุรกิจที่เลือกเป็นฐาน แล้วปรับสัดส่วนให้ตรงกับตัวเลข P/OP/H ที่กรอกมา
+        </div>
+
+        <div class="form-grid">
+          <div class="form-field" style="grid-column: 1 / -1;">
+            <label for="dr-business-type">ประเภทธุรกิจ (ใช้หารูปทรงกราฟรายชั่วโมงอ้างอิง)</label>
+            <select id="dr-business-type"></select>
+            <div class="hint">แสดงเฉพาะประเภทที่มีข้อมูลกราฟรายชั่วโมงจริงจาก AMR ที่นำเข้าไว้แล้วเท่านั้น</div>
+          </div>
+
+          <div class="form-field">
+            <label>กำลังไฟฟ้าสูงสุด (Demand kW) ปัจจุบัน</label>
+            <div style="display:flex;gap:8px;">
+              <input id="dr-demand-p" type="number" min="0" step="any" placeholder="P" style="flex:1;min-width:0;">
+              <input id="dr-demand-op" type="number" min="0" step="any" placeholder="OP" style="flex:1;min-width:0;">
+              <input id="dr-demand-h" type="number" min="0" step="any" placeholder="H" style="flex:1;min-width:0;">
+            </div>
+            <div class="hint">หน่วย kW เรียงตามคาบ Peak / Off-Peak / Holiday</div>
+          </div>
+
+          <div class="form-field">
+            <label>พลังงานไฟฟ้า (Energy kWh) ปัจจุบัน ต่อเดือน</label>
+            <div style="display:flex;gap:8px;">
+              <input id="dr-energy-p" type="number" min="0" step="any" placeholder="P" style="flex:1;min-width:0;">
+              <input id="dr-energy-op" type="number" min="0" step="any" placeholder="OP" style="flex:1;min-width:0;">
+              <input id="dr-energy-h" type="number" min="0" step="any" placeholder="H" style="flex:1;min-width:0;">
+            </div>
+            <div class="hint">หน่วย kWh เรียงตามคาบ Peak / Off-Peak / Holiday</div>
+          </div>
+
+          <div class="form-field">
+            <label>ช่วงเวลาที่หยุด (เช่น พักเที่ยง 12:00-13:00)</label>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <input id="dr-stop-start" type="time" value="12:00" step="900">
+              <span>ถึง</span>
+              <input id="dr-stop-end" type="time" value="13:00" step="900">
+            </div>
+            <div class="hint">รองรับเฉพาะช่วงเวลาที่อยู่ในคาบ Peak (09:00-22:00) เท่านั้น</div>
+          </div>
+
+          <div class="form-field">
+            <label for="dr-drop-percent">กำลังไฟฟ้าลดลงในช่วงที่หยุด (%)</label>
+            <input id="dr-drop-percent" type="number" min="0" max="100" step="any" value="100">
+            <div class="hint">100% = หยุดเครื่องจักรสนิทในช่วงนั้น, 30% = ลดลงบางส่วน</div>
+          </div>
+        </div>
+
+        <div class="submit-row">
+          <button id="dr-submit-btn" type="button" class="search-button">คำนวณผลการหยุดผลิต</button>
+        </div>
+        <div id="dr-form-hint" class="search-hint"></div>
+        <div id="dr-result"></div>
+      </div>
+
       <div id="result" class="result-area"></div>
 
       <div id="empty-state" class="empty-state">
@@ -196,5 +255,6 @@
 
   <script src="curve-chart.js"></script>
   <script src="app.js"></script>
+  <script src="demand-response.js"></script>
 </body>
 </html>

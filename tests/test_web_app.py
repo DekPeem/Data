@@ -361,6 +361,87 @@ def test_forecast_adhoc_never_receives_a_name_field(client):
     assert "ชื่อบริษัทที่ไม่ควรถูกใช้เลย" not in res.get_data(as_text=True)
 
 
+def test_demand_response_simulate_missing_business_type_code(client):
+    res = client.post(
+        "/api/demand-response-simulate",
+        json={"demand_kw": {"P": 10, "OP": 5, "H": 3}, "energy_kwh": {"P": 130, "OP": 55, "H": 20}},
+    )
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+
+def test_demand_response_simulate_no_curve_for_business_type(client):
+    res = client.post(
+        "/api/demand-response-simulate",
+        json={
+            "business_type_code": "NOPE-NOT-A-REAL-CODE",
+            "demand_kw": {"P": 10, "OP": 5, "H": 3},
+            "energy_kwh": {"P": 130, "OP": 55, "H": 20},
+            "stop_start_hour": 12,
+            "stop_end_hour": 13,
+            "drop_percent": 30,
+        },
+    )
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "no_curve"
+
+
+def test_demand_response_simulate_returns_adjusted_curve_and_new_totals(client, monkeypatch):
+    from amr_mapping.models import LoadCurve
+
+    original = app_module.load_reference_data()
+    curve = LoadCurve(
+        business_type_code="27100", rate_code="40",
+        hours={"all": [1.0] * 24}, sample_size=1,
+    )
+    patched = replace(original, load_curves=[curve])
+    monkeypatch.setattr(app_module, "get_reference", lambda: patched)
+
+    res = client.post(
+        "/api/demand-response-simulate",
+        json={
+            "business_type_code": "27100",
+            "demand_kw": {"P": 10, "OP": 5, "H": 3},
+            "energy_kwh": {"P": 130, "OP": 55, "H": 20},
+            "stop_start_hour": 12,
+            "stop_end_hour": 13,
+            "drop_percent": 100,
+        },
+    )
+    assert res.status_code == 200
+    data = res.get_json()
+    assert len(data["baseline_curve"]) == 24
+    assert len(data["adjusted_curve"]) == 24
+    assert data["adjusted_curve"][12] == pytest.approx(0.0)
+    assert data["energy_kwh"]["P"] == pytest.approx(120, rel=1e-3)
+    # OP/H ต้องถูกลดตามสัดส่วนเดียวกับ P (120/130) ไม่ใช่ค่าเดิมเฉยๆ
+    assert data["energy_kwh"]["OP"] < 55
+    assert data["energy_kwh"]["H"] < 20
+
+
+def test_demand_response_simulate_invalid_stop_window_returns_400(client, monkeypatch):
+    from amr_mapping.models import LoadCurve
+
+    original = app_module.load_reference_data()
+    curve = LoadCurve(business_type_code="27100", rate_code="40", hours={"all": [1.0] * 24}, sample_size=1)
+    patched = replace(original, load_curves=[curve])
+    monkeypatch.setattr(app_module, "get_reference", lambda: patched)
+
+    res = client.post(
+        "/api/demand-response-simulate",
+        json={
+            "business_type_code": "27100",
+            "demand_kw": {"P": 10, "OP": 5, "H": 3},
+            "energy_kwh": {"P": 130, "OP": 55, "H": 20},
+            "stop_start_hour": 2,  # นอกคาบ Peak
+            "stop_end_hour": 3,
+            "drop_percent": 30,
+        },
+    )
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+
 def test_admin_page_serves_html(client):
     res = client.get("/admin")
     assert res.status_code == 200
