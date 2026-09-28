@@ -184,7 +184,9 @@ def lookup_tsic_by_registration_no(
     log(f"🔍 เปิดเว็บ DBD DataWarehouse ค้นหาเลขทะเบียน: {normalized}")
 
     with sync_playwright() as p:
+        log("🌐 กำลังเปิดเบราว์เซอร์...")
         browser, context = _launch(p, headless)
+        log("✅ เปิดเบราว์เซอร์แล้ว กำลังโหลดหน้าแรก...")
         try:
             page = context.new_page()
             try:

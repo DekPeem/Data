@@ -209,6 +209,7 @@ def _reload_if_blocked(page: Page, *, max_attempts: int = 3, interactive: bool =
         if not _looks_blocked(page):
             return
 
+        print(f"  ⚠️ เจอหน้าบล็อกของ Incapsula — กำลังลอง reload อัตโนมัติ (รอบที่ {attempt + 1}/{max_attempts})...")
         wait_ms = config.SETTLE_MS * (attempt + 3)  # รอนานขึ้นเรื่อยๆ ทุกรอบ (2.1s, 2.8s, 3.5s ที่ SETTLE_MS=700)
         _simulate_mouse_activity(page, wait_ms)
         try:
@@ -259,6 +260,7 @@ def search_company(page: Page, company_id: str, *, interactive: bool = False) ->
     except PlaywrightError:
         pass
     page.wait_for_timeout(config.SETTLE_MS)
+    print("  หน้าแรกโหลดแล้ว กำลังเช็คว่าโดนบล็อกไหม...")
     _reload_if_blocked(page, interactive=interactive)
     dismiss_overlays(page)
 
