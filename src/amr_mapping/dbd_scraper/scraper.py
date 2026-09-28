@@ -154,7 +154,15 @@ def _reload_if_blocked(page: Page, *, max_attempts: int = 3) -> None:
     Incapsula ทำ JS challenge เบื้องหลังแล้วค่อยปล่อยผ่านตอนโหลดซ้ำ เมื่อ challenge ทำงานเสร็จ (ตั้ง
     cookie ยืนยันแล้ว) แต่ challenge อาจใช้เวลาไม่เท่ากันทุกครั้ง — reload ครั้งเดียวทันทีอาจยังไม่พอ
     (challenge ยังไม่ทันเสร็จ) จึงลองซ้ำได้ถึง max_attempts ครั้ง โดยจำลองการขยับเมาส์ระหว่างรอ (ดู
-    _simulate_mouse_activity) แทนการรอเฉยๆ ก่อน reload แต่ละรอบ เงียบๆ ถ้าไม่เจอหน้าบล็อกเลย"""
+    _simulate_mouse_activity) แทนการรอเฉยๆ ก่อน reload แต่ละรอบ เงียบๆ ถ้าไม่เจอหน้าบล็อกเลย
+
+    ⚠️ กด F5 จำลอง (page.keyboard.press) แทนเรียก page.reload() ตรงๆ — ยืนยันจากผู้ใช้จริงว่า
+    page.reload() ไม่ผ่านแม้จำลองขยับเมาส์รอไปแล้ว ทั้งที่คลิกปุ่ม reload ในเบราว์เซอร์เองด้วยมือ
+    ผ่านทันที บ่งชี้ว่า page.reload() (คำสั่งควบคุมเบราว์เซอร์ผ่าน CDP โดยตรง) อาจถูก Incapsula
+    แยกออกจากการ reload แบบที่มนุษย์ทำจริงได้ (ผ่านปุ่ม/คีย์บอร์ด) — กด F5 ผ่าน page.keyboard เป็น
+    การจำลอง "กดคีย์บอร์ดจริง" (ส่งผ่าน CDP เป็น input event ระดับฮาร์ดแวร์ isTrusted=true เหมือน
+    เมาส์) ซึ่งเบราว์เซอร์ประมวลผลเหมือนคนกดเองทุกประการ ต่างจาก page.reload() ที่เป็นคำสั่งควบคุม
+    โดยตรงไม่ผ่าน input event เลย"""
 
     for attempt in range(max_attempts):
         try:
@@ -167,7 +175,8 @@ def _reload_if_blocked(page: Page, *, max_attempts: int = 3) -> None:
         wait_ms = config.SETTLE_MS * (attempt + 3)  # รอนานขึ้นเรื่อยๆ ทุกรอบ (2.1s, 2.8s, 3.5s ที่ SETTLE_MS=700)
         _simulate_mouse_activity(page, wait_ms)
         try:
-            page.reload(wait_until="networkidle", timeout=config.DEFAULT_TIMEOUT_MS)
+            with page.expect_navigation(wait_until="networkidle", timeout=config.DEFAULT_TIMEOUT_MS):
+                page.keyboard.press("F5")
         except PlaywrightError:
             try:
                 page.reload(wait_until="domcontentloaded")
