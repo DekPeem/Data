@@ -118,6 +118,28 @@ def _force_clear_overlays(page: Page) -> None:
         pass
 
 
+# คำ/วลีที่บ่งชี้ว่าโดนหน้า Access Denied ของ Imperva (ไม่ใช่แค่ "ยังไม่พบผลลัพธ์" ธรรมดา) — เช็ค
+# แบบ case-insensitive
+_BLOCK_INDICATORS = ("access denied", "request unsuccessful", "incapsula", "powered by imperva", "are you a robot")
+
+
+def _reload_if_blocked(page: Page) -> None:
+    """หน้าแรกบางครั้งโดน Imperva บล็อก ("Access denied — Error 15") เฉพาะตอนโหลดครั้งแรกเท่านั้น
+    — ยืนยันจากผู้ใช้จริงว่ากด reload มือ 1 ครั้งแล้วผ่านทุกครั้ง (ทั่วไปคือ Incapsula ทำ JS
+    challenge รอบแรกแล้วค่อยปล่อยผ่านตอนโหลดซ้ำ เมื่อ challenge ผ่านแล้ว) — เช็คแล้ว reload ให้
+    อัตโนมัติ 1 ครั้งถ้าเจอ ไม่ต้องให้ผู้ใช้กดเองอีกต่อไป เงียบๆ ถ้าไม่เจอเลย (หน้าปกติ)"""
+
+    try:
+        text = page.inner_text("body").lower()
+    except PlaywrightError:
+        return
+    if not any(indicator in text for indicator in _BLOCK_INDICATORS):
+        return
+
+    page.reload(wait_until="domcontentloaded")
+    page.wait_for_timeout(config.SETTLE_MS)
+
+
 # --------------------------------------------------------------------------
 # Step 1 — search
 # --------------------------------------------------------------------------
@@ -131,6 +153,7 @@ def search_company(page: Page, company_id: str) -> None:
     """
     page.goto(config.BASE_URL, wait_until="domcontentloaded")
     page.wait_for_timeout(config.SETTLE_MS)
+    _reload_if_blocked(page)
     dismiss_overlays(page)
 
     box = bu.find(page, config.SEARCH_INPUT, what="the home search box")
