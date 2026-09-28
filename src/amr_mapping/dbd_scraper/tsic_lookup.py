@@ -134,14 +134,19 @@ def _launch(playwright, headless: bool):
     """เปิดเบราว์เซอร์ตามที่ยืนยันจากผู้ใช้จริงว่าใช้ได้ (ดู config.py หัวข้อ "Bot protection"):
     เปิดแบบ headed (มองเห็นหน้าต่าง) ไม่ต้องปลอมตัวก็ผ่าน — headless ต้องใช้ Google Chrome ตัวจริง
     (channel="chrome") พร้อม stealth script เท่านั้น ตัว Chromium ที่ Playwright bundle มาเองใช้
-    ไม่ได้แม้จะปลอมตัวแล้วก็ตาม"""
+    ไม่ได้แม้จะปลอมตัวแล้วก็ตาม — ใช้ channel="chrome" ทั้ง 2 โหมดเสมอ (ไม่ใช่แค่ตอน headless)
+    เพราะพึ่ง Google Chrome ตัวจริงที่มีอยู่แล้วในเครื่องโดยตรง ไม่ต้องดาวน์โหลด Chromium ของ
+    Playwright เองแยกต่างหากอีกชุด (เจอจริง: ตัว bundled Chromium ไม่เคยถูกดาวน์โหลดไว้เลยถ้าไม่ได้
+    รัน `playwright install` เฉยๆ — รันแค่ `playwright install chrome` ก็พอสำหรับโค้ดนี้)"""
 
     if headless:
         browser = playwright.chromium.launch(
             channel=config.CHROME_CHANNEL, headless=True, args=config.HEADLESS_ARGS
         )
     else:
-        browser = playwright.chromium.launch(headless=False, args=config.LAUNCH_ARGS)
+        browser = playwright.chromium.launch(
+            channel=config.CHROME_CHANNEL, headless=False, args=config.LAUNCH_ARGS
+        )
 
     context = browser.new_context(user_agent=config.USER_AGENT, locale="th-TH")
     context.add_init_script(config.STEALTH_JS)
