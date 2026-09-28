@@ -11,6 +11,11 @@ No AMR Forecast เลย ใช้ตอน debug เพราะ:
 ใช้:
     python scripts/lookup_tsic.py 0245540000631
     python scripts/lookup_tsic.py 0245540000631 --headless   (ลองแบบไม่เห็นหน้าต่าง เหมือนตอนเรียกผ่านเว็บ)
+    python scripts/lookup_tsic.py 0245540000631 --no-interactive   (ปิดการถามให้คลิก reload เอง)
+
+ถ้าเจอหน้าบล็อกของ Incapsula แล้วลองอัตโนมัติ (รอ/ขยับเมาส์/กด F5) หมดโควตาแล้วยังไม่ผ่าน — สคริปต์
+จะหยุดรอให้กด Enter ใน terminal (ค่าเริ่มต้นตอนไม่ได้ใส่ --headless) ให้คลิกปุ่ม reload เองในหน้าต่าง
+Chrome ที่เปิดอยู่ด้วยมือก่อน (ยืนยันแล้วว่าผ่านได้ทุกครั้ง) แล้วค่อยกด Enter เพื่อไปต่อ
 """
 
 import argparse
@@ -30,10 +35,18 @@ def main():
         action="store_true",
         help="รันแบบไม่เห็นหน้าต่างเบราว์เซอร์ (ค่าเริ่มต้น: เห็นหน้าต่าง — เหมือนตอนเรียกผ่านเว็บ)",
     )
+    parser.add_argument(
+        "--no-interactive",
+        action="store_true",
+        help="ปิดการหยุดรอให้คลิก reload เอง (ค่าเริ่มต้น: เปิดไว้ตอนไม่ได้ใส่ --headless)",
+    )
     args = parser.parse_args()
 
-    print(f"ค้นหาเลขทะเบียน {args.registration_no} (headless={args.headless}) ...\n")
-    results = lookup_tsic_by_registration_no(args.registration_no, log=print, headless=args.headless)
+    interactive = (not args.headless) and (not args.no_interactive)
+    print(f"ค้นหาเลขทะเบียน {args.registration_no} (headless={args.headless}, interactive={interactive}) ...\n")
+    results = lookup_tsic_by_registration_no(
+        args.registration_no, log=print, headless=args.headless, interactive=interactive
+    )
 
     print(f"\n=== ผลลัพธ์: พบ {len(results)} รายการ ===")
     for r in results:

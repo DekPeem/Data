@@ -158,12 +158,21 @@ def _launch(playwright, headless: bool):
 
 
 def lookup_tsic_by_registration_no(
-    registration_no: str, log: ProgressCallback = _noop, headless: bool = True
+    registration_no: str,
+    log: ProgressCallback = _noop,
+    headless: bool = True,
+    interactive: bool = False,
 ) -> List[CompanyBusinessInfo]:
     """entry point ที่ web/app.py เรียก — เปิดเบราว์เซอร์ใหม่ทุกครั้ง ค้นหาด้วยเลขทะเบียน แล้วปิด
     เบราว์เซอร์ทิ้งเสมอไม่ว่าจะสำเร็จหรือพัง คืน [] (ไม่ raise) เมื่อไม่พบบริษัทนี้/หา TSIC ไม่ได้
     เลย — raise BlockedByAntiBot ถ้าตรวจพบข้อความของระบบป้องกันบอทแม้จะปลอมตัวแล้วก็ตาม (ยังไม่เคย
     เกิดขึ้นจากการทดสอบของผู้ใช้ แต่เช็คไว้กันเหนียว เหมือน dbd_lookup.py เดิม)
+
+    interactive=True — ถ้าลองผ่านหน้าบล็อกของ Incapsula อัตโนมัติหมดโควตาแล้วยังไม่ผ่าน จะหยุดรอ
+    ให้ผู้ใช้คลิก reload เองในหน้าต่างเบราว์เซอร์จริงด้วยมือ (ยืนยันแล้วว่าผ่านได้ทุกครั้ง ต่างจาก
+    การ reload/กด F5 ผ่านโค้ด) แล้วกด Enter ใน terminal เพื่อไปต่อ — ใช้ได้เฉพาะตอน headless=False
+    (มีหน้าต่างให้คลิกจริง) และรันแบบ interactive (มี terminal ให้กด Enter) เท่านั้น — เปิดจาก
+    scripts/lookup_tsic.py ไม่ใช่จากเว็บ (background job ของเว็บไม่มี terminal ให้กด Enter)
 
     ⚠️ ต้องรันในเครื่องที่ติดตั้ง Playwright + Google Chrome จริง (ดู docstring หัวไฟล์นี้) —
     ใช้งานไม่ได้ในสภาพแวดล้อมที่ไม่มีเบราว์เซอร์จริง/ไม่มี network ออกไปเว็บภายนอกได้"""
@@ -179,7 +188,7 @@ def lookup_tsic_by_registration_no(
         try:
             page = context.new_page()
             try:
-                scraper.search_company(page, normalized)
+                scraper.search_company(page, normalized, interactive=interactive)
             except scraper.OverlayBlocked as e:
                 log(f"⚠️ {e}")
                 return []
