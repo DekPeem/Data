@@ -7,3 +7,4 @@ pytest
 flask
 selenium
 webdriver-manager
+playwright

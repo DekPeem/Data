@@ -1439,18 +1439,19 @@ def test_business_type_lookup_success_suggests_matching_business_type(client, mo
     assert status["result"]["exact_match_index"] == 0
 
 
-def test_business_type_lookup_searches_by_registration_no_when_provided(client, monkeypatch):
-    """ถ้าส่ง registration_no มาด้วย ต้องใช้เลขทะเบียนเป็นคำค้นหาแทนชื่อบริษัท (ค้นหา DBD ด้วยเลข
-    ไม่ใช่ชื่อ) และ exact_match_index ต้องคำนวณจากเลขทะเบียนตรงกัน ไม่ใช่ชื่อ — แม้ชื่อที่พิมพ์มา
-    (company_name) จะสะกดคลาดเคลื่อนจากชื่อที่ DBD บันทึกไว้จริงก็ตาม (เคสที่ใช้ registration_no
-    ตั้งใจแก้: ค้นด้วยชื่อไม่แม่นยำพอ)"""
+def test_business_type_lookup_uses_registration_no_profile_fetch_when_provided(client, monkeypatch):
+    """ถ้าส่ง registration_no มาด้วย ต้องเรียก lookup_tsic_by_registration_no (dbd_scraper,
+    Playwright — ขับกล่องค้นหาบนหน้าเว็บจริง) แทน lookup_business_type_for_company (dbd_lookup,
+    Selenium — ค้นหาผ่านช่องค้นหาด้วยชื่อ) ไปเลย และ exact_match_index ต้องคำนวณจากเลขทะเบียนตรงกัน
+    ไม่ใช่ชื่อ — แม้ชื่อที่พิมพ์มา (company_name) จะสะกดคลาดเคลื่อนจากชื่อที่ DBD บันทึกไว้จริงก็ตาม"""
 
     from amr_mapping.dbd_lookup import CompanyBusinessInfo
 
-    received_keywords = []
+    received_registration_nos = []
+    name_search_called = []
 
-    def fake_lookup(keyword, log=lambda m: None, headless=True):
-        received_keywords.append(keyword)
+    def fake_profile_fetch(registration_no, log=lambda m: None, headless=True):
+        received_registration_nos.append(registration_no)
         return [
             CompanyBusinessInfo(
                 registration_no="0105544000157",
@@ -1462,7 +1463,17 @@ def test_business_type_lookup_searches_by_registration_no_when_provided(client, 
             )
         ]
 
-    monkeypatch.setattr(app_module, "lookup_business_type_for_company", fake_lookup)
+    def fake_name_search(company_name, log=lambda m: None, headless=True):
+        name_search_called.append(company_name)
+        return []
+
+    # lookup_tsic_by_registration_no ถูก import แบบ lazy (ไม่ใช่ top-level ของ web/app.py — กัน
+    # boot ไม่ขึ้นถ้าเครื่องไม่มี playwright ติดตั้ง) จึงต้อง patch ที่ต้นทาง (amr_mapping.dbd_scraper)
+    # แทน app_module โดยตรง — `from X import Y` ที่เรียกตอนรัน job จะเห็นค่าที่ patch ไว้เสมอ
+    import amr_mapping.dbd_scraper as dbd_scraper_module
+
+    monkeypatch.setattr(dbd_scraper_module, "lookup_tsic_by_registration_no", fake_profile_fetch)
+    monkeypatch.setattr(app_module, "lookup_business_type_for_company", fake_name_search)
 
     res = client.post(
         "/api/business-type-lookup",
@@ -1479,7 +1490,8 @@ def test_business_type_lookup_searches_by_registration_no_when_provided(client, 
         time.sleep(0.05)
 
     assert status["status"] == "success"
-    assert received_keywords == ["0105544000157"]  # ค้นด้วยเลขทะเบียน ไม่ใช่ชื่อที่พิมพ์มา
+    assert received_registration_nos == ["0105544000157"]
+    assert name_search_called == []  # ไม่ใช้ช่องค้นหาด้วยชื่อเลยตอนมีเลขทะเบียนมาให้
     assert status["result"]["exact_match_index"] == 0  # ตรงกันด้วยเลขทะเบียน แม้ชื่อสะกดต่างกัน
 
 

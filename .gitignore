@@ -37,3 +37,8 @@ data/reference/dbd_juristic_local.db
 # รอกรอกภายหลังในหน้า Admin ส่วน "รอทราบอัตรา" — หลักการเดียวกับ import_log_local.csv
 # ห้าม commit เด็ดขาด
 data/reference/pending_amr_local.csv
+
+# debug dump (screenshot + HTML) และ output CSV ของ dbd_scraper (Playwright) — อาจมีชื่อบริษัท/
+# เลขทะเบียนจริงจากการทดสอบในเครื่อง ห้าม commit เด็ดขาด (เหมือน amr_downloads/)
+src/amr_mapping/dbd_scraper/debug/
+src/amr_mapping/dbd_scraper/output/

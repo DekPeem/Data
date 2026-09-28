@@ -964,10 +964,21 @@ def _run_business_type_lookup_job(
     # ทั้งผลจาก DBD DataWarehouse โดยตรง (try ข้างล่าง) และผลจากฐานข้อมูล DBD Open Data ในเครื่อง
     # (except BlockedByAntiBot ข้างล่าง) จึงคำนวณไว้ครั้งเดียวตรงนี้ก่อนแยกสองเส้นทาง
     clusters = cluster_business_types(reference)
-    search_keyword = registration_no or company_name
 
     try:
-        results = lookup_business_type_for_company(search_keyword, log=log)
+        # มีเลขทะเบียนนิติบุคคล — ใช้ dbd_scraper (Playwright, ขับกล่องค้นหาบนหน้าเว็บจริง) แทน
+        # dbd_lookup (Selenium, ค้นด้วยชื่อผ่าน keyword search) เพราะยืนยันจากผู้ใช้จริงว่าการเดา
+        # URL หน้าโปรไฟล์ตรงๆ/ค้นด้วยเลขทะเบียนผ่านช่องค้นหาแบบเดิมไม่น่าเชื่อถือ/โดนบล็อกบ่อย
+        # (ดู amr_mapping.dbd_scraper.tsic_lookup) — import แบบ lazy ตรงนี้ (ไม่ใช่ top-level ของ
+        # ไฟล์) เพราะต้องพึ่ง playwright (dependency ใหม่) เหมือนที่ dbd_lookup.py เอง lazy-import
+        # selenium เข้าไปเฉพาะตอนใช้จริง — กัน web/app.py ทั้งไฟล์ boot ไม่ขึ้นถ้าเครื่องนั้นยังไม่ได้
+        # ติดตั้ง playwright ไว้ (ฟีเจอร์อื่นๆ ที่ไม่เกี่ยวกับการค้นหาด้วยเลขทะเบียนต้องใช้งานได้ตามปกติ)
+        if registration_no:
+            from amr_mapping.dbd_scraper import lookup_tsic_by_registration_no
+
+            results = lookup_tsic_by_registration_no(registration_no, log=log)
+        else:
+            results = lookup_business_type_for_company(company_name, log=log)
 
         candidates = []
         for r in results:
