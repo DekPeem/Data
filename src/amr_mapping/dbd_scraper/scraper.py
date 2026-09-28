@@ -123,21 +123,31 @@ def _force_clear_overlays(page: Page) -> None:
 _BLOCK_INDICATORS = ("access denied", "request unsuccessful", "incapsula", "powered by imperva", "are you a robot")
 
 
-def _reload_if_blocked(page: Page) -> None:
-    """หน้าแรกบางครั้งโดน Imperva บล็อก ("Access denied — Error 15") เฉพาะตอนโหลดครั้งแรกเท่านั้น
-    — ยืนยันจากผู้ใช้จริงว่ากด reload มือ 1 ครั้งแล้วผ่านทุกครั้ง (ทั่วไปคือ Incapsula ทำ JS
-    challenge รอบแรกแล้วค่อยปล่อยผ่านตอนโหลดซ้ำ เมื่อ challenge ผ่านแล้ว) — เช็คแล้ว reload ให้
-    อัตโนมัติ 1 ครั้งถ้าเจอ ไม่ต้องให้ผู้ใช้กดเองอีกต่อไป เงียบๆ ถ้าไม่เจอเลย (หน้าปกติ)"""
+def _reload_if_blocked(page: Page, *, max_attempts: int = 3) -> None:
+    """หน้าแรกบางครั้งโดน Imperva บล็อก ("Access denied — Error 15") ตอนโหลดครั้งแรก — ทั่วไปคือ
+    Incapsula ทำ JS challenge เบื้องหลังแล้วค่อยปล่อยผ่านตอนโหลดซ้ำ เมื่อ challenge ทำงานเสร็จ (ตั้ง
+    cookie ยืนยันแล้ว) แต่ challenge อาจใช้เวลาไม่เท่ากันทุกครั้ง — reload ครั้งเดียวทันทีอาจยังไม่พอ
+    (challenge ยังไม่ทันเสร็จ) จึงลองซ้ำได้ถึง max_attempts ครั้ง โดยรอนานขึ้นเรื่อยๆ ก่อน reload
+    แต่ละรอบ (ให้เวลา background JS challenge ทำงานให้เสร็จจริงๆ) เงียบๆ ถ้าไม่เจอหน้าบล็อกเลย"""
 
-    try:
-        text = page.inner_text("body").lower()
-    except PlaywrightError:
-        return
-    if not any(indicator in text for indicator in _BLOCK_INDICATORS):
-        return
+    for attempt in range(max_attempts):
+        try:
+            text = page.inner_text("body").lower()
+        except PlaywrightError:
+            return
+        if not any(indicator in text for indicator in _BLOCK_INDICATORS):
+            return
 
-    page.reload(wait_until="domcontentloaded")
-    page.wait_for_timeout(config.SETTLE_MS)
+        wait_ms = config.SETTLE_MS * (attempt + 3)  # รอนานขึ้นเรื่อยๆ ทุกรอบ (2.1s, 2.8s, 3.5s ที่ SETTLE_MS=700)
+        page.wait_for_timeout(wait_ms)
+        try:
+            page.reload(wait_until="networkidle", timeout=config.DEFAULT_TIMEOUT_MS)
+        except PlaywrightError:
+            try:
+                page.reload(wait_until="domcontentloaded")
+            except PlaywrightError:
+                return
+        page.wait_for_timeout(config.SETTLE_MS)
 
 
 # --------------------------------------------------------------------------
