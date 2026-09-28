@@ -150,6 +150,26 @@ def _simulate_mouse_activity(page: Page, duration_ms: int) -> None:
         elapsed += step_ms
 
 
+def _looks_blocked(page: Page, *, poll_ms: int = 3000, interval_ms: int = 500) -> bool:
+    """เช็คซ้ำหลายครั้งในช่วงเวลาสั้นๆ (ไม่ใช่เช็คทีเดียวจบ) ว่าหน้าปัจจุบันเป็นหน้า "Access denied"
+    ของ Incapsula ไหม — ยืนยันจาก debug dump จริงของผู้ใช้ว่าเช็คครั้งเดียวทันทีหลังโหลดหน้าพลาดได้
+    จริง เพราะหน้า Access denied อาจยังโหลด/redirect ไม่เสร็จตอนนั้น (มี JS/redirect เพิ่มอีกขั้น)
+    คืน True ทันทีที่เจอ ไม่ต้องรอครบ poll_ms เสมอไป"""
+
+    elapsed = 0
+    while True:
+        try:
+            text = page.inner_text("body").lower()
+        except PlaywrightError:
+            return False
+        if any(indicator in text for indicator in _BLOCK_INDICATORS):
+            return True
+        if elapsed >= poll_ms:
+            return False
+        page.wait_for_timeout(interval_ms)
+        elapsed += interval_ms
+
+
 def _reload_if_blocked(page: Page, *, max_attempts: int = 3, interactive: bool = False) -> None:
     """หน้าแรกบางครั้งโดน Imperva บล็อก ("Access denied — Error 15") ตอนโหลดครั้งแรก — ทั่วไปคือ
     Incapsula ทำ JS challenge เบื้องหลังแล้วค่อยปล่อยผ่านตอนโหลดซ้ำ เมื่อ challenge ทำงานเสร็จ (ตั้ง
@@ -163,6 +183,11 @@ def _reload_if_blocked(page: Page, *, max_attempts: int = 3, interactive: bool =
     บ่งชี้ว่า Incapsula อาจตรวจจับการเชื่อมต่อ CDP ของ Playwright เองได้เลย ไม่ว่าจะจำลอง input
     event แบบไหนก็ตาม (ไม่ใช่แค่เรื่อง "input event จริงหรือปลอม" อย่างที่คาดไว้แต่แรก)
 
+    ⚠️ ใช้ wait_until="domcontentloaded" เสมอ (ไม่ใช้ "networkidle") ตอนกด F5/reload — เพราะหน้า
+    Access denied/challenge page ของ Incapsula อาจมี background request/polling ค้างอยู่ตลอดเวลา
+    ทำให้ networkidle ไม่เกิดขึ้นเลย (รอค้างไม่จบ) ใช้ _looks_blocked (poll ซ้ำแบบมี timeout ชัดเจน)
+    แทนการพึ่ง wait_until ของ Playwright ให้บอกว่าหน้าโหลดเสร็จหรือยัง
+
     interactive=True (ใช้เฉพาะตอนรัน standalone script แบบเห็นหน้าต่างจริงเท่านั้น — เปิดจาก
     scripts/lookup_tsic.py) — ถ้าลองอัตโนมัติครบ max_attempts รอบแล้วยังโดนบล็อกอยู่ จะหยุดรอให้
     ผู้ใช้คลิก reload เองในหน้าต่างเบราว์เซอร์จริงด้วยมือ (วิธีเดียวที่ยืนยันแล้วว่าผ่านได้ทุกครั้ง)
@@ -170,17 +195,13 @@ def _reload_if_blocked(page: Page, *, max_attempts: int = 3, interactive: bool =
     1 ครั้ง)"""
 
     for attempt in range(max_attempts):
-        try:
-            text = page.inner_text("body").lower()
-        except PlaywrightError:
-            return
-        if not any(indicator in text for indicator in _BLOCK_INDICATORS):
+        if not _looks_blocked(page):
             return
 
         wait_ms = config.SETTLE_MS * (attempt + 3)  # รอนานขึ้นเรื่อยๆ ทุกรอบ (2.1s, 2.8s, 3.5s ที่ SETTLE_MS=700)
         _simulate_mouse_activity(page, wait_ms)
         try:
-            with page.expect_navigation(wait_until="networkidle", timeout=config.DEFAULT_TIMEOUT_MS):
+            with page.expect_navigation(wait_until="domcontentloaded", timeout=config.DEFAULT_TIMEOUT_MS):
                 page.keyboard.press("F5")
         except PlaywrightError:
             try:
@@ -190,11 +211,7 @@ def _reload_if_blocked(page: Page, *, max_attempts: int = 3, interactive: bool =
         page.wait_for_timeout(config.SETTLE_MS)
 
     while interactive:
-        try:
-            text = page.inner_text("body").lower()
-        except PlaywrightError:
-            return
-        if not any(indicator in text for indicator in _BLOCK_INDICATORS):
+        if not _looks_blocked(page):
             return
         print("\n⚠️  ยังโดนเว็บบล็อกอยู่ (ลองอัตโนมัติหมดแล้ว)")
         input("👉 คลิกปุ่ม reload เอง (วงกลมข้างช่อง URL) ในหน้าต่าง Chrome ที่เปิดอยู่ แล้วกด Enter ที่นี่เพื่อไปต่อ...")
@@ -215,12 +232,12 @@ def search_company(page: Page, company_id: str, *, interactive: bool = False) ->
     interactive=True — ดู _reload_if_blocked (ใช้เฉพาะ standalone script แบบเห็นหน้าต่างจริง)
     """
     # ยืนยันจาก debug dump จริงของผู้ใช้: ตอนโดนบล็อก หน้า "Access denied" ของ Incapsula ยังไม่ทัน
-    # render ตอน domcontentloaded fire (อาจมี redirect/JS เพิ่มอีกขั้น) — เช็คบล็อกตอนนั้นเลยจะเจอ
-    # หน้าที่ยังโหลดไม่เสร็จ (ไม่มีข้อความ "Access denied" ให้เจอ) แล้วเข้าใจผิดว่าไม่บล็อก ทั้งที่จริง
-    # บล็อกอยู่ (พิสูจน์แล้วว่า bu.find รอ 45 วินาทีทีหลังไปเจอหน้า Access denied ที่ render เสร็จแล้ว
-    # พอดี) — ใช้ wait_until="networkidle" แทน domcontentloaded ให้หน้าโหลด/redirect เสร็จสมบูรณ์
-    # ก่อนค่อยเช็คบล็อก เหมือนที่ _reload_if_blocked ใช้ตอน reload อยู่แล้ว
-    page.goto(config.BASE_URL, wait_until="networkidle")
+    # render ตอน domcontentloaded fire (อาจมี redirect/JS เพิ่มอีกขั้น) — เช็คบล็อกครั้งเดียวทันที
+    # ตอนนั้นจึงพลาดได้ ⚠️ เคยลองแก้ด้วย wait_until="networkidle" แต่หน้า Incapsula อาจมี background
+    # request/polling ค้างตลอดเวลา ทำให้ networkidle ไม่เกิดขึ้นเลย (เสี่ยงค้างไม่จบ) — ใช้
+    # domcontentloaded ตามเดิม (เร็ว ไม่เสี่ยงค้าง) แต่ให้ _reload_if_blocked/_looks_blocked เป็นคน
+    # poll เช็คซ้ำหลายครั้งในตัวเองแทน (ดู _looks_blocked)
+    page.goto(config.BASE_URL, wait_until="domcontentloaded")
     page.wait_for_timeout(config.SETTLE_MS)
     _reload_if_blocked(page, interactive=interactive)
     dismiss_overlays(page)
