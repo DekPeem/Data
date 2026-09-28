@@ -424,9 +424,22 @@ _JURISTIC_JS = """
 
   // Labels carry .prompt; the value is the very next sibling column.
   for (const label of document.querySelectorAll('.card-body .row > .prompt')) {
-    const key = norm(label.textContent);
+    let key = norm(label.textContent);
     const value = norm(label.nextElementSibling ? label.nextElementSibling.textContent : '');
-    if (!key || seen.has(key)) continue;
+    if (!key) continue;
+    // ยืนยันจาก DBD จริง: "ประเภทธุรกิจ" เป็น label ที่ปรากฏซ้ำได้ 2 การ์ดในหน้าเดียวกัน — การ์ด
+    // "ประเภทธุรกิจตอนจดทะเบียน" กับ "ประเภทธุรกิจที่ส่งงบการเงินปีล่าสุด" (คนละ TSIC กันจริงๆ ถ้า
+    // บริษัทเปลี่ยนสายธุรกิจไปจากตอนจดทะเบียน ไม่ใช่ข้อมูลซ้ำ) ต่างจาก label อื่นๆ ที่ปรากฏครั้งเดียว
+    // จริงในหน้านี้ — เดิม seen.has(key) ทิ้งอันที่ 2 ไปเงียบๆ (เก็บได้แค่ตัวแรกในหน้า DOM เท่านั้น)
+    // ทำให้ TSIC "ตามงบการเงินปีล่าสุด" (ที่ตั้งใจให้เป็นตัวหลัก — ดู tsic_lookup._build_candidates)
+    // หายไปเลยถ้ามันดันมาทีหลัง "ตอนจดทะเบียน" ใน DOM — ใช้หัวข้อการ์ดที่ครอบอยู่แทนชื่อ key เดิม
+    // เฉพาะ label นี้โดยเฉพาะ (label อื่นไม่แตะเลย กันพังของเดิม เช่น data.get("ชื่อนิติบุคคล"))
+    if (key === 'ประเภทธุรกิจ') {
+      const card = label.closest('.card, .card-body');
+      const heading = card ? norm((card.querySelector('.card-title, .card-header') || {}).textContent || '') : '';
+      if (heading) key = heading;
+    }
+    if (seen.has(key)) continue;
     seen.add(key);
     out.push([key, value]);
   }

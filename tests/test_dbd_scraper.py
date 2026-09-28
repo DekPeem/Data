@@ -116,6 +116,26 @@ def test_build_candidates_prefers_juristic_dict_when_it_has_tsic():
     assert candidates[0].tsic_code == "99999"
 
 
+def test_build_candidates_orders_latest_financial_statement_first_via_dict_path():
+    """เหมือน test_build_candidates_falls_back_to_body_text_when_dict_has_no_tsic (ลำดับ "ปีล่าสุด"
+    ต้องขึ้นก่อนเสมอ) แต่ผ่านทาง juristic dict โดยตรง ไม่ใช่ fallback ไปอ่าน body text — ยืนยันเคสจริง
+    ที่บริษัทมี TSIC ตอนจดทะเบียน/ปีล่าสุดต่างกัน (เช่น เปลี่ยนสายธุรกิจไปแล้ว) และ scraper.py's
+    _JURISTIC_JS ใช้หัวข้อการ์ดเป็น key แยกกันสำหรับ 2 การ์ดนี้โดยเฉพาะ (label "ประเภทธุรกิจ" ซ้ำกัน
+    ทั้งคู่ ต่างจาก label อื่นที่ปรากฏครั้งเดียว) — ก่อนแก้บั๊กนี้ การ์ดที่มาทีหลังใน DOM จะหายไปเงียบๆ"""
+
+    juristic = dict(_SAMPLE_JURISTIC)
+    juristic["ประเภทธุรกิจตอนจดทะเบียน"] = "28250 การผลิตเครื่องจักร"
+    juristic["ประเภทธุรกิจที่ส่งงบการเงินปีล่าสุด"] = "32909 การผลิตผลิตภัณฑ์อื่นๆ"
+
+    candidates = _build_candidates("0145537000805", juristic, "ข้อความหน้าอื่นที่ไม่เกี่ยวกัน", lambda m: None)
+
+    assert len(candidates) == 2
+    assert candidates[0].tsic_code == "32909"
+    assert "ปีล่าสุด" in candidates[0].tsic_name_th
+    assert candidates[1].tsic_code == "28250"
+    assert "ตอนจดทะเบียน" in candidates[1].tsic_name_th
+
+
 def test_build_candidates_dedupes_when_both_sources_give_same_code():
     body_text = _SAMPLE_BODY_TEXT.replace(
         "32909 การผลิตผลิตภัณฑ์อื่นๆซึ่งไม่ได้จัดประเภทไว้ในที่อื่น",

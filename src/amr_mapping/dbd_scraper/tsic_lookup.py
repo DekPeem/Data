@@ -95,6 +95,11 @@ def _build_candidates(
     from_dict = _extract_tsic_from_juristic_dict(juristic)
     if from_dict:
         entries = [(code, name, key) for code, name, key in from_dict]
+        # ให้ TSIC "ตามงบการเงินปีล่าสุด" ขึ้นก่อนเสมอถ้าเจอทั้งคู่ (เหมือน fallback ด้าน else
+        # ด้านล่าง) — สะท้อนกิจกรรมปัจจุบันของบริษัทมากกว่า "ตอนจดทะเบียน" ที่อาจเก่ากว่ามาก ยืนยัน
+        # จาก DBD จริง: บริษัทเดียวกันมี TSIC ตอนจดทะเบียน/ปีล่าสุดต่างกันได้จริง (เปลี่ยนสายธุรกิจ
+        # ไปแล้ว) — sort แบบ stable กันลำดับเดิมของรายการอื่นๆ ที่ไม่เกี่ยวกันพัง
+        entries.sort(key=lambda e: 0 if _HEADER_LATEST_FINANCIAL_STATEMENT in e[2] else 1)
     else:
         latest = _extract_tsic_after_header(body_text, _HEADER_LATEST_FINANCIAL_STATEMENT)
         registered = _extract_tsic_after_header(
