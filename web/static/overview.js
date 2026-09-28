@@ -138,6 +138,7 @@ function renderViewRow(c) {
     <td>
       ${escapeHtml(c.name) || "(ไม่ทราบชื่อ)"}
       <div class="cell-sub">บัญชี ${escapeHtml(c.account_no) || "-"}</div>
+      ${c.registration_no ? `<div class="cell-sub">เลขนิติบุคคล ${escapeHtml(c.registration_no)}</div>` : ""}
     </td>
     <td>${escapeHtml(businessLabelOf(c))}</td>
     <td>${escapeHtml(sectionLabelOf(c))}</td>
@@ -163,10 +164,13 @@ function renderEditRow(c) {
     <td>
       <input type="text" class="edit-input" data-field="name" value="${escapeHtml(c.name)}">
       <div class="cell-sub">บัญชี ${escapeHtml(c.account_no) || "-"}</div>
+      <input type="text" class="edit-input" data-field="registration_no" value="${escapeHtml(c.registration_no || "")}" placeholder="เลขนิติบุคคล 13 หลัก (ไม่บังคับ)" style="margin-top:4px;">
     </td>
     <td>
       <input type="text" class="edit-input" data-field="business_type_code" value="${escapeHtml(c.business_type_code || "")}" placeholder="เช่น 26109">
       <div class="edit-resolved-label" data-role="resolved-business">${escapeHtml(resolvedLabel)}</div>
+      <button type="button" class="btn-tiny" data-action="dbd-lookup" data-account="${escapeHtml(c.account_no)}" style="margin-top:4px;">🔍 ค้นหาจาก DBD</button>
+      <div class="edit-resolved-label" data-role="dbd-lookup-status" style="margin-top:4px;"></div>
     </td>
     <td>${escapeHtml(sectionLabelOf(c))}</td>
     <td><input type="text" class="edit-input" data-field="rate_code" value="${escapeHtml(c.rate_code || "")}" placeholder="เช่น 50"></td>
@@ -305,6 +309,7 @@ async function saveEdit(accountNo, row, passwordOverride) {
   const password = passwordOverride !== undefined ? passwordOverride : sessionStorage.getItem(SESSION_PASSWORD_KEY) || "";
 
   const name = row.querySelector('input[data-field="name"]').value.trim();
+  const registrationNo = row.querySelector('input[data-field="registration_no"]').value.trim();
   const businessTypeCode = row.querySelector('input[data-field="business_type_code"]').value.trim();
   const rateCode = row.querySelector('input[data-field="rate_code"]').value.trim();
   const solarRaw = row.querySelector('select[data-field="has_solar"]').value;
@@ -322,6 +327,7 @@ async function saveEdit(accountNo, row, passwordOverride) {
         account_no: accountNo,
         password,
         name,
+        registration_no: registrationNo,
         business_type_code: businessTypeCode,
         rate_code: rateCode,
         has_solar: hasSolar,
@@ -382,8 +388,97 @@ tbody.addEventListener("click", (e) => {
   } else if (action === "save") {
     const row = btn.closest("tr");
     saveEdit(accountNo, row);
+  } else if (action === "dbd-lookup") {
+    const row = btn.closest("tr");
+    runDbdLookupForRow(accountNo, row);
   }
 });
+
+// ── ค้นหา TSIC จาก DBD DataWarehouse ตรงจากแถวที่กำลังแก้ไข — ใช้เลขนิติบุคคล (registration_no)
+//    เป็นคำค้นหาถ้ากรอกไว้ (แม่นยำกว่าชื่อมาก ไม่มีปัญหาสะกด/คำนำหน้า-ต่อท้ายไม่ตรงกับที่จดทะเบียน
+//    ไว้เป๊ะ) ไม่งั้น fallback ไปค้นด้วยชื่อบริษัทแทน (เหมือนหน้า Admin เดิม) — เลือกผลลัพธ์ที่ใช่
+//    แล้วเติม business_type_code ในแถวให้อัตโนมัติ ยังต้องกด "บันทึก" เองอีกทีเสมอ ──
+
+async function runDbdLookupForRow(accountNo, row) {
+  const status = row.querySelector('[data-role="dbd-lookup-status"]');
+  const name = row.querySelector('input[data-field="name"]').value.trim();
+  const registrationNo = row.querySelector('input[data-field="registration_no"]').value.trim();
+
+  if (!name && !registrationNo) {
+    status.innerHTML = `<span style="color:#d03b3b;">กรอกชื่อบริษัทหรือเลขนิติบุคคลก่อน</span>`;
+    return;
+  }
+
+  status.textContent = "⏳ กำลังค้นหา... (เปิดเบราว์เซอร์จริง อาจใช้เวลาสักครู่)";
+
+  try {
+    const res = await fetch("/api/business-type-lookup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ company_name: name || registrationNo, registration_no: registrationNo || undefined }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      status.innerHTML = `<span style="color:#d03b3b;">${data.message || "เกิดข้อผิดพลาด"}</span>`;
+      return;
+    }
+    pollDbdLookupJobForRow(accountNo, data.job_id);
+  } catch (err) {
+    status.innerHTML = `<span style="color:#d03b3b;">เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ</span>`;
+    console.error(err);
+  }
+}
+
+async function pollDbdLookupJobForRow(accountNo, jobId) {
+  const row = tbody.querySelector(`tr[data-account="${CSS.escape(accountNo)}"]`);
+  if (!row) return; // ผู้ใช้กดยกเลิก/เปลี่ยนแถวที่แก้ไปแล้วระหว่างรอผล
+  const status = row.querySelector('[data-role="dbd-lookup-status"]');
+  if (!status) return;
+
+  const res = await fetch(`/api/business-type-lookup/${jobId}`);
+  const data = await res.json();
+
+  if (data.status === "running") {
+    setTimeout(() => pollDbdLookupJobForRow(accountNo, jobId), 800);
+    return;
+  }
+  if (data.status === "error") {
+    status.innerHTML = `<span style="color:#d03b3b;">ค้นหาไม่สำเร็จ: ${data.error || "เกิดข้อผิดพลาด"}</span>`;
+    return;
+  }
+
+  const { candidates } = data.result;
+  if (!candidates.length) {
+    status.textContent = "ไม่พบบริษัทนี้ใน DBD DataWarehouse — กรอกรหัสธุรกิจเองด้านบนได้เลย";
+    return;
+  }
+
+  status.innerHTML = "";
+  candidates.forEach((c) => {
+    const item = document.createElement("div");
+    item.style.cssText = "margin-top:4px;padding:4px 6px;border:1px solid rgba(15,23,42,0.1);border-radius:6px;";
+    item.innerHTML = `
+      <div>${escapeHtml(c.juristic_name)} <span style="color:#8996ab;">(${escapeHtml(c.juristic_type)})</span></div>
+      <div class="cell-sub">TSIC ${escapeHtml(c.tsic_code)} · ${escapeHtml(c.tsic_name_th)}</div>
+      <button type="button" class="btn-tiny" style="margin-top:2px;">ใช้อันนี้</button>`;
+    item.querySelector("button").addEventListener("click", () => applyDbdCandidateToRow(accountNo, c));
+    status.appendChild(item);
+  });
+}
+
+function applyDbdCandidateToRow(accountNo, candidate) {
+  const row = tbody.querySelector(`tr[data-account="${CSS.escape(accountNo)}"]`);
+  if (!row) return;
+  if (candidate.suggested_business_type_code) {
+    const input = row.querySelector('input[data-field="business_type_code"]');
+    input.value = candidate.suggested_business_type_code;
+    input.dispatchEvent(new Event("input")); // ให้ป้าย resolved-business อัปเดตตามทันที
+  }
+  const regInput = row.querySelector('input[data-field="registration_no"]');
+  if (regInput && !regInput.value.trim()) regInput.value = candidate.registration_no;
+  const status = row.querySelector('[data-role="dbd-lookup-status"]');
+  if (status) status.textContent = `เลือกแล้ว: ${candidate.juristic_name} — กด "บันทึก" เพื่อยืนยัน`;
+}
 
 function computeUsageStatsFromCurve(dayTypes) {
   const hours = (dayTypes && dayTypes.all) || [];

@@ -115,6 +115,7 @@ def _customer_to_dict(customer) -> dict:
         "contract_kva": customer.contract_kva,
         "has_amr": customer.has_amr,
         "has_solar": customer.has_solar,
+        "registration_no": customer.registration_no,
     }
 
 
@@ -473,6 +474,7 @@ def api_update_overview_entry():
     except (TypeError, ValueError):
         return jsonify({"error": "invalid_request", "message": "KVA ตามสัญญาต้องเป็นตัวเลข"}), 400
     has_solar = body.get("has_solar", current.has_solar if current else None)
+    registration_no = body.get("registration_no", current.registration_no if current else None)
 
     # has_amr ต้องเช็คทั้งทะเบียน (customers.csv/customers_local.csv) และประวัติการนำเข้าจริง
     # (import_log_local.csv) — บัญชีที่มาจากการนำเข้า AMR ล้วนๆ (ยังไม่เคยอยู่ในทะเบียนมาก่อนเลย)
@@ -493,6 +495,7 @@ def api_update_overview_entry():
         contract_kva=contract_kva,
         has_amr=has_amr_in_registry or has_amr_in_import_log,
         has_solar=has_solar if has_solar is None else bool(has_solar),
+        registration_no=(registration_no or "").strip() or None,
     )
 
     upsert_customer_local(DEFAULT_DATA_DIR / "customers_local.csv", updated)
@@ -930,13 +933,20 @@ def _run_business_type_lookup_job(
     rate_code: Optional[str] = None,
     contract_kva: Optional[float] = None,
     has_solar: Optional[bool] = None,
+    registration_no: Optional[str] = None,
 ) -> None:
-    """ค้นหาประเภทธุรกิจ (TSIC) ของบริษัทจากชื่อ ผ่าน DBD DataWarehouse (ดู dbd_lookup.py) —
-    รันเป็น background job แบบเดียวกับ AMR import เพราะเปิดเบราว์เซอร์จริงใช้เวลาหลายวินาที
+    """ค้นหาประเภทธุรกิจ (TSIC) ของบริษัทจากชื่อ (หรือเลขทะเบียนนิติบุคคลถ้ามี) ผ่าน DBD
+    DataWarehouse (ดู dbd_lookup.py) — รันเป็น background job แบบเดียวกับ AMR import เพราะเปิด
+    เบราว์เซอร์จริงใช้เวลาหลายวินาที
 
-    ⚠️ ชื่อบริษัทที่พิมพ์ในหน้านี้ "ถูกส่งออกไปค้นหาที่เว็บ DBD จริง" (ต่างจาก /api/forecast-adhoc
-    ที่ไม่ส่งชื่อไปไหนเลย) เพราะไม่มีทางค้นหาบริษัทจากชื่อได้โดยไม่ส่งชื่อไปที่แหล่งข้อมูลนั้น —
+    ⚠️ คำค้นหาที่พิมพ์ในหน้านี้ "ถูกส่งออกไปค้นหาที่เว็บ DBD จริง" (ต่างจาก /api/forecast-adhoc ที่
+    ไม่ส่งชื่อไปไหนเลย) เพราะไม่มีทางค้นหาบริษัทจากชื่อ/เลขทะเบียนได้โดยไม่ส่งไปที่แหล่งข้อมูลนั้น —
     หน้าเว็บต้องแจ้งผู้ใช้ให้ชัดเจนก่อนกดใช้ฟีเจอร์นี้ (ดู index.html)
+
+    registration_no (ไม่บังคับ — เลขทะเบียนนิติบุคคล 13 หลัก) ถ้ามีจะใช้เป็นคำค้นหาแทนชื่อบริษัท
+    ทันที (แม่นยำกว่ามาก ไม่มีปัญหาเรื่องสะกด/คำนำหน้า-ต่อท้ายไม่ตรงกับที่จดทะเบียนไว้เป๊ะเหมือนชื่อ)
+    และใช้เทียบหา "exact match" ด้วยเลขทะเบียนแทนชื่อด้วย — company_name ยังต้องส่งมาเสมอ (ใช้เป็น
+    ชื่อที่แสดง/log เฉยๆ ถ้ามี registration_no ให้ค้นหาแทน)
 
     rate_code/contract_kva/has_solar (ถ้าผู้ใช้กรอกมาพร้อมชื่อบริษัทในฟอร์มเดียวกัน) ใช้พยากรณ์
     ต่อให้อัตโนมัติทันทีหลังจับคู่ประเภทธุรกิจได้ (ดูส่วน primary_index ด้านล่าง) — ผู้ใช้จึงได้ผล
@@ -954,9 +964,10 @@ def _run_business_type_lookup_job(
     # ทั้งผลจาก DBD DataWarehouse โดยตรง (try ข้างล่าง) และผลจากฐานข้อมูล DBD Open Data ในเครื่อง
     # (except BlockedByAntiBot ข้างล่าง) จึงคำนวณไว้ครั้งเดียวตรงนี้ก่อนแยกสองเส้นทาง
     clusters = cluster_business_types(reference)
+    search_keyword = registration_no or company_name
 
     try:
-        results = lookup_business_type_for_company(company_name, log=log)
+        results = lookup_business_type_for_company(search_keyword, log=log)
 
         candidates = []
         for r in results:
@@ -979,7 +990,11 @@ def _run_business_type_lookup_job(
                 }
             )
 
-        exact = find_exact_match(results, company_name)
+        if registration_no:
+            normalized_reg_no = registration_no.strip()
+            exact = next((r for r in results if r.registration_no.strip() == normalized_reg_no), None)
+        else:
+            exact = find_exact_match(results, company_name)
         exact_index = results.index(exact) if exact is not None else None
 
         # เลือก "บริษัทหลัก" ที่จะใช้พยากรณ์อัตโนมัติทันที: ถ้าเจอชื่อตรงเป๊ะ (exact) ใช้ตัวนั้น
@@ -1157,6 +1172,7 @@ def api_start_business_type_lookup():
 
     body = request.get_json(force=True, silent=True) or {}
     company_name = (body.get("company_name") or "").strip()
+    registration_no = (body.get("registration_no") or "").strip() or None
     if not company_name:
         return jsonify({"error": "invalid_request", "message": "กรุณาระบุชื่อบริษัท"}), 400
 
@@ -1177,7 +1193,7 @@ def api_start_business_type_lookup():
 
     thread = threading.Thread(
         target=_run_business_type_lookup_job,
-        args=(job_id, company_name, rate_code, contract_kva, has_solar),
+        args=(job_id, company_name, rate_code, contract_kva, has_solar, registration_no),
         daemon=True,
     )
     thread.start()

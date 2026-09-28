@@ -137,6 +137,10 @@ class Customer:
     # ใดๆ ทั้งสิ้น ดู tsic_normalize.normalize_tsic_code_with_audit — None ถ้าไม่เคยผ่านการแปลง
     # (เช่น ลูกค้าเก่าที่มีมาก่อนฟีเจอร์นี้) หรือรหัสที่กรอกมาว่างเปล่าตั้งแต่แรก
     business_type_code_raw: Optional[str] = None
+    # เลขทะเบียนนิติบุคคล 13 หลักของกรมพัฒนาธุรกิจการค้า (DBD) — ไม่บังคับกรอก กรอกเองได้จากหน้า
+    # /overview ใช้แทนชื่อบริษัทตอนค้นหา TSIC ที่ DBD DataWarehouse ได้ (แม่นยำกว่าค้นด้วยชื่อ
+    # เพราะชื่อที่สแกนมาจากหน้า PEA อาจสะกด/มีคำนำหน้า-ต่อท้ายไม่ตรงกับที่จดทะเบียนไว้เป๊ะ)
+    registration_no: Optional[str] = None
 
 
 @dataclass(frozen=True)

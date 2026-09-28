@@ -1439,6 +1439,50 @@ def test_business_type_lookup_success_suggests_matching_business_type(client, mo
     assert status["result"]["exact_match_index"] == 0
 
 
+def test_business_type_lookup_searches_by_registration_no_when_provided(client, monkeypatch):
+    """ถ้าส่ง registration_no มาด้วย ต้องใช้เลขทะเบียนเป็นคำค้นหาแทนชื่อบริษัท (ค้นหา DBD ด้วยเลข
+    ไม่ใช่ชื่อ) และ exact_match_index ต้องคำนวณจากเลขทะเบียนตรงกัน ไม่ใช่ชื่อ — แม้ชื่อที่พิมพ์มา
+    (company_name) จะสะกดคลาดเคลื่อนจากชื่อที่ DBD บันทึกไว้จริงก็ตาม (เคสที่ใช้ registration_no
+    ตั้งใจแก้: ค้นด้วยชื่อไม่แม่นยำพอ)"""
+
+    from amr_mapping.dbd_lookup import CompanyBusinessInfo
+
+    received_keywords = []
+
+    def fake_lookup(keyword, log=lambda m: None, headless=True):
+        received_keywords.append(keyword)
+        return [
+            CompanyBusinessInfo(
+                registration_no="0105544000157",
+                juristic_name="บริษัท ทดสอบกระดาษ (สะกดต่างจากที่พิมพ์) จำกัด",
+                juristic_type="บริษัทจำกัด",
+                status="ยังดำเนินกิจการอยู่",
+                tsic_code="17099",
+                tsic_name_th="การผลิตผลิตภัณฑ์กระดาษอื่นๆ",
+            )
+        ]
+
+    monkeypatch.setattr(app_module, "lookup_business_type_for_company", fake_lookup)
+
+    res = client.post(
+        "/api/business-type-lookup",
+        json={"company_name": "บริษัท ทดสอบกระดาดถ จก", "registration_no": "0105544000157"},
+    )
+    assert res.status_code == 200
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/business-type-lookup/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    assert received_keywords == ["0105544000157"]  # ค้นด้วยเลขทะเบียน ไม่ใช่ชื่อที่พิมพ์มา
+    assert status["result"]["exact_match_index"] == 0  # ตรงกันด้วยเลขทะเบียน แม้ชื่อสะกดต่างกัน
+
+
 def test_business_type_lookup_auto_forecasts_when_match_is_unambiguous(client, monkeypatch):
     """ถ้าส่ง rate_code มาพร้อมชื่อบริษัท (ในฟอร์มเดียวกัน) และจับคู่ประเภทธุรกิจได้แบบไม่กำกวม
     (exact match เดียว) ต้องพยากรณ์ให้อัตโนมัติทันทีในผล job เลย (primary_index/forecast) —
@@ -2350,6 +2394,59 @@ def test_overview_entry_normalizes_legacy_tsic_code_from_user_input(client, monk
     assert len(saved) == 1
     assert saved[0].business_type_code == "86101"
     assert saved[0].business_type_code_raw == "93311"
+
+
+def test_overview_entry_saves_and_returns_registration_no(client, monkeypatch, tmp_path):
+    """แก้ไขเลขนิติบุคคล (registration_no) ผ่านหน้า /overview ได้ — ต้องบันทึกลง
+    customers_local.csv และคืนกลับมาใน response ทันที"""
+
+    tmp_data_dir = tmp_path / "reference"
+    tmp_data_dir.mkdir()
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_data_dir)
+
+    res = client.patch(
+        "/api/admin/overview-entry",
+        json={
+            "account_no": "TEST-REGNO-001",
+            "name": "ลูกค้าทดสอบเลขนิติบุคคล",
+            "registration_no": "0105544000157",
+        },
+    )
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["registration_no"] == "0105544000157"
+
+    from amr_mapping.loader import load_customers_local
+
+    saved = load_customers_local(tmp_data_dir / "customers_local.csv")
+    assert len(saved) == 1
+    assert saved[0].registration_no == "0105544000157"
+
+
+def test_overview_entry_editing_unrelated_field_keeps_existing_registration_no(client, monkeypatch, tmp_path):
+    """แก้ไขฟิลด์อื่น (ไม่ใช่ registration_no) ต้องไม่ล้างเลขนิติบุคคลที่เคยบันทึกไว้ทิ้ง —
+    ใช้ monkeypatch ที่ get_reference() ตรงๆ เหมือน
+    test_overview_entry_editing_unrelated_field_does_not_clobber_existing_raw_audit เพราะ
+    get_reference() โหลดจาก loader.DEFAULT_DATA_DIR เสมอ ไม่ใช่ app_module.DEFAULT_DATA_DIR"""
+
+    from amr_mapping.models import Customer
+
+    tmp_data_dir = tmp_path / "reference"
+    tmp_data_dir.mkdir()
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_data_dir)
+
+    existing_customer = Customer(
+        account_no="TEST-REGNO-002", name="ลูกค้า", registration_no="0105544000157",
+    )
+    patched = replace(app_module.get_reference(), customers=[existing_customer])
+    monkeypatch.setattr(app_module, "get_reference", lambda: patched)
+
+    res = client.patch(
+        "/api/admin/overview-entry",
+        json={"account_no": "TEST-REGNO-002", "rate_code": "50"},
+    )
+    assert res.status_code == 200
+    assert res.get_json()["registration_no"] == "0105544000157"
 
 
 def test_overview_entry_fallback_keeps_unknown_code_unchanged(client, monkeypatch, tmp_path):

@@ -349,6 +349,9 @@ def _load_customers(path: Path) -> List[Customer]:
                     # business_type_code_raw เป็นคอลัมน์ที่เพิ่มเข้ามาทีหลัง (เหมือน has_solar) —
                     # ไฟล์เก่าที่ยังไม่มีคอลัมน์นี้ต้องโหลดได้ตามปกติ (ไม่มี raw code ให้ตรวจสอบ)
                     business_type_code_raw=(row.get("business_type_code_raw") or "").strip() or None,
+                    # registration_no เป็นคอลัมน์ที่เพิ่มเข้ามาทีหลัง (เหมือน has_solar/
+                    # business_type_code_raw) — ไฟล์เก่าที่ยังไม่มีคอลัมน์นี้ต้องโหลดได้ตามปกติ
+                    registration_no=(row.get("registration_no") or "").strip() or None,
                 )
             )
     return customers
@@ -363,6 +366,7 @@ _CUSTOMER_FIELDNAMES = [
     "has_amr",
     "has_solar",
     "business_type_code_raw",
+    "registration_no",
 ]
 
 
@@ -390,6 +394,7 @@ def save_customers_local(customers: List[Customer], path: Path) -> None:
                     "has_amr": "true" if c.has_amr else "false",
                     "has_solar": "" if c.has_solar is None else ("true" if c.has_solar else "false"),
                     "business_type_code_raw": c.business_type_code_raw or "",
+                    "registration_no": c.registration_no or "",
                 }
             )
 
