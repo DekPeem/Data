@@ -514,3 +514,81 @@ async function saveHierarchy(code) {
 }
 
 loadBusinessTypesTable();
+
+// ── อัปโหลด AMR จริง สร้างฐานข้อมูล Boxplot ตาม TSIC (ดู src/amr_mapping/amr_boxplot.py) ──
+
+const amrBoxplotBizSelect = document.getElementById("amr-boxplot-biz-select");
+const amrBoxplotFiles = document.getElementById("amr-boxplot-files");
+const amrBoxplotUploadBtn = document.getElementById("amr-boxplot-upload-btn");
+const amrBoxplotUploadStatus = document.getElementById("amr-boxplot-upload-status");
+const amrBoxplotCoverage = document.getElementById("amr-boxplot-coverage");
+
+let amrBoxplotBizNameByCode = {};
+
+async function loadAmrBoxplotBizOptions() {
+  try {
+    const res = await fetch("/api/business-types-full");
+    const types = await res.json();
+    amrBoxplotBizNameByCode = Object.fromEntries(types.map((t) => [t.code, t.name_th]));
+    amrBoxplotBizSelect.innerHTML = [...types]
+      .sort((a, b) => (a.name_th || "").localeCompare(b.name_th || "", "th"))
+      .map((t) => `<option value="${t.code}">${t.name_th} · ${t.code}</option>`)
+      .join("");
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+async function loadAmrBoxplotCoverage() {
+  try {
+    const res = await fetch("/api/admin/amr-boxplot/status");
+    const status = await res.json();
+    const codes = Object.keys(status);
+    if (!codes.length) {
+      amrBoxplotCoverage.textContent = "ยังไม่มีข้อมูล AMR จริงในระบบเลย";
+      return;
+    }
+    amrBoxplotCoverage.innerHTML =
+      "มีข้อมูลแล้ว: " +
+      codes
+        .map((c) => `${amrBoxplotBizNameByCode[c] || c} (${c}) — ${status[c].intervals.toLocaleString("th-TH")} จุดข้อมูล, ${status[c].days} วัน`)
+        .join(" · ");
+  } catch (err) {
+    console.error(err);
+  }
+}
+
+amrBoxplotUploadBtn.addEventListener("click", async () => {
+  const bizCode = amrBoxplotBizSelect.value;
+  const files = amrBoxplotFiles.files;
+  if (!bizCode || !files.length) {
+    amrBoxplotUploadStatus.innerHTML = `<span style="color:#d03b3b;">กรุณาเลือกประเภทธุรกิจและแนบไฟล์อย่างน้อย 1 ไฟล์</span>`;
+    return;
+  }
+
+  const formData = new FormData();
+  formData.append("business_type_code", bizCode);
+  for (const f of files) formData.append("files", f);
+
+  amrBoxplotUploadBtn.disabled = true;
+  amrBoxplotUploadStatus.textContent = "⏳ กำลังอัปโหลด...";
+  try {
+    const res = await fetch("/api/admin/amr-boxplot/upload", { method: "POST", body: formData });
+    const data = await res.json();
+    if (!res.ok) {
+      amrBoxplotUploadStatus.innerHTML = `<span style="color:#d03b3b;">${data.message || "เกิดข้อผิดพลาด"}</span>`;
+      return;
+    }
+    amrBoxplotUploadStatus.innerHTML = `<span style="color:#006300;">✅ เพิ่มข้อมูลแล้ว ${data.added_intervals.toLocaleString("th-TH")} จุด (${data.days} วัน)</span>`;
+    amrBoxplotFiles.value = "";
+    loadAmrBoxplotCoverage();
+  } catch (err) {
+    amrBoxplotUploadStatus.innerHTML = `<span style="color:#d03b3b;">เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ</span>`;
+    console.error(err);
+  } finally {
+    amrBoxplotUploadBtn.disabled = false;
+  }
+});
+
+loadAmrBoxplotBizOptions();
+loadAmrBoxplotCoverage();

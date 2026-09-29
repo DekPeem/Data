@@ -26,6 +26,7 @@ from typing import List, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from flask import Flask, jsonify, request, send_file
+from werkzeug.utils import secure_filename
 
 from amr_mapping import load_reference_data
 from amr_mapping.dbd_lookup import BlockedByAntiBot, find_exact_match, lookup_business_type_for_company
@@ -579,6 +580,150 @@ def api_forecast_shape():
             peak_h=peak_h, energy_h=energy_h, days_h=days_h,
             drop_pct=drop_pct if drop_pct is not None else 43.0,
         )
+    except ValueError as e:
+        return jsonify({"error": "invalid_request", "message": str(e)}), 400
+
+    return app.response_class(png_bytes, mimetype="image/png")
+
+
+# ── Boxplot จากข้อมูล AMR จริงที่แอดมินอัปโหลด แยกเก็บตามประเภทธุรกิจ (TSIC) — ดู
+#    src/amr_mapping/amr_boxplot.py ต่างจาก /api/forecast-shape ด้านบนตรงที่นี่คือข้อมูล "วัดจริง"
+#    ของธุรกิจประเภทเดียวกัน ไม่ใช่เส้นโค้งสมมติจากตัวเลขบิล ──
+
+_AMR_BOXPLOT_FILE_EXTENSIONS = (".xls", ".xlsx", ".html", ".htm")
+_MAX_AMR_ZIP_EXTRACTED_BYTES = 300 * 1024 * 1024  # 300 MB
+_MAX_AMR_ZIP_MEMBERS = 1000
+
+
+def _save_uploaded_amr_boxplot_files(files, upload_dir: Path) -> List[str]:
+    """บันทึกไฟล์ AMR ที่แนบมาลง upload_dir — แตก .zip ให้อัตโนมัติถ้ามี (เผื่อรวมหลายเดือนมาเป็น
+    ซิปเดียว) กัน zip slip ด้วยการตัด path ย่อยทิ้งจากชื่อไฟล์ในซิปเสมอ (ดู
+    _save_uploaded_amr_files เดิมใน git history — ย้ายมาแบบง่ายลง เพราะที่นี่ไม่ต้องแยกกลุ่มตาม
+    บริษัทเหมือนโหมดนำเข้าหลายบริษัทพร้อมกันแบบเดิม อัปโหลดครั้งนึงคือ TSIC เดียวเสมอ)"""
+
+    file_paths: List[str] = []
+    for f in files:
+        filename = secure_filename(f.filename or "") or f"upload_{len(file_paths) + 1}"
+
+        if filename.lower().endswith(".zip"):
+            zip_path = upload_dir / f"_upload_{len(file_paths)}.zip"
+            f.save(zip_path)
+            try:
+                with zipfile.ZipFile(zip_path) as zf:
+                    members = [m for m in zf.infolist() if not m.is_dir()]
+                    if len(members) > _MAX_AMR_ZIP_MEMBERS:
+                        raise ValueError(f"ไฟล์ {filename} มีไฟล์ข้างในเยอะเกินไป ({len(members)} ไฟล์)")
+                    total_size = sum(m.file_size for m in members)
+                    if total_size > _MAX_AMR_ZIP_EXTRACTED_BYTES:
+                        raise ValueError(f"ไฟล์ {filename} ขนาดหลังแตกไฟล์ใหญ่เกินไป")
+
+                    for i, member in enumerate(members):
+                        member_name = Path(member.filename).name  # ตัด path ย่อยทิ้ง กัน zip slip
+                        if not member_name or member_name.startswith("."):
+                            continue
+                        if "__MACOSX" in Path(member.filename).parts:
+                            continue
+                        if not member_name.lower().endswith(_AMR_BOXPLOT_FILE_EXTENSIONS):
+                            continue
+                        safe_name = secure_filename(member_name) or f"zip_entry_{i}"
+                        dest = (upload_dir / safe_name).resolve()
+                        if upload_dir.resolve() not in dest.parents and dest != upload_dir.resolve():
+                            continue  # ป้องกันไว้อีกชั้น แม้ตัด path ย่อยไปแล้วก็ตาม
+                        if dest.exists():
+                            dest = upload_dir / f"{i}_{safe_name}"
+                        with zf.open(member) as src, open(dest, "wb") as out:
+                            out.write(src.read())
+                        file_paths.append(str(dest))
+            except zipfile.BadZipFile:
+                raise ValueError(f"ไฟล์ {filename} ไม่ใช่ไฟล์ .zip ที่ถูกต้อง หรือไฟล์เสียหาย")
+            finally:
+                zip_path.unlink(missing_ok=True)
+            continue
+
+        dest = upload_dir / filename
+        f.save(dest)
+        if filename.lower().endswith(_AMR_BOXPLOT_FILE_EXTENSIONS):
+            file_paths.append(str(dest))
+
+    return file_paths
+
+
+@app.route("/api/admin/amr-boxplot/upload", methods=["POST"])
+def api_amr_boxplot_upload():
+    """อัปโหลดไฟล์ AMR จริง (รายงาน 15 นาทีจาก PEA) ผูกกับประเภทธุรกิจ (TSIC) หนึ่งรายการ — อ่าน
+    แล้วเก็บเฉพาะตัวเลขกำลังไฟฟ้ารายชั่วโมง (ไม่เก็บชื่อ/เลขบัญชีลูกค้าเลย) ลงไฟล์ local-only
+    (amr_boxplot_intervals_local.csv) สะสมไปเรื่อยๆ ทุกครั้งที่อัปโหลดเพิ่ม (ดู
+    src/amr_mapping/amr_boxplot.py)"""
+
+    from amr_mapping.amr_boxplot import append_intervals_local, parse_amr_files
+
+    business_type_code = (request.form.get("business_type_code") or "").strip()
+    files = request.files.getlist("files")
+    if not business_type_code:
+        return jsonify({"error": "invalid_request", "message": "กรุณาเลือกประเภทธุรกิจ (TSIC)"}), 400
+    if not files:
+        return jsonify({"error": "invalid_request", "message": "กรุณาแนบไฟล์ AMR อย่างน้อย 1 ไฟล์"}), 400
+
+    upload_id = uuid.uuid4().hex
+    upload_dir = DEFAULT_DATA_DIR / "_amr_boxplot_uploads" / upload_id
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        file_paths = _save_uploaded_amr_boxplot_files(files, upload_dir)
+    except ValueError as e:
+        return jsonify({"error": "invalid_request", "message": str(e)}), 400
+
+    if not file_paths:
+        return jsonify(
+            {"error": "invalid_request", "message": "ไม่พบไฟล์ AMR ที่รองรับ (.xls/.xlsx/.html/.htm) ในไฟล์ที่แนบมาเลย"}
+        ), 400
+
+    intervals = parse_amr_files(file_paths)
+    if not intervals:
+        return jsonify(
+            {"error": "invalid_request", "message": "อ่านไฟล์ที่แนบมาไม่ได้เลย (รูปแบบอาจไม่ตรงกับรายงาน AMR ของ PEA)"}
+        ), 400
+
+    storage_path = DEFAULT_DATA_DIR / "amr_boxplot_intervals_local.csv"
+    added = append_intervals_local(business_type_code, intervals, storage_path)
+
+    return jsonify({"added_intervals": added, "days": len({i.date for i in intervals})})
+
+
+@app.route("/api/admin/amr-boxplot/status")
+def api_amr_boxplot_status():
+    """สรุปว่าแต่ละประเภทธุรกิจ (TSIC) มีข้อมูล AMR จริงสะสมไว้เท่าไหร่แล้ว — ใช้แสดงในหน้า Admin"""
+
+    from amr_mapping.amr_boxplot import summarize_available
+
+    storage_path = DEFAULT_DATA_DIR / "amr_boxplot_intervals_local.csv"
+    return jsonify(summarize_available(storage_path))
+
+
+@app.route("/api/forecast-boxplot")
+def api_forecast_boxplot():
+    """คืนกราฟ Boxplot (PNG) จากข้อมูล AMR จริงที่สะสมไว้สำหรับประเภทธุรกิจ (TSIC) หนึ่งรายการ —
+    ต่างจาก /api/forecast-shape ตรงที่นี่คือข้อมูลวัดจริง ไม่ใช่เส้นโค้งสมมติ ต้องมีคนอัปโหลด AMR
+    จริงของธุรกิจประเภทนี้ไว้ก่อนแล้ว (ผ่าน /api/admin/amr-boxplot/upload) ไม่งั้นคืน 404"""
+
+    from amr_mapping.amr_boxplot import load_intervals_local, render_boxplot_png
+
+    business_type_code = (request.args.get("business_type_code") or "").strip()
+    if not business_type_code:
+        return jsonify({"error": "invalid_request", "message": "กรุณาระบุประเภทธุรกิจ (TSIC)"}), 400
+
+    storage_path = DEFAULT_DATA_DIR / "amr_boxplot_intervals_local.csv"
+    df = load_intervals_local(storage_path, business_type_code)
+    if df.empty:
+        return jsonify(
+            {"error": "not_found", "message": "ยังไม่มีข้อมูล AMR จริงสำหรับประเภทธุรกิจนี้เลย (อัปโหลดได้จากหน้า Admin)"}
+        ), 404
+
+    reference = get_reference()
+    bt = reference.business_types.get(business_type_code)
+    business_type_name = bt.name_th if bt else ""
+
+    try:
+        png_bytes = render_boxplot_png(df, business_type_code, business_type_name)
     except ValueError as e:
         return jsonify({"error": "invalid_request", "message": str(e)}), 400
 

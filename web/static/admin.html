@@ -98,6 +98,32 @@
     <main class="body-wrap">
 
       <div class="card" style="padding: 28px; display: flex; flex-direction: column; gap: 16px;">
+        <div>
+          <div style="font-size: 15px; font-weight: 700;">อัปโหลดข้อมูล AMR จริง (สร้างฐานข้อมูล Boxplot ตาม TSIC)</div>
+          <div class="hint">
+            อัปโหลดไฟล์ AMR จริง (รายงาน 15 นาทีจาก PEA — .xls/.zip) ของธุรกิจประเภทหนึ่ง ระบบจะเก็บเฉพาะตัวเลขกำลังไฟฟ้ารายชั่วโมง
+            (ไม่มีชื่อ/เลขบัญชีลูกค้าติดไปด้วยเลย) สะสมไว้ในเครื่องนี้ทุกครั้งที่อัปโหลดเพิ่ม — ใช้วาดกราฟ Boxplot ให้ผู้ใช้ไฟที่ยังไม่มี
+            AMR ของธุรกิจประเภทเดียวกันดูเป็นข้อมูลอ้างอิง (ดูจากหน้าแรกได้หลังจับคู่ประเภทธุรกิจแล้ว)
+          </div>
+        </div>
+        <div class="form-grid">
+          <div class="form-field">
+            <label for="amr-boxplot-biz-select">ประเภทธุรกิจ (TSIC)</label>
+            <select id="amr-boxplot-biz-select"></select>
+          </div>
+          <div class="form-field">
+            <label for="amr-boxplot-files">ไฟล์ AMR (.xls/.zip, เลือกได้หลายไฟล์)</label>
+            <input id="amr-boxplot-files" type="file" multiple accept=".xls,.xlsx,.html,.htm,.zip">
+          </div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+          <button type="button" id="amr-boxplot-upload-btn" class="day-type-btn">⬆️ อัปโหลด</button>
+          <div id="amr-boxplot-upload-status" class="hint"></div>
+        </div>
+        <div id="amr-boxplot-coverage" class="hint"></div>
+      </div>
+
+      <div class="card" style="padding: 28px; display: flex; flex-direction: column; gap: 16px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
           <div>
             <div style="font-size: 15px; font-weight: 700;">หมวดหมู่ธุรกิจทั้งหมดในระบบ (แบ่งตาม Section)</div>

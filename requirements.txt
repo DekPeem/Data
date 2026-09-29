@@ -10,3 +10,4 @@ webdriver-manager
 playwright
 numpy
 matplotlib
+pandas

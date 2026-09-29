@@ -1,0 +1,285 @@
+"""รวบรวมข้อมูล AMR จริง (รายงาน 15 นาทีจาก PEA) ที่แอดมินอัปโหลดเข้ามา จัดเก็บแยกตามประเภทธุรกิจ
+(TSIC) แล้ววาดกราฟ Boxplot แสดงการกระจายตัวจริงของการใช้ไฟรายชั่วโมง — ใช้เป็นข้อมูลอ้างอิงให้
+ผู้ใช้ไฟรายที่ "ยังไม่มี AMR ของตัวเอง" ดูว่าธุรกิจประเภทเดียวกันในระบบใช้ไฟเป็นรูปแบบไหนบ้างจริงๆ
+(ต่างจาก forecast_shape.py ที่สร้างเส้นโค้งสมมติจากแค่ตัวเลขบิล — อันนี้คือข้อมูลวัดจริง)
+
+พอร์ตมาจากสคริปต์ CLI แบบ standalone (load_boxplot.py — วิ่งด้วย pandas/numpy/matplotlib ในเครื่อง
+ผู้ใช้เอง) ตัดส่วน argparse/CLI + ฟีเจอร์จำลอง demand-response (--drop / เส้น target หลังลด peak)
+ออก เพราะฟีเจอร์นั้นถูกตัดออกจากทั้งระบบไปแล้ว เหลือแค่การอ่านไฟล์ + คำนวณ box stats + วาดกราฟ
+
+⚠️ ไฟล์ AMR ดิบที่อัปโหลดเข้ามามีข้อมูลระบุตัวตนลูกค้า (ชื่อบริษัท/เลขบัญชี/เลขมิเตอร์) — โมดูลนี้
+อ่านเฉพาะตัวเลขกำลังไฟฟ้า (kW) รายช่วงเวลา 15 นาที ไม่เก็บชื่อ/เลขบัญชีใดๆ ไว้เลย เก็บแค่
+(business_type_code, date, hour, rate, kw) ลงไฟล์ local-only (amr_boxplot_intervals_local.csv —
+อยู่ใน .gitignore ห้าม commit เด็ดขาด เหมือนหลักการเดียวกับ customers_local.csv)
+"""
+
+from __future__ import annotations
+
+import io
+import zipfile
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, List, Optional, Union
+
+import matplotlib
+
+matplotlib.use("Agg")  # เซิร์ฟเวอร์ไม่มีจอแสดงผล — ต้องตั้งก่อน import pyplot เสมอ
+
+import numpy as np
+import pandas as pd
+
+COLORS = {"P": "#eb6834", "OP": "#1baf7a", "H": "#6250d6"}
+THAI_FONTS = ["Noto Sans Thai", "Sarabun", "TH Sarabun New", "Tahoma", "Leelawadee UI", "Thonburi"]
+
+_INTERVAL_FIELDNAMES = ["business_type_code", "date", "hour", "rate", "kw"]
+
+DEFAULT_SHUTDOWN_KW = 150.0
+
+
+@dataclass(frozen=True)
+class ParsedInterval:
+    date: str  # YYYY-MM-DD
+    hour: int
+    minute: int  # 0/15/30/45 — เก็บไว้แค่แยกแยะ 4 จุดข้อมูลต่อชั่วโมงตอน dedup เท่านั้น ไม่ได้
+    # เขียนลงไฟล์ storage (box stats จัดกลุ่มแค่ระดับชั่วโมง ไม่สนนาที)
+    rate: str  # "P" | "OP" | "H"
+    kw: float
+
+
+def _read_one(html: str) -> pd.DataFrame:
+    """แกะตาราง HTML 1 ไฟล์ (รายงานข้อมูลกิโลวัตต์ชั่วโมงแบบช่วงเวลาของ PEA — นามสกุลไฟล์ .xls
+    แต่เนื้อหาจริงเป็น HTML table) — เหมือน load_boxplot.py ต้นฉบับทุกประการ"""
+
+    tables = pd.read_html(io.StringIO(html))
+    d = tables[1].iloc[1:].copy()  # table 0 = ข้อมูลหัวรายงาน, 1 = ข้อมูลจริง, 2 = ท้ายรายงาน
+    d.columns = ["ts", "a1", "a2", "b1", "b2", "c1", "c2"]
+    d = d[d["ts"].astype(str).str.match(r"\d\d/\d\d/\d{4} \d\d\.\d\d")]
+    for c in d.columns[1:]:
+        d[c] = pd.to_numeric(d[c], errors="coerce")
+    return d
+
+
+def parse_amr_file(path: Union[str, Path]) -> List[ParsedInterval]:
+    """อ่านไฟล์ AMR ดิบ 1 ไฟล์ (encoding utf-8 หรือใกล้เคียง) คืนรายการ interval ที่แกะแล้ว
+    (rate=P/OP/H, kw, date, hour) — คืน list ว่างถ้าอ่าน/แปลงไม่สำเร็จ (ไม่ raise ทำให้ไฟล์อื่นที่
+    อัปโหลดมาพร้อมกันยังประมวลผลต่อได้)"""
+
+    try:
+        html = Path(path).read_text(encoding="utf-8", errors="ignore")
+        df = _read_one(html)
+    except Exception:  # noqa: BLE001 — ไฟล์เสีย/รูปแบบไม่ตรง ข้ามไปเฉยๆ
+        return []
+
+    day = pd.to_datetime(df["ts"].str[:10], format="%d/%m/%Y", errors="coerce")
+    mins = df["ts"].str[11:13].astype(int) * 60 + df["ts"].str[14:16].astype(int)
+    end = day + pd.to_timedelta(mins, unit="m")
+    start = end - pd.Timedelta(minutes=15)
+
+    rate = np.select([df.a1.notna(), df.b1.notna(), df.c1.notna()], ["P", "OP", "H"], "?")
+    kw = df[["a1", "b1", "c1"]].bfill(axis=1).iloc[:, 0]
+
+    out: List[ParsedInterval] = []
+    for s, r, k in zip(start, rate, kw):
+        if r == "?" or pd.isna(s) or pd.isna(k):
+            continue
+        out.append(ParsedInterval(date=s.strftime("%Y-%m-%d"), hour=int(s.hour), minute=int(s.minute), rate=str(r), kw=float(k)))
+    return out
+
+
+def parse_amr_files(paths: List[Union[str, Path]]) -> List[ParsedInterval]:
+    """อ่านไฟล์ AMR ดิบหลายไฟล์รวมกัน (เช่น หลายเดือนของบริษัทเดียวกัน) — ตัดรายการซ้ำทิ้งด้วย
+    (date, hour, minute, rate ตรงกันเป๊ะถือว่าซ้ำ — ไฟล์ที่มาซ้ำซ้อนกันบางเดือนจะไม่ถูกนับ 2 รอบ)
+    ต้องเทียบถึงระดับนาทีด้วย ไม่ใช่แค่ชั่วโมง เพราะ 1 ชั่วโมงมี 4 จุดข้อมูล (ทุก 15 นาที) ถ้าเทียบ
+    แค่ (date, hour) จะเข้าใจผิดว่าจุดข้อมูลปกติ 4 จุดต่อชั่วโมงเป็นของซ้ำกันแล้วทิ้งไป 3 ใน 4 จุด"""
+
+    seen = set()
+    out: List[ParsedInterval] = []
+    for p in paths:
+        for interval in parse_amr_file(p):
+            key = (interval.date, interval.hour, interval.minute, interval.rate)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(interval)
+    return out
+
+
+def append_intervals_local(business_type_code: str, intervals: List[ParsedInterval], path: Path) -> int:
+    """เพิ่มข้อมูล interval ที่อ่านมาแล้วต่อท้ายไฟล์ local (ไม่มีชื่อ/เลขบัญชีลูกค้าติดไปด้วยเลย)
+    คืนจำนวนแถวที่เพิ่มจริง"""
+
+    import csv
+
+    file_exists = path.exists()
+    with path.open("a", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=_INTERVAL_FIELDNAMES, lineterminator="\n")
+        if not file_exists:
+            writer.writeheader()
+        for interval in intervals:
+            writer.writerow(
+                {
+                    "business_type_code": business_type_code,
+                    "date": interval.date,
+                    "hour": interval.hour,
+                    "rate": interval.rate,
+                    "kw": interval.kw,
+                }
+            )
+    return len(intervals)
+
+
+def load_intervals_local(path: Path, business_type_code: Optional[str] = None) -> pd.DataFrame:
+    """โหลดข้อมูล interval จริงทั้งหมด (หรือกรองเฉพาะ business_type_code เดียว) คืน DataFrame ว่าง
+    ถ้ายังไม่มีไฟล์เลย/ไม่มีข้อมูลของ business_type_code นั้น"""
+
+    if not path.exists():
+        return pd.DataFrame(columns=_INTERVAL_FIELDNAMES)
+    # business_type_code ต้องอ่านเป็น string เสมอ (ไม่งั้น pandas เดาว่าเป็น int ถ้ารหัสเป็นตัวเลข
+    # ล้วน เช่น "55101" ทำให้เทียบกับ business_type_code ที่ส่งเข้ามา (string) ไม่ตรงกันเงียบๆ)
+    df = pd.read_csv(path, encoding="utf-8-sig", dtype={"business_type_code": str})
+    if business_type_code:
+        df = df[df["business_type_code"] == business_type_code]
+    return df
+
+
+def summarize_available(path: Path) -> Dict[str, dict]:
+    """สรุปว่าแต่ละ business_type_code มีข้อมูล AMR จริงสะสมไว้เท่าไหร่แล้ว (จำนวน interval +
+    จำนวนวันที่ต่างกัน) — ใช้แสดงในหน้า Admin"""
+
+    if not path.exists():
+        return {}
+    df = pd.read_csv(path, encoding="utf-8-sig", dtype={"business_type_code": str})
+    if df.empty:
+        return {}
+    out: Dict[str, dict] = {}
+    for code, sub in df.groupby("business_type_code"):
+        out[str(code)] = {"intervals": len(sub), "days": sub["date"].nunique()}
+    return out
+
+
+def _box_stats(values_by_hour: Dict[int, List[float]]) -> List[dict]:
+    """per-hour stats แบบ matplotlib bxp format (whiskers = P5..P95, flier = max) — เหมือน
+    load_boxplot.py ต้นฉบับทุกประการ"""
+
+    out = []
+    for h in range(24):
+        v = np.array(values_by_hour.get(h, []), dtype=float)
+        if v.size == 0:
+            out.append(dict(med=0, q1=0, q3=0, whislo=0, whishi=0, fliers=[]))
+            continue
+        p5, q1, med, q3, p95 = np.percentile(v, [5, 25, 50, 75, 95])
+        out.append(dict(med=med, q1=q1, q3=q3, whislo=p5, whishi=p95, fliers=[v.max()]))
+    return out
+
+
+def _setup_font() -> bool:
+    from matplotlib import font_manager as fm
+
+    names = {f.name for f in fm.fontManager.ttflist}
+    for n in THAI_FONTS:
+        if n in names:
+            matplotlib.rcParams["font.family"] = n
+            return True
+    return False
+
+
+def _values_by_hour(df: pd.DataFrame) -> Dict[int, List[float]]:
+    grouped: Dict[int, List[float]] = {h: [] for h in range(24)}
+    for hour, kw in zip(df["hour"], df["kw"]):
+        grouped[int(hour)].append(float(kw))
+    return grouped
+
+
+def render_boxplot_png(
+    df: pd.DataFrame,
+    business_type_code: str,
+    business_type_name: str = "",
+    shutdown_kw: float = DEFAULT_SHUTDOWN_KW,
+) -> bytes:
+    """วาด boxplot จาก DataFrame ของ interval จริง (คอลัมน์ date/hour/rate/kw) คืน PNG bytes —
+    แยกเป็น panel วันทำการ (P+OP) กับวันหยุด (H) เหมือน load_boxplot.py ต้นฉบับ วันหยุดจะถูกแยก
+    เป็น "วันที่เดินเครื่อง"/"วันที่หยุดเครื่อง" อีกชั้นถ้ามีข้อมูลพอทั้งสองแบบ (ดูจากค่าเฉลี่ยรายวัน
+    ต่ำกว่า shutdown_kw หรือไม่) raise ValueError ถ้าไม่มีข้อมูลเลย
+
+    เลือกภาษาไทย/อังกฤษของหัวเรื่องกราฟเองตามฟอนต์ที่มีอยู่จริงบนเซิร์ฟเวอร์ (กันตัวอักษรไทย
+    กลายเป็นกล่องว่างถ้าเซิร์ฟเวอร์ไม่มีฟอนต์ไทยติดตั้งไว้ — ชื่อธุรกิจเป็นภาษาไทยเสมอ จึงตัดออก
+    จากหัวเรื่องถ้าไม่มีฟอนต์ไทยจริงๆ เหลือแค่รหัส TSIC ซึ่งเป็น ASCII ล้วน)"""
+
+    import matplotlib.pyplot as plt
+
+    if df.empty:
+        raise ValueError("ยังไม่มีข้อมูล AMR จริงสำหรับประเภทธุรกิจนี้เลย")
+
+    daily_mean = df.groupby("date")["kw"].mean()
+    df = df.copy()
+    df["off"] = df["date"].map(daily_mean < shutdown_kw)
+
+    thai = _setup_font()
+    if thai:
+        title = f"Boxplot การใช้ไฟจริง — {business_type_name} ({business_type_code})" if business_type_name else f"Boxplot การใช้ไฟจริง — {business_type_code}"
+    else:
+        title = f"Real AMR usage boxplot — business type {business_type_code}"
+    L = dict(
+        wd="วันทำการ (OP + P)" if thai else "Weekday (OP + P)",
+        hd="วันหยุด (H)" if thai else "Holiday (H)",
+        hrun="วันหยุด (H) - วันที่เดินเครื่อง" if thai else "Holiday (H) - running days",
+        hoff="วันหยุด (H) - วันที่หยุดเครื่อง" if thai else "Holiday (H) - shutdown days",
+        days="วัน" if thai else "days",
+        hour="ชั่วโมงของวัน" if thai else "Hour of day",
+    )
+
+    wd, hd = df[df.rate != "H"], df[df.rate == "H"]
+    h_run, h_off = hd[~hd.off], hd[hd.off]
+
+    panels = []
+    if not wd.empty:
+        panels.append((wd, L["wd"], lambda h: "P" if 9 <= h < 22 else "OP"))
+    if not h_off.empty and not h_run.empty:
+        panels.append((h_run, f"{L['hrun']}  ({h_run.date.nunique()} {L['days']})", lambda h: "H"))
+        panels.append((h_off, f"{L['hoff']}  ({h_off.date.nunique()} {L['days']})", lambda h: "H"))
+    elif not hd.empty:
+        panels.append((hd, L["hd"], lambda h: "H"))
+
+    if not panels:
+        raise ValueError("ยังไม่มีข้อมูล AMR จริงสำหรับประเภทธุรกิจนี้เลย")
+
+    peaks = {r: df.loc[df.rate == r, "kw"].max() for r in COLORS if (df.rate == r).any()}
+    ymax = (max(peaks.values()) if peaks else df["kw"].max()) * 1.18
+
+    fig, axes = plt.subplots(len(panels), 1, figsize=(12, 4.6 * len(panels)), sharey=True, squeeze=False)
+    axes = axes[:, 0]
+
+    for ax, (data, name, rate_of) in zip(axes, panels):
+        stats = _box_stats(_values_by_hour(data))
+        bp = ax.bxp(stats, positions=np.arange(24) + 0.5, widths=0.6, showfliers=True,
+                    patch_artist=True, manage_ticks=False)
+        for h in range(24):
+            c = COLORS[rate_of(h)]
+            bp["boxes"][h].set(facecolor=c, alpha=0.35, edgecolor=c)
+            bp["medians"][h].set(color=c, linewidth=2.5)
+            for k in (2 * h, 2 * h + 1):
+                bp["whiskers"][k].set(color=c)
+                bp["caps"][k].set(color=c)
+            bp["fliers"][h].set(marker="o", markersize=3.5, markerfacecolor="black", markeredgecolor="black")
+        ax.set_title(name, loc="left", fontsize=12)
+        ax.set_xlim(0, 24)
+        ax.set_ylim(0, ymax if ymax > 0 else 1)
+        ax.set_xticks(np.arange(0, 24, 3) + 0.5)
+        ax.set_xticklabels(range(0, 24, 3))
+        ax.set_ylabel("kW")
+        ax.grid(axis="y", alpha=0.25)
+        for s in ("top", "right"):
+            ax.spines[s].set_visible(False)
+    axes[-1].set_xlabel(L["hour"])
+    fig.suptitle(title, fontsize=14, weight="bold")
+    fig.text(0.01, 0.005,
+              "Box = Q1-Q3, bold line = median, whiskers = P5-P95, dot = max 15-min value. Real AMR data.",
+              fontsize=8, color="gray")
+    fig.tight_layout(rect=(0, 0.02, 1, 0.97))
+
+    buf = io.BytesIO()
+    try:
+        fig.savefig(buf, format="png", dpi=140)
+    finally:
+        plt.close(fig)
+    return buf.getvalue()

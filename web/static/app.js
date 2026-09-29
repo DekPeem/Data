@@ -87,6 +87,16 @@ function setBusinessType(code) {
     bizInput.placeholder = "เลือก Section ก่อน...";
     clearBtn.style.display = "none";
   }
+
+  // ปุ่ม "ดู Boxplot ธุรกิจนี้" โผล่ขึ้นมาเฉพาะตอนเลือกประเภทธุรกิจไว้แล้วเท่านั้น (ต้องรู้ว่า
+  // จะขอ boxplot ของ TSIC ไหน) — ซ่อนกราฟ/สถานะเก่าทิ้งทุกครั้งที่เปลี่ยนประเภทธุรกิจ กันโชว์
+  // ผลของธุรกิจก่อนหน้าค้างอยู่
+  const boxplotBtnEl = document.getElementById("boxplot-btn");
+  const boxplotImgEl = document.getElementById("boxplot-img");
+  const boxplotStatusEl = document.getElementById("boxplot-status");
+  boxplotBtnEl.style.display = code ? "" : "none";
+  boxplotImgEl.style.display = "none";
+  boxplotStatusEl.textContent = "";
 }
 
 let businessTypeComboboxReady = false;
@@ -447,3 +457,44 @@ async function runForecastShape() {
 }
 
 forecastBtn.addEventListener("click", runForecastShape);
+
+// ── ดู Boxplot การใช้ไฟจริงของประเภทธุรกิจที่เลือกไว้ (ข้อมูล AMR จริงที่แอดมินอัปโหลดสะสมไว้ —
+// ดู src/amr_mapping/amr_boxplot.py) ต่างจากพยากรณ์เส้นโค้งด้านบนตรงที่นี่คือข้อมูลวัดจริง ไม่ใช่
+// เส้นโค้งสมมติจากตัวเลขบิล — ต้องเลือกประเภทธุรกิจไว้ก่อน (ปุ่มถึงจะโผล่ขึ้นมา) และต้องมีคนเคย
+// อัปโหลด AMR จริงของธุรกิจประเภทนี้ไว้แล้วจากหน้า Admin ไม่งั้นจะได้ 404 กลับมา
+const boxplotBtn = document.getElementById("boxplot-btn");
+const boxplotStatus = document.getElementById("boxplot-status");
+const boxplotImg = document.getElementById("boxplot-img");
+let boxplotImgObjectUrl = null;
+
+async function runBoxplot() {
+  const code = businessTypeSelect.value;
+  if (!code) return;
+
+  boxplotBtn.disabled = true;
+  boxplotStatus.textContent = "⏳ กำลังโหลด...";
+  boxplotImg.style.display = "none";
+
+  try {
+    const res = await fetch(`/api/forecast-boxplot?business_type_code=${encodeURIComponent(code)}`);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      boxplotStatus.innerHTML = `<span style="color:#8996ab;">${escapeHtml(data.message || "ไม่พบข้อมูล")}</span>`;
+      return;
+    }
+
+    const blob = await res.blob();
+    if (boxplotImgObjectUrl) URL.revokeObjectURL(boxplotImgObjectUrl);
+    boxplotImgObjectUrl = URL.createObjectURL(blob);
+    boxplotImg.src = boxplotImgObjectUrl;
+    boxplotImg.style.display = "block";
+    boxplotStatus.textContent = "";
+  } catch (err) {
+    boxplotStatus.innerHTML = `<span style="color:#d03b3b;">เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ</span>`;
+    console.error(err);
+  } finally {
+    boxplotBtn.disabled = false;
+  }
+}
+
+boxplotBtn.addEventListener("click", runBoxplot);

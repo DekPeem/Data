@@ -16,3 +16,10 @@ data/reference/customers_local.csv
 # เลขทะเบียนจริงจากการทดสอบในเครื่อง ห้าม commit เด็ดขาด
 src/amr_mapping/dbd_scraper/debug/
 src/amr_mapping/dbd_scraper/output/
+
+# ข้อมูล AMR จริง (กำลังไฟฟ้ารายชั่วโมง ไม่มีชื่อ/เลขบัญชีลูกค้าติดไปด้วย) ที่แอดมินอัปโหลดผ่าน
+# /api/admin/amr-boxplot/upload สำหรับวาด Boxplot อ้างอิงตามประเภทธุรกิจ (TSIC) — เป็นข้อมูล
+# สะสมในเครื่องนี้เท่านั้น ห้าม commit เด็ดขาด (หลักการเดียวกับ customers_local.csv) และไฟล์ดิบ
+# ที่อัปโหลดเข้ามา (มีชื่อ/เลขบัญชีลูกค้าจริง — เก็บไว้ชั่วคราวระหว่างประมวลผลเท่านั้น)
+data/reference/amr_boxplot_intervals_local.csv
+data/reference/_amr_boxplot_uploads/

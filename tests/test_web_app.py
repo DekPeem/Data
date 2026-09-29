@@ -613,3 +613,131 @@ def test_forecast_shape_works_with_only_one_segment(client):
     assert res.status_code == 200
     assert res.data[:8] == b"\x89PNG\r\n\x1a\n"
 
+
+def _make_amr_report_html(n_days: int = 3) -> str:
+    """สร้างไฟล์รายงาน AMR จำลอง (รูปแบบเดียวกับ tests/test_amr_boxplot.py) — ใช้ทดสอบ endpoint
+    อัปโหลดโดยไม่ต้องมีไฟล์ AMR จริง"""
+
+    import datetime as dt
+
+    rows = []
+    d = dt.datetime(2026, 1, 1)  # วันพฤหัส (วันทำการ) เป็นวันแรก
+    for _ in range(n_days):
+        for interval_i in range(96):
+            minutes = interval_i * 15
+            t = d + dt.timedelta(minutes=minutes) + dt.timedelta(minutes=15)
+            hour = (minutes // 60) % 24
+            if d.weekday() >= 5:
+                col, kw = "c1", 100.0
+            elif 9 <= hour < 22:
+                col, kw = "a1", 400.0
+            else:
+                col, kw = "b1", 150.0
+            row = {"ts": t.strftime("%d/%m/%Y %H.%M"), "a1": "", "a2": "", "b1": "", "b2": "", "c1": "", "c2": ""}
+            row[col] = f"{kw:.2f}"
+            rows.append(row)
+        d += dt.timedelta(days=1)
+
+    header = "<table><tr><td>Header info</td></tr></table>"
+    data_rows = "".join(
+        "<tr>" + "".join(f"<td>{r[c]}</td>" for c in ["ts", "a1", "a2", "b1", "b2", "c1", "c2"]) + "</tr>"
+        for r in rows
+    )
+    data_table = (
+        "<table><tr><td>ts</td><td>a1</td><td>a2</td><td>b1</td><td>b2</td><td>c1</td><td>c2</td></tr>"
+        + data_rows
+        + "</table>"
+    )
+    footer = "<table><tr><td>Footer info</td></tr></table>"
+    return header + data_table + footer
+
+
+def test_amr_boxplot_upload_missing_business_type_returns_400(client, monkeypatch, tmp_path):
+    import io
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    res = client.post(
+        "/api/admin/amr-boxplot/upload",
+        data={"files": (io.BytesIO(_make_amr_report_html().encode("utf-8")), "report.xls")},
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+
+def test_amr_boxplot_upload_missing_files_returns_400(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    res = client.post(
+        "/api/admin/amr-boxplot/upload",
+        data={"business_type_code": "55101"},
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+
+def test_amr_boxplot_upload_success_then_status_and_boxplot(client, monkeypatch, tmp_path):
+    import io
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+
+    res = client.post(
+        "/api/admin/amr-boxplot/upload",
+        data={
+            "business_type_code": "55101",
+            "files": (io.BytesIO(_make_amr_report_html(n_days=3).encode("utf-8")), "report.xls"),
+        },
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["added_intervals"] == 3 * 96
+    assert data["days"] == 3
+
+    status_res = client.get("/api/admin/amr-boxplot/status")
+    assert status_res.status_code == 200
+    status = status_res.get_json()
+    assert status["55101"]["intervals"] == 3 * 96
+    assert status["55101"]["days"] == 3
+
+    boxplot_res = client.get("/api/forecast-boxplot", query_string={"business_type_code": "55101"})
+    assert boxplot_res.status_code == 200
+    assert boxplot_res.headers["Content-Type"] == "image/png"
+    assert boxplot_res.data[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_amr_boxplot_upload_rejects_zip_with_path_traversal(client, monkeypatch, tmp_path):
+    """ป้องกัน zip slip — ชื่อไฟล์ในซิปที่มี "../" ปนอยู่ต้องถูกตัด path ย่อยทิ้งก่อนเขียนไฟล์เสมอ
+    ไม่ยอมให้เขียนออกไปนอก upload_dir เด็ดขาด (เหมือนเทสต์เดิมของโหมดนำเข้า AMR ก่อนถูกลบไป)"""
+
+    import io
+    import zipfile
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w") as zf:
+        zf.writestr("../../../evil.xls", _make_amr_report_html(n_days=1))
+    zip_buf.seek(0)
+
+    res = client.post(
+        "/api/admin/amr-boxplot/upload",
+        data={"business_type_code": "55101", "files": (zip_buf, "upload.zip")},
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 200  # ไฟล์ถูก sanitize ชื่อแล้วนำเข้าตามปกติ ไม่ error
+    assert not (tmp_path.parent / "evil.xls").exists()
+    assert not (Path("/") / "evil.xls").exists()
+
+
+def test_forecast_boxplot_missing_business_type_returns_400(client):
+    res = client.get("/api/forecast-boxplot")
+    assert res.status_code == 400
+
+
+def test_forecast_boxplot_returns_404_without_data(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    res = client.get("/api/forecast-boxplot", query_string={"business_type_code": "NOPE"})
+    assert res.status_code == 404
+    assert res.get_json()["error"] == "not_found"
+
