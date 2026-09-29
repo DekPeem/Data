@@ -109,6 +109,23 @@ def test_build_candidates_uses_only_latest_financial_statement_from_body_text():
     assert any("พบ TSIC" in m for m in logs) or any("TSIC" in m for m in logs)
 
 
+def test_build_candidates_prefers_body_text_when_juristic_dict_labels_collide():
+    """จำลอง bug จริงที่เจอบนเว็บ: _JURISTIC_JS หาหัวข้อการ์ดด้วย .card-title/.card-header ไม่เจอ
+    (โครงสร้างหน้าเว็บจริงไม่ตรงตามคาด) ทำให้ label "ประเภทธุรกิจ" ของทั้ง 2 การ์ดชนกันใน juristic
+    dict เหลือรอดแค่ตัวแรก (มักเป็น "ตอนจดทะเบียน" เพราะอยู่ก่อนใน DOM) — แต่ body_text (ข้อความล้วน
+    ทั้งหน้า ไม่ผูกกับ CSS ใดๆ) ยังมีหัวข้อทั้ง 2 แยกกันชัดเจนอยู่ ต้องอ่านจาก body_text ได้ถูกต้อง
+    (TSIC ปีล่าสุด 32909) ไม่ใช่หลุดไปใช้ค่าที่ชนกันใน dict (28250 ตอนจดทะเบียน)"""
+
+    juristic = dict(_SAMPLE_JURISTIC)
+    juristic["ประเภทธุรกิจ"] = "28250 การผลิตเครื่องจักร"  # label ชนกัน เหลือรอดแค่ "ตอนจดทะเบียน"
+
+    candidates = _build_candidates("0145537000805", juristic, _SAMPLE_BODY_TEXT, lambda m: None)
+
+    assert len(candidates) == 1
+    assert candidates[0].tsic_code == "32909"
+    assert "ปีล่าสุด" in candidates[0].tsic_name_th
+
+
 def test_build_candidates_prefers_juristic_dict_when_it_has_tsic():
     juristic = dict(_SAMPLE_JURISTIC)
     juristic["ประเภทธุรกิจ"] = "99999 รหัสจากการ์ดโดยตรง"

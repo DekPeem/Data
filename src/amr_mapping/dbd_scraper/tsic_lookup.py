@@ -100,15 +100,27 @@ def _build_candidates(
     juristic_type = juristic.get("ประเภทนิติบุคคล") or ""
     status = juristic.get("สถานะนิติบุคคล") or ""
 
-    from_dict = _extract_tsic_from_juristic_dict(juristic)
-    latest_entry = next((e for e in from_dict if _HEADER_LATEST_FINANCIAL_STATEMENT in e[2]), None)
-    registered_entry = next((e for e in from_dict if _HEADER_AT_REGISTRATION in e[2]), None)
+    # ลองอ่านจากข้อความทั้งหน้าก่อนเสมอ (page.inner_text("body") — ข้อความที่มองเห็นจริงทั้งหน้า
+    # ไม่ผูกกับ CSS class ใดๆ เลย) ไม่ใช่จาก juristic dict (ที่มาจาก _JURISTIC_JS ซึ่งต้องพึ่ง
+    # querySelector('.card-title, .card-header') หาหัวข้อการ์ดมาแยก 2 การ์ดนี้ — ยืนยันจากการทดสอบ
+    # จริงแล้วว่า selector นั้นหาหัวข้อไม่เจอบนหน้าเว็บจริงบางครั้ง ทำให้ label "ประเภทธุรกิจ" ของ
+    # ทั้ง 2 การ์ดชนกัน เหลือรอดแค่การ์ดที่มาก่อนใน DOM คือ "ตอนจดทะเบียน" เงียบๆ โดยไม่มี error ให้
+    # เห็นเลย) การค้นข้อความล้วนด้วย regex ทนทานกว่ามาก เพราะหัวข้อ "ประเภทธุรกิจที่ส่งงบการเงิน
+    # ปีล่าสุด" เป็นข้อความที่มองเห็นจริงบนหน้าเว็บเสมอไม่ว่าโครงสร้าง DOM/CSS จะเป็นแบบไหนก็ตาม
+    latest = _extract_tsic_after_header(body_text, _HEADER_LATEST_FINANCIAL_STATEMENT)
+    registered = _extract_tsic_after_header(
+        body_text, _HEADER_AT_REGISTRATION, next_header=_HEADER_LATEST_FINANCIAL_STATEMENT
+    )
+    latest_entry = (latest[0], latest[1], _HEADER_LATEST_FINANCIAL_STATEMENT) if latest else None
+    registered_entry = (registered[0], registered[1], _HEADER_AT_REGISTRATION) if registered else None
 
     if latest_entry is None and registered_entry is None:
-        if len(from_dict) == 1:
-            # หน้านี้ไม่มีการ์ด "ประเภทธุรกิจ" 2 ใบ (label ไม่ได้ถูกเปลี่ยนเป็นหัวข้อการ์ดโดย
-            # scraper.py's _JURISTIC_JS เพราะไม่ชนกัน) — ใช้ค่าเดียวที่มีได้เลย ไม่ต้องเดาว่าเป็น
-            # "ปีล่าสุด" หรือ "ตอนจดทะเบียน" (ไม่มีข้อมูลพอจะแยก แต่ก็ไม่มีความกำกวมให้เลือกผิดด้วย)
+        # หาไม่เจอเลยจากข้อความทั้งหน้า (body_text อาจว่าง/ไม่ครบ) — ลองทาง dict เป็นตัวสำรองสุดท้าย
+        from_dict = _extract_tsic_from_juristic_dict(juristic)
+        latest_entry = next((e for e in from_dict if _HEADER_LATEST_FINANCIAL_STATEMENT in e[2]), None)
+        registered_entry = next((e for e in from_dict if _HEADER_AT_REGISTRATION in e[2]), None)
+        if latest_entry is None and registered_entry is None and len(from_dict) == 1:
+            # หน้านี้ไม่มีการ์ด "ประเภทธุรกิจ" 2 ใบ (label ไม่ชนกัน ไม่ต้องแยก) — ใช้ค่าเดียวที่มีได้เลย
             code, name, _key = from_dict[0]
             log(f"✅ อ่านข้อมูลสำเร็จ: {juristic_name} — TSIC {code}")
             return [
@@ -117,13 +129,6 @@ def _build_candidates(
                     juristic_type=juristic_type, status=status, tsic_code=code, tsic_name_th=name,
                 )
             ]
-        # จากข้อความทั้งหน้าแทน (fallback เดียวกับตอนการ์ด "ข้อมูลนิติบุคคล" ไม่มีคีย์ TSIC ปนอยู่เลย)
-        latest = _extract_tsic_after_header(body_text, _HEADER_LATEST_FINANCIAL_STATEMENT)
-        registered = _extract_tsic_after_header(
-            body_text, _HEADER_AT_REGISTRATION, next_header=_HEADER_LATEST_FINANCIAL_STATEMENT
-        )
-        latest_entry = (latest[0], latest[1], _HEADER_LATEST_FINANCIAL_STATEMENT) if latest else None
-        registered_entry = (registered[0], registered[1], _HEADER_AT_REGISTRATION) if registered else None
 
     if latest_entry is not None:
         code, name, _key = latest_entry
