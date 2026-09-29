@@ -547,9 +547,154 @@ async function loadAmrBoxplotBizOptions() {
 // ให้เห็นชัดๆ ว่าอัปโหลด/ดึงบัญชีไหนไปแล้วบ้าง กี่จุด/กี่วัน (ผู้ใช้ยืนยันอยากได้แบบแยกทีละบัญชี
 // ไม่อยากเห็นแค่ยอดรวมต่อ TSIC) แทนที่จะต้องเดา/ลองอัปโหลดซ้ำ — รีเฟรชอัตโนมัติทุกครั้งที่อัปโหลด/
 // ดึงข้อมูลสำเร็จ (ดู amrBoxplotUploadBtn/pollAmrFetchJob/pollAmrFetchBulkJob) และกดรีเฟรชเองได้ด้วย
+//
+// จัดกลุ่มตาม TSIC Section (A-U) พร้อมแถบปุ่มกรองด่วน — เลียนแบบ overview.js ทุกประการ (หน้า
+// "ภาพรวมลูกค้าทั้งหมด" มีอยู่แล้ว) เพื่อให้ UX สอดคล้องกันทั้งระบบ ไม่ fix รายชื่อ section ตายตัว
+// คำนวณจาก section ที่เจอจริงในข้อมูลปัจจุบันเท่านั้น
+const AMR_LOG_UNCLASSIFIED_SECTION_KEY = "__unclassified__";
+const AMR_LOG_COLUMN_COUNT = 8;
+
 const amrBoxplotLogStatus = document.getElementById("amr-boxplot-log-status");
 const amrBoxplotLogTable = document.getElementById("amr-boxplot-log-table");
+const amrBoxplotLogFilterBar = document.getElementById("amr-boxplot-log-filter-bar");
 const amrBoxplotLogRefreshBtn = document.getElementById("amr-boxplot-log-refresh-btn");
+
+let amrBoxplotLogRows = []; // ผลดิบจาก status-by-account รอบล่าสุด
+let amrBoxplotLogTypeByCode = new Map(); // business_type_code -> {name_th, section_code, section_name_th}
+let amrBoxplotLogActiveSection = null; // null = ทั้งหมด
+
+function amrBoxplotLogSectionKeyOf(r) {
+  const t = amrBoxplotLogTypeByCode.get(r.business_type_code);
+  return t && t.section_code ? t.section_code : AMR_LOG_UNCLASSIFIED_SECTION_KEY;
+}
+
+function amrBoxplotLogSectionLabelOf(r) {
+  const t = amrBoxplotLogTypeByCode.get(r.business_type_code);
+  return t && t.section_code ? `${t.section_code} · ${t.section_name_th}` : "ยังไม่ระบุหมวด";
+}
+
+function renderAmrBoxplotLogFilterBar() {
+  const seen = new Map(); // section_code -> section_name_th
+  let hasUnclassified = false;
+  for (const r of amrBoxplotLogRows) {
+    const t = amrBoxplotLogTypeByCode.get(r.business_type_code);
+    if (t && t.section_code) seen.set(t.section_code, t.section_name_th);
+    else hasUnclassified = true;
+  }
+  const sectionCodes = Array.from(seen.keys()).sort();
+
+  const chips = [
+    `<button type="button" class="amr-log-filter-chip ${amrBoxplotLogActiveSection === null ? "active" : ""}" data-section="">ทั้งหมด</button>`,
+  ];
+  for (const code of sectionCodes) {
+    chips.push(
+      `<button type="button" class="amr-log-filter-chip ${amrBoxplotLogActiveSection === code ? "active" : ""}" data-section="${escapeHtml(code)}" title="${escapeHtml(seen.get(code) || "")}">${escapeHtml(code)}</button>`
+    );
+  }
+  if (hasUnclassified) {
+    chips.push(
+      `<button type="button" class="amr-log-filter-chip ${amrBoxplotLogActiveSection === AMR_LOG_UNCLASSIFIED_SECTION_KEY ? "active" : ""}" data-section="${AMR_LOG_UNCLASSIFIED_SECTION_KEY}">ยังไม่ระบุหมวด</button>`
+    );
+  }
+  amrBoxplotLogFilterBar.innerHTML = chips.join("");
+}
+
+function renderAmrBoxplotLogTable() {
+  if (!amrBoxplotLogRows.length) {
+    amrBoxplotLogFilterBar.innerHTML = "";
+    amrBoxplotLogTable.innerHTML = `<div class="hint">ยังไม่มีข้อมูล AMR จริงในระบบเลย — อัปโหลด/ดึงจากเว็บ PEA ได้จากด้านบน</div>`;
+    return;
+  }
+
+  renderAmrBoxplotLogFilterBar();
+
+  const visible =
+    amrBoxplotLogActiveSection === null
+      ? amrBoxplotLogRows
+      : amrBoxplotLogRows.filter((r) => amrBoxplotLogSectionKeyOf(r) === amrBoxplotLogActiveSection);
+
+  // จัดกลุ่มตาม section ก่อน (เรียง A-U ส่วนที่ยังไม่ระบุหมวดไว้ท้ายสุด) แล้วในแต่ละ section จัด
+  // กลุ่มย่อยตาม TSIC อีกชั้น (เรียงตามรหัส) และเรียงตามจุดข้อมูลมากไปน้อยภายในกลุ่มเดียวกัน — ให้
+  // บัญชีของ TSIC เดียวกันอยู่ติดกันเสมอ อ่านง่ายกว่าเรียงจุดข้อมูลล้วนๆ แบบปนกันทุก TSIC/section
+  const bySection = new Map();
+  for (const r of visible) {
+    const key = amrBoxplotLogSectionKeyOf(r);
+    if (!bySection.has(key)) bySection.set(key, []);
+    bySection.get(key).push(r);
+  }
+  const sectionKeys = Array.from(bySection.keys()).sort((a, b) => {
+    if (a === AMR_LOG_UNCLASSIFIED_SECTION_KEY) return 1;
+    if (b === AMR_LOG_UNCLASSIFIED_SECTION_KEY) return -1;
+    return a.localeCompare(b);
+  });
+
+  const rowsHtml = [];
+  for (const key of sectionKeys) {
+    const group = [...bySection.get(key)].sort((a, b) => {
+      if (a.business_type_code !== b.business_type_code) return a.business_type_code.localeCompare(b.business_type_code);
+      return b.intervals - a.intervals;
+    });
+    rowsHtml.push(
+      `<tr class="amr-log-section-header"><td colspan="${AMR_LOG_COLUMN_COUNT}">${escapeHtml(amrBoxplotLogSectionLabelOf(group[0]))} (${group.length} รายการ)</td></tr>`
+    );
+    for (const r of group) {
+      const name = (amrBoxplotLogTypeByCode.get(r.business_type_code) || {}).name_th || "";
+      const tsicLabel = name
+        ? `${escapeHtml(name)} · ${escapeHtml(r.business_type_code)}`
+        : `${escapeHtml(r.business_type_code)} <span style="color:#d03b3b;">(ไม่พบชื่อในระบบ)</span>`;
+      const companyLabel = r.company_name ? escapeHtml(r.company_name) : `<span style="color:#8996ab;">—</span>`;
+      const accountLabel = r.account_no ? escapeHtml(r.account_no) : `<span style="color:#8996ab;">ไม่ระบุบัญชี</span>`;
+      const regLabel = r.registration_no ? escapeHtml(r.registration_no) : `<span style="color:#8996ab;">—</span>`;
+      rowsHtml.push(`<tr>
+        <td>${tsicLabel}</td>
+        <td>${companyLabel}</td>
+        <td>${accountLabel}</td>
+        <td>${regLabel}</td>
+        <td class="num">${r.intervals.toLocaleString("th-TH")}</td>
+        <td class="num">${r.days.toLocaleString("th-TH")}</td>
+        <td><a target="_blank" rel="noopener" href="/api/forecast-boxplot?business_type_code=${encodeURIComponent(r.business_type_code)}">ดู Boxplot →</a></td>
+        <td><button type="button" class="amr-boxplot-log-delete-btn" data-code="${escapeHtml(r.business_type_code)}" data-account="${escapeHtml(r.account_no || "")}" data-intervals="${r.intervals}" style="border:none;background:none;color:#d03b3b;cursor:pointer;font-size:13px;">🗑️ ลบ</button></td>
+      </tr>`);
+    }
+  }
+
+  amrBoxplotLogTable.innerHTML = `
+    <table class="amr-log-table">
+      <thead><tr><th>ประเภทธุรกิจ (TSIC)</th><th>บริษัท</th><th>เลขบัญชี</th><th>เลขนิติบุคคล</th><th class="num">จำนวนจุดข้อมูล</th><th class="num">จำนวนวัน</th><th></th><th></th></tr></thead>
+      <tbody>${rowsHtml.join("")}</tbody>
+    </table>`;
+
+  // ปุ่มลบต่อแถว — ลบข้อมูลจริงถาวร (เขียนทับไฟล์ CSV ตรงๆ ไม่มีทาง undo) ต้อง confirm() กับ
+  // ผู้ใช้ก่อนเสมอ บอกให้ชัดว่ากำลังจะลบอะไร (TSIC + บัญชี + จำนวนจุดข้อมูล) กันกดพลาด
+  amrBoxplotLogTable.querySelectorAll(".amr-boxplot-log-delete-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.dataset.code;
+      const accountNo = btn.dataset.account;
+      const accountDesc = accountNo ? `บัญชี ${accountNo}` : 'กลุ่ม "ไม่ระบุบัญชี"';
+      const confirmed = confirm(
+        `ลบข้อมูล AMR จริงของ TSIC ${code} (${accountDesc}) ทั้งหมด ${Number(btn.dataset.intervals).toLocaleString("th-TH")} จุด ถาวรเลยหรือไม่?\n\nกู้คืนไม่ได้`
+      );
+      if (!confirmed) return;
+
+      btn.disabled = true;
+      try {
+        const params = new URLSearchParams({ business_type_code: code, account_no: accountNo });
+        const res = await fetch(`/api/admin/amr-boxplot/data?${params.toString()}`, { method: "DELETE" });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          alert(data.message || "ลบไม่สำเร็จ");
+          btn.disabled = false;
+          return;
+        }
+        loadAmrBoxplotLog();
+      } catch (err) {
+        alert("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ");
+        console.error(err);
+        btn.disabled = false;
+      }
+    });
+  });
+}
 
 async function loadAmrBoxplotLog() {
   amrBoxplotLogStatus.textContent = "⏳ กำลังโหลด...";
@@ -559,83 +704,12 @@ async function loadAmrBoxplotLog() {
       fetch("/api/admin/amr-boxplot/status-by-account"),
       fetch("/api/business-types-full"),
     ]);
-    const rows = await rowsRes.json();
+    amrBoxplotLogRows = await rowsRes.json();
     const types = await typesRes.json();
-    const nameByCode = new Map(types.map((t) => [t.code, t.name_th]));
-
-    if (!rows.length) {
-      amrBoxplotLogStatus.textContent = "";
-      amrBoxplotLogTable.innerHTML = `<div class="hint">ยังไม่มีข้อมูล AMR จริงในระบบเลย — อัปโหลด/ดึงจากเว็บ PEA ได้จากด้านบน</div>`;
-      return;
-    }
-
-    // จัดกลุ่มตาม TSIC ก่อน (เรียงตามรหัส) แล้วค่อยเรียงตามจุดข้อมูลมากไปน้อยภายในกลุ่มเดียวกัน —
-    // ให้บัญชีของ TSIC เดียวกันอยู่ติดกันเสมอ อ่านง่ายกว่าเรียงจุดข้อมูลล้วนๆ แบบปนกันทุก TSIC
-    const sorted = [...rows].sort((a, b) => {
-      if (a.business_type_code !== b.business_type_code) {
-        return a.business_type_code.localeCompare(b.business_type_code);
-      }
-      return b.intervals - a.intervals;
-    });
+    amrBoxplotLogTypeByCode = new Map(types.map((t) => [t.code, t]));
 
     amrBoxplotLogStatus.textContent = "";
-    amrBoxplotLogTable.innerHTML = `
-      <table class="amr-log-table">
-        <thead><tr><th>ประเภทธุรกิจ (TSIC)</th><th>บริษัท</th><th>เลขบัญชี</th><th>เลขนิติบุคคล</th><th class="num">จำนวนจุดข้อมูล</th><th class="num">จำนวนวัน</th><th></th><th></th></tr></thead>
-        <tbody>
-          ${sorted
-            .map((r, i) => {
-              const name = nameByCode.get(r.business_type_code) || "";
-              const tsicLabel = name
-                ? `${escapeHtml(name)} · ${escapeHtml(r.business_type_code)}`
-                : `${escapeHtml(r.business_type_code)} <span style="color:#d03b3b;">(ไม่พบชื่อในระบบ)</span>`;
-              const companyLabel = r.company_name ? escapeHtml(r.company_name) : `<span style="color:#8996ab;">—</span>`;
-              const accountLabel = r.account_no ? escapeHtml(r.account_no) : `<span style="color:#8996ab;">ไม่ระบุบัญชี</span>`;
-              const regLabel = r.registration_no ? escapeHtml(r.registration_no) : `<span style="color:#8996ab;">—</span>`;
-              return `<tr>
-                <td>${tsicLabel}</td>
-                <td>${companyLabel}</td>
-                <td>${accountLabel}</td>
-                <td>${regLabel}</td>
-                <td class="num">${r.intervals.toLocaleString("th-TH")}</td>
-                <td class="num">${r.days.toLocaleString("th-TH")}</td>
-                <td><a target="_blank" rel="noopener" href="/api/forecast-boxplot?business_type_code=${encodeURIComponent(r.business_type_code)}">ดู Boxplot →</a></td>
-                <td><button type="button" class="amr-boxplot-log-delete-btn" data-idx="${i}" style="border:none;background:none;color:#d03b3b;cursor:pointer;font-size:13px;">🗑️ ลบ</button></td>
-              </tr>`;
-            })
-            .join("")}
-        </tbody>
-      </table>`;
-
-    // ปุ่มลบต่อแถว — ลบข้อมูลจริงถาวร (เขียนทับไฟล์ CSV ตรงๆ ไม่มีทาง undo) ต้อง confirm() กับ
-    // ผู้ใช้ก่อนเสมอ บอกให้ชัดว่ากำลังจะลบอะไร (TSIC + บัญชี + จำนวนจุดข้อมูล) กันกดพลาด
-    amrBoxplotLogTable.querySelectorAll(".amr-boxplot-log-delete-btn").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const r = sorted[Number(btn.dataset.idx)];
-        const accountDesc = r.account_no ? `บัญชี ${r.account_no}` : "กลุ่ม \"ไม่ระบุบัญชี\"";
-        const confirmed = confirm(
-          `ลบข้อมูล AMR จริงของ TSIC ${r.business_type_code} (${accountDesc}) ทั้งหมด ${r.intervals.toLocaleString("th-TH")} จุด ถาวรเลยหรือไม่?\n\nกู้คืนไม่ได้`
-        );
-        if (!confirmed) return;
-
-        btn.disabled = true;
-        try {
-          const params = new URLSearchParams({ business_type_code: r.business_type_code, account_no: r.account_no || "" });
-          const res = await fetch(`/api/admin/amr-boxplot/data?${params.toString()}`, { method: "DELETE" });
-          if (!res.ok) {
-            const data = await res.json().catch(() => ({}));
-            alert(data.message || "ลบไม่สำเร็จ");
-            btn.disabled = false;
-            return;
-          }
-          loadAmrBoxplotLog();
-        } catch (err) {
-          alert("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ");
-          console.error(err);
-          btn.disabled = false;
-        }
-      });
-    });
+    renderAmrBoxplotLogTable();
   } catch (err) {
     amrBoxplotLogStatus.innerHTML = `<span style="color:#d03b3b;">โหลดไม่สำเร็จ</span>`;
     console.error(err);
@@ -645,6 +719,14 @@ async function loadAmrBoxplotLog() {
 function escapeHtml(s) {
   return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
+
+amrBoxplotLogFilterBar.addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-section]");
+  if (!btn) return;
+  const section = btn.dataset.section;
+  amrBoxplotLogActiveSection = section === "" ? null : section;
+  renderAmrBoxplotLogTable();
+});
 
 amrBoxplotLogRefreshBtn.addEventListener("click", loadAmrBoxplotLog);
 loadAmrBoxplotLog();
