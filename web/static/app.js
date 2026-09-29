@@ -1,7 +1,6 @@
 // หน้าเดียว: ค้นหา/เลือกประเภทธุรกิจ (TSIC) ของบริษัท จากชื่อหรือเลขทะเบียนนิติบุคคล ผ่าน DBD
-// DataWarehouse (หรือแหล่งสำรอง: dataforthai.com / ฐานข้อมูล DBD Open Data ในเครื่อง / Wikipedia
-// ตอน DBD DataWarehouse บล็อก) — ไม่มีผลพยากรณ์ตัวเลข kWh/kW ใดๆ อีกต่อไป (ตัดฟีเจอร์นั้นออกจาก
-// ทั้งระบบแล้ว) เหลือแค่จับคู่ประเภทธุรกิจเท่านั้น
+// DataWarehouse (หรือแหล่งสำรอง: Wikipedia ตอน DBD DataWarehouse บล็อก) — ไม่มีผลพยากรณ์ตัวเลข
+// kWh/kW ใดๆ อีกต่อไป (ตัดฟีเจอร์นั้นออกจากทั้งระบบแล้ว) เหลือแค่จับคู่ประเภทธุรกิจเท่านั้น
 //
 // ⚠️ ชื่อบริษัท/เลขทะเบียนที่พิมพ์ในช่องด้านบน "ถูกส่งไป server" ทันทีที่กดปุ่มค้นหา (แล้ว server
 // ส่งต่อไปค้นหาที่เว็บ DBD จริง) เพราะไม่มีทางค้นหาบริษัทจากชื่อ/เลขทะเบียนได้โดยไม่ส่งไปที่แหล่ง
@@ -169,34 +168,17 @@ const lookupBtn = document.getElementById("lookup-business-type-btn");
 const lookupStatus = document.getElementById("business-type-lookup-status");
 const registrationNoInput = document.getElementById("f-registration-no");
 
-// แสดงรายละเอียดดิบจากฐานข้อมูล DBD Open Data ที่ backend ส่งมาให้อยู่แล้ว (reg_date/capital/
-// ที่อยู่) — ไม่พยายาม parse/แปลงรูปแบบวันที่หรือตัวเลขใดๆ เอง (ไม่รู้ format ที่แน่นอนจากไฟล์ DBD
-// ต้นทาง) แสดงค่าดิบตรงๆ ตามที่ backend ส่งมาให้ปลอดภัยกว่า คืนสตริงว่างถ้าไม่มีข้อมูลอะไรให้แสดงเลย
-function formatDbdOpendataDetails(m) {
-  const rows = [];
-  if (m.reg_date) rows.push(`จดทะเบียนเมื่อ ${m.reg_date}`);
-  if (m.capital) rows.push(`ทุนจดทะเบียน ${m.capital} บาท`);
-  const location = [m.district, m.province].filter(Boolean).join(" ");
-  if (location) rows.push(`ที่ตั้ง ${location}`);
-  if (!rows.length) return "";
-  return `<div style="color:#8996ab;">${rows.join(" · ")}</div>`;
-}
-
-// สร้างข้อความแจ้งผล + ตั้งค่าประเภทธุรกิจให้อัตโนมัติ (side effect) — แยกออกมาจาก
-// applyBusinessTypeSuggestion เพื่อให้จุดอื่น (เช่น ผลจากฐานข้อมูล DBD Open Data ตอน DBD
-// DataWarehouse บล็อก) เอาข้อความนี้ไปต่อท้าย html อื่นได้ แทนที่จะเขียนทับ lookupStatus ทั้งหมด
+// สร้างข้อความแจ้งผล + ตั้งค่าประเภทธุรกิจให้อัตโนมัติ (side effect)
 function buildBusinessTypeSuggestionMessage(candidate) {
-  const details = formatDbdOpendataDetails(candidate);
-
   if (!candidate.suggested_business_type_code) {
-    return `<div class="lookup-status-text">พบข้อมูล TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} แต่ยังไม่มีในระบบ กรุณาเลือกประเภทธุรกิจที่ใกล้เคียงเองด้านบน หรือเพิ่มประเภทธุรกิจใหม่${details}</div>`;
+    return `<div class="lookup-status-text">พบข้อมูล TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} แต่ยังไม่มีในระบบ กรุณาเลือกประเภทธุรกิจที่ใกล้เคียงเองด้านบน หรือเพิ่มประเภทธุรกิจใหม่</div>`;
   }
   setBusinessType(candidate.suggested_business_type_code);
 
   if (candidate.suggested_is_approximate) {
-    return `<div class="lookup-status-text">⚠️ ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} — ไม่มีธุรกิจนี้ตรงๆ ในระบบ จึงตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" แทนแบบประมาณการ (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)<br><span style="color:#8996ab;">${candidate.suggested_explanation}</span>${details}</div>`;
+    return `<div class="lookup-status-text">⚠️ ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} — ไม่มีธุรกิจนี้ตรงๆ ในระบบ จึงตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" แทนแบบประมาณการ (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)<br><span style="color:#8996ab;">${candidate.suggested_explanation}</span></div>`;
   }
-  return `<div class="lookup-status-text">✅ ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} → ตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" ให้อัตโนมัติแล้ว (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)${details}</div>`;
+  return `<div class="lookup-status-text">✅ ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} → ตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" ให้อัตโนมัติแล้ว (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)</div>`;
 }
 
 // สร้างข้อความแจ้งผลของการเดาจากคำสำคัญใน Wikipedia (ดู keyword_classify.py ฝั่ง backend) — ต่าง
@@ -269,68 +251,13 @@ async function pollBusinessTypeLookupJob(jobId) {
     return;
   }
 
-  const {
-    candidates,
-    exact_match_index,
-    blocked,
-    blocked_message,
-    fallback,
-    dbd_opendata_matches,
-    dbd_opendata_available,
-    dbd_opendata_exact_match_index,
-    wikipedia_result,
-  } = data.result;
+  const { candidates, exact_match_index, blocked, blocked_message, wikipedia_result } = data.result;
 
   if (blocked) {
     let html = `<div class="lookup-status-text" style="color:#a5670b;">🚫 เว็บ DBD DataWarehouse บล็อกการเข้าถึงอัตโนมัติ (ไม่ใช่ว่าไม่พบบริษัทนี้จริงๆ) — ${blocked_message || ""}</div>`;
-    if (fallback && (fallback.business_category || fallback.candidates.length)) {
-      html += `<div class="lookup-status-text" style="margin-top:8px;">🔁 ลองหาข้อมูลจาก <b>dataforthai.com</b> แทน (เว็บบุคคลที่สาม ไม่ใช่แหล่งข้อมูลทางการ — ใช้ประกอบการตัดสินใจเท่านั้น):</div>`;
-      if (fallback.business_category) {
-        html += `<div class="lookup-status-text" style="margin-top:4px;">📋 หมวดธุรกิจที่พบ: <b>${fallback.business_category}</b> — กรุณาเลือกประเภทธุรกิจที่ใกล้เคียงเองด้านบน</div>`;
-      }
-      if (fallback.candidates.length) {
-        html += `<div class="lookup-status-text" style="margin-top:4px;color:#8996ab;">ชื่อที่ใกล้เคียงที่เจอ: ${fallback.candidates.map((c) => c.label).join(", ")}</div>`;
-      }
-    } else {
-      html += `<div class="lookup-status-text" style="margin-top:8px;">ลองหาข้อมูลจาก dataforthai.com แทนก็ไม่สำเร็จ — กรุณาเลือกประเภทธุรกิจเองด้านบน</div>`;
-    }
 
-    let dbdOpendataButtonsHtml = "";
-    if (dbd_opendata_available) {
-      if (dbd_opendata_matches && dbd_opendata_matches.length) {
-        if (dbd_opendata_exact_match_index !== null && dbd_opendata_exact_match_index !== undefined) {
-          html += `<div class="lookup-status-text" style="margin-top:8px;">🗂️ พบชื่อตรงเป๊ะในฐานข้อมูล DBD Open Data ที่เก็บไว้ในเครื่อง (เฉพาะบริษัทที่ตั้งใหม่/เลิกกิจการ ไม่ใช่ทะเบียนเต็ม):</div>`;
-          html += `<div style="margin-top:6px;">${buildBusinessTypeSuggestionMessage(dbd_opendata_matches[dbd_opendata_exact_match_index])}</div>`;
-        } else {
-          html += `<div class="lookup-status-text" style="margin-top:8px;">🗂️ พบในฐานข้อมูล DBD Open Data ที่เก็บไว้ในเครื่อง (เฉพาะบริษัทที่ตั้งใหม่/เลิกกิจการ ไม่ใช่ทะเบียนเต็ม) — เลือกอันที่ใช่:</div>`;
-          dbdOpendataButtonsHtml = `
-            <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px;">
-              ${dbd_opendata_matches
-                .map(
-                  (m, i) => `
-                <div class="lookup-candidate">
-                  <div>
-                    <div class="lookup-candidate-name">${m.name}${m.status === "dissolution" ? " (เลิกกิจการ)" : ""}</div>
-                    <div class="lookup-candidate-meta">${m.tsic_code ? `TSIC ${m.tsic_code} - ${m.tsic_name_th || ""}` : "ไม่มีข้อมูลวัตถุประสงค์ในทะเบียน"}</div>
-                    <div class="lookup-candidate-meta">${formatDbdOpendataDetails(m)}</div>
-                  </div>
-                  <button type="button" class="lookup-pick-btn" data-dbdidx="${i}">เลือกอันนี้</button>
-                </div>`
-                )
-                .join("")}
-            </div>`;
-          html += dbdOpendataButtonsHtml;
-        }
-      } else {
-        html += `<div class="lookup-status-text" style="margin-top:8px;color:#8996ab;">🗂️ ค้นในฐานข้อมูล DBD Open Data ที่เก็บไว้ในเครื่องแล้วไม่พบ (ครอบคลุมแค่บริษัทที่ตั้งใหม่/เลิกกิจการในช่วงที่ดึงมา)</div>`;
-      }
-    } else {
-      html += `<div class="lookup-status-text" style="margin-top:8px;color:#8996ab;">ℹ️ ยังไม่เคยดึงฐานข้อมูล DBD Open Data มาเก็บในเครื่องเลย (ดึงได้จากหน้า Admin) — จะช่วยค้นหาแบบออฟไลน์ได้เร็วขึ้นในครั้งถัดไป</div>`;
-    }
-
-    // Wikipedia (ฟรี ไม่มีค่าใช้จ่าย) — ช่วยเฉพาะบริษัทใหญ่/มีชื่อเสียงที่มักไม่อยู่ในฐานข้อมูล
-    // DBD Open Data ด้านบนพอดี (เพราะเป็นบริษัทเก่า) — เป็นข้อความอิสระประกอบการตัดสินใจเท่านั้น
-    // ไม่ใช่รหัส TSIC จึงเลือกประเภทธุรกิจให้อัตโนมัติไม่ได้
+    // Wikipedia (ฟรี ไม่มีค่าใช้จ่าย) — ช่วยเฉพาะบริษัทใหญ่/มีชื่อเสียงที่มีหน้า Wikipedia เท่านั้น —
+    // เป็นข้อความอิสระประกอบการตัดสินใจเท่านั้น ไม่ใช่รหัส TSIC จึงเลือกประเภทธุรกิจให้อัตโนมัติไม่ได้
     let rankedCandidatesButtonsHtml = "";
     if (wikipedia_result) {
       // เนื้อหามาจาก Wikipedia (ใครก็แก้ไขได้) — escape ก่อนใส่ลง innerHTML เหมือน log details
@@ -339,20 +266,14 @@ async function pollBusinessTypeLookupJob(jobId) {
       html += `<div class="lookup-status-text" style="margin-top:8px;">📖 พบข้อมูลจาก <a href="${wikipedia_result.url}" target="_blank" rel="noopener">Wikipedia: ${wpTitle}</a> (ใช้ประกอบการตัดสินใจเท่านั้น ไม่ใช่แหล่งข้อมูลทางการ):</div>`;
       html += `<div class="lookup-status-text" style="margin-top:4px;color:#8996ab;">${wpSummary}</div>`;
 
-      // ถ้าฐานข้อมูล DBD Open Data เจอชื่อตรงเป๊ะไปแล้วด้านบน (ข้อมูลทางการ น่าเชื่อถือกว่า) จะไม่
-      // เอาการเดาจากคำสำคัญใน Wikipedia (แม่นยำน้อยกว่ามาก) มาตั้งค่าทับอีกรอบ — กันสับสนว่าใช้
-      // ผลจากไหนกันแน่
-      const dbdOpendataAlreadyApplied =
-        dbd_opendata_exact_match_index !== null && dbd_opendata_exact_match_index !== undefined;
-      if (!dbdOpendataAlreadyApplied) {
-        if (wikipedia_result.suggested_business_type_code) {
-          // มั่นใจพอ (ตรง TSIC division เป๊ะ) — auto-apply ไปเลยเหมือนเดิม
-          html += buildKeywordGuessMessage(wikipedia_result);
-        } else if (wikipedia_result.ranked_candidates && wikipedia_result.ranked_candidates.length) {
-          // แค่เดาแบบประมาณการ (ไม่มั่นใจพอ) — ไม่ auto-apply ให้เงียบๆ อีกต่อไป (เคยเจอเดาผิด
-          // แบบไม่รู้ตัว เช่น ค้าปลีกไปจับกับการผลิตกระดาษ) โชว์เป็นรายการอันดับ 1/2/3 ให้เลือกเองแทน
-          html += `<div class="lookup-status-text" style="margin-top:4px;">🔤 เดาจากคำว่า "${wikipedia_result.guessed_keyword}" ได้ไม่มั่นใจพอที่จะเลือกให้เอง — นี่คือธุรกิจที่ใกล้เคียงที่สุด ${wikipedia_result.ranked_candidates.length} อันดับ เลือกอันที่ใช่เอง:</div>`;
-          rankedCandidatesButtonsHtml = `
+      if (wikipedia_result.suggested_business_type_code) {
+        // มั่นใจพอ (ตรง TSIC division เป๊ะ) — auto-apply ไปเลยเหมือนเดิม
+        html += buildKeywordGuessMessage(wikipedia_result);
+      } else if (wikipedia_result.ranked_candidates && wikipedia_result.ranked_candidates.length) {
+        // แค่เดาแบบประมาณการ (ไม่มั่นใจพอ) — ไม่ auto-apply ให้เงียบๆ (เคยเจอเดาผิดแบบไม่รู้ตัว เช่น
+        // ค้าปลีกไปจับกับการผลิตกระดาษ) โชว์เป็นรายการอันดับ 1/2/3 ให้เลือกเองแทน
+        html += `<div class="lookup-status-text" style="margin-top:4px;">🔤 เดาจากคำว่า "${wikipedia_result.guessed_keyword}" ได้ไม่มั่นใจพอที่จะเลือกให้เอง — นี่คือธุรกิจที่ใกล้เคียงที่สุด ${wikipedia_result.ranked_candidates.length} อันดับ เลือกอันที่ใช่เอง:</div>`;
+        rankedCandidatesButtonsHtml = `
             <div style="display:flex;flex-direction:column;gap:8px;margin-top:6px;">
               ${wikipedia_result.ranked_candidates
                 .map(
@@ -367,25 +288,23 @@ async function pollBusinessTypeLookupJob(jobId) {
                 )
                 .join("")}
             </div>`;
-          html += rankedCandidatesButtonsHtml;
-        }
+        html += rankedCandidatesButtonsHtml;
       }
+    } else {
+      html += `<div class="lookup-status-text" style="margin-top:8px;color:#8996ab;">ลองหาข้อมูลจาก Wikipedia แทนก็ไม่พบ — กรุณาเลือกประเภทธุรกิจเองด้านบน</div>`;
     }
 
-    // ข้อความรายละเอียดทั้งหมด (เหตุผลที่โดนบล็อก, dataforthai.com, DBD Open Data, Wikipedia) ยาว
-    // และรกหน้าจอถ้าโชว์เต็มทุกครั้ง — ทั้งที่ส่วนใหญ่ (พอรู้ว่า DBD บล็อกแล้ว) ไม่ต้องอ่านซ้ำทุกครั้ง
+    // ข้อความรายละเอียดทั้งหมด (เหตุผลที่โดนบล็อก, Wikipedia) ยาวและรกหน้าจอถ้าโชว์เต็มทุกครั้ง —
     // จึงพับเก็บไว้ใน <details> แทน เหลือแค่ "สรุปผลลัพธ์" บรรทัดเดียวด้านบนเสมอ — กางออกอัตโนมัติ
     // เฉพาะตอนที่ยังต้องให้ผู้ใช้เลือกอะไรบางอย่างเอง (มีปุ่ม "เลือกอันนี้" ให้กด) เท่านั้น
-    const hasPendingChoice = Boolean(dbdOpendataButtonsHtml) || Boolean(rankedCandidatesButtonsHtml);
-    const autoApplied =
-      (dbd_opendata_exact_match_index !== null && dbd_opendata_exact_match_index !== undefined) ||
-      (wikipedia_result && wikipedia_result.suggested_business_type_code);
+    const hasPendingChoice = Boolean(rankedCandidatesButtonsHtml);
+    const autoApplied = wikipedia_result && wikipedia_result.suggested_business_type_code;
 
     let headline;
     if (hasPendingChoice) {
       headline = `<div class="lookup-status-text">⚠️ เว็บ DBD DataWarehouse บล็อกการเข้าถึงอัตโนมัติ — เลือกประเภทธุรกิจที่ใกล้เคียงที่สุดจากตัวเลือกด้านล่าง</div>`;
     } else if (autoApplied) {
-      headline = `<div class="lookup-status-text" style="color:#0ca30c;">✅ เว็บ DBD DataWarehouse บล็อก แต่หาข้อมูลจากแหล่งอื่นได้ — ตั้งประเภทธุรกิจให้อัตโนมัติแล้วด้านบน</div>`;
+      headline = `<div class="lookup-status-text" style="color:#0ca30c;">✅ เว็บ DBD DataWarehouse บล็อก แต่หาข้อมูลจาก Wikipedia ได้ — ตั้งประเภทธุรกิจให้อัตโนมัติแล้วด้านบน</div>`;
     } else {
       headline = `<div class="lookup-status-text">🚫 เว็บ DBD DataWarehouse บล็อก และหาข้อมูลจากแหล่งอื่นไม่สำเร็จ — กรุณาเลือกประเภทธุรกิจเองด้านบน</div>`;
     }
@@ -393,15 +312,10 @@ async function pollBusinessTypeLookupJob(jobId) {
     lookupStatus.innerHTML =
       headline +
       `<details ${hasPendingChoice ? "open" : ""} style="margin-top:6px;">
-        <summary style="cursor:pointer;font-size:12.5px;color:#8996ab;">ดูรายละเอียดการค้นหา (DBD DataWarehouse / dataforthai.com / DBD Open Data / Wikipedia)</summary>
+        <summary style="cursor:pointer;font-size:12.5px;color:#8996ab;">ดูรายละเอียดการค้นหา (DBD DataWarehouse / Wikipedia)</summary>
         <div style="margin-top:8px;">${html}</div>
       </details>` +
       renderSearchLogDetails(data.logs, false);
-    if (dbdOpendataButtonsHtml) {
-      lookupStatus.querySelectorAll(".lookup-pick-btn[data-dbdidx]").forEach((btn) => {
-        btn.addEventListener("click", () => applyBusinessTypeSuggestion(dbd_opendata_matches[Number(btn.dataset.dbdidx)]));
-      });
-    }
     if (rankedCandidatesButtonsHtml) {
       lookupStatus.querySelectorAll(".lookup-pick-btn[data-rankidx]").forEach((btn) => {
         btn.addEventListener("click", () => {

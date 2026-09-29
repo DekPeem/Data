@@ -350,57 +350,6 @@ def test_business_type_lookup_handles_selenium_error_gracefully(client, monkeypa
     assert "เปิด Chrome ไม่สำเร็จ" in status["error"]
 
 
-def test_business_type_lookup_falls_back_to_dataforthai_when_dbd_blocked(client, monkeypatch):
-    """ยืนยันจากผู้ใช้จริง: DBD บล็อกการเข้าถึงอัตโนมัติ (Incapsula) — ต้อง fallback ไปลองหา
-    ข้อมูลที่ dataforthai.com แทน (เว็บบุคคลที่สาม) และคืนผลเป็น status "success" (ไม่ใช่ "error")
-    พร้อม blocked=True และข้อมูล fallback ที่ดึงมาได้ แทนที่จะทำให้ทั้ง job ดูเหมือนพังไปเลย"""
-
-    from amr_mapping.dataforthai_lookup import CompanySuggestion
-    from amr_mapping.dbd_lookup import BlockedByAntiBot
-
-    def fake_lookup(company_name, log=lambda m: None, headless=True):
-        raise BlockedByAntiBot("Incapsula incident ID: 123-456")
-
-    def fake_suggest(company_name, log=lambda m: None, timeout=10.0):
-        return [CompanySuggestion(label="บริษัท ทดสอบ จำกัด (มหาชน)", value="ทดสอบ")]
-
-    def fake_category(driver, company_name, log=lambda m: None, timeout=20.0):
-        log("✅ พบหมวดธุรกิจ: ร้านสะดวกซื้อ/มินิมาร์ท")
-        return "ร้านสะดวกซื้อ/มินิมาร์ท"
-
-    class _FakeDriver:
-        def quit(self):
-            pass
-
-    monkeypatch.setattr(app_module, "lookup_business_type_for_company", fake_lookup)
-    monkeypatch.setattr(app_module, "suggest_companies_with_fallback", fake_suggest)
-    monkeypatch.setattr(app_module, "lookup_business_category", fake_category)
-    monkeypatch.setattr(app_module, "setup_dataforthai_driver", lambda headless=True: _FakeDriver())
-    monkeypatch.setattr(app_module, "search_wikipedia_company", lambda company_name, log=lambda m: None: None)
-
-    res = client.post("/api/business-type-lookup", json={"company_name": "บริษัท ทดสอบ จำกัด (มหาชน)"})
-    job_id = res.get_json()["job_id"]
-
-    status = None
-    for _ in range(50):
-        status = client.get(f"/api/business-type-lookup/{job_id}").get_json()
-        if status["status"] != "running":
-            break
-        time.sleep(0.05)
-
-    assert status["status"] == "success"
-    result = status["result"]
-    assert result["blocked"] is True
-    assert "Incapsula" in result["blocked_message"]
-    assert result["candidates"] == []
-    assert result["fallback"]["source"] == "dataforthai"
-    assert result["fallback"]["business_category"] == "ร้านสะดวกซื้อ/มินิมาร์ท"
-    assert result["fallback"]["candidates"][0]["label"] == "บริษัท ทดสอบ จำกัด (มหาชน)"
-    assert result["dbd_opendata_available"] is False
-    assert result["dbd_opendata_matches"] == []
-    assert result["wikipedia_result"] is None
-
-
 def test_business_type_lookup_includes_wikipedia_result_when_found(client, monkeypatch):
     """เสริมช่องทางฟรี Wikipedia (ดู wikipedia_lookup.py) — ตอน DBD บล็อก ต้องลองค้น Wikipedia
     ด้วย แล้วใส่ผลลัพธ์ (แค่ข้อความอิสระประกอบการตัดสินใจ ไม่ใช่รหัส TSIC) กลับไปในผล job"""
@@ -412,8 +361,6 @@ def test_business_type_lookup_includes_wikipedia_result_when_found(client, monke
         raise BlockedByAntiBot("Incapsula incident ID: 111")
 
     monkeypatch.setattr(app_module, "lookup_business_type_for_company", fake_lookup)
-    monkeypatch.setattr(app_module, "setup_dataforthai_driver", lambda headless=True: (_ for _ in ()).throw(Exception("no chrome")))
-    monkeypatch.setattr(app_module, "suggest_companies_with_fallback", lambda *a, **k: [])
     monkeypatch.setattr(
         app_module,
         "search_wikipedia_company",
@@ -460,8 +407,6 @@ def test_business_type_lookup_guesses_business_type_from_wikipedia_keyword(clien
         raise BlockedByAntiBot("Incapsula incident ID: 222")
 
     monkeypatch.setattr(app_module, "lookup_business_type_for_company", fake_lookup)
-    monkeypatch.setattr(app_module, "setup_dataforthai_driver", lambda headless=True: (_ for _ in ()).throw(Exception("no chrome")))
-    monkeypatch.setattr(app_module, "suggest_companies_with_fallback", lambda *a, **k: [])
     monkeypatch.setattr(
         app_module,
         "search_wikipedia_company",
@@ -489,183 +434,6 @@ def test_business_type_lookup_guesses_business_type_from_wikipedia_keyword(clien
     assert wp_result["suggested_business_type_code"] is None
     assert len(wp_result["ranked_candidates"]) == 1
     assert wp_result["ranked_candidates"][0]["business_type_code"] == "55101"
-
-
-def test_business_type_lookup_includes_local_dbd_opendata_matches_when_available(client, monkeypatch):
-    """ถ้าเคยดึงฐานข้อมูล DBD Open Data มาเก็บในเครื่องไว้แล้ว (ดู dbd_opendata.py) ตอน DBD
-    DataWarehouse บล็อก ต้องลองค้นจากฐานข้อมูลนี้ด้วย (ค้นออฟไลน์ เร็วกว่า) แล้วใส่ผลลัพธ์กลับมา"""
-
-    from amr_mapping.dbd_lookup import BlockedByAntiBot
-
-    def fake_lookup(company_name, log=lambda m: None, headless=True):
-        raise BlockedByAntiBot("Incapsula incident ID: 789")
-
-    def fake_category(driver, company_name, log=lambda m: None, timeout=20.0):
-        return None
-
-    class _FakeDriver:
-        def quit(self):
-            pass
-
-    monkeypatch.setattr(app_module, "lookup_business_type_for_company", fake_lookup)
-    monkeypatch.setattr(app_module, "setup_dataforthai_driver", lambda headless=True: _FakeDriver())
-    monkeypatch.setattr(app_module, "lookup_business_category", fake_category)
-    monkeypatch.setattr(app_module, "suggest_companies_with_fallback", lambda company_name, log=lambda m: None, timeout=10.0: [])
-    monkeypatch.setattr(app_module, "dbd_opendata_is_available", lambda: True)
-    monkeypatch.setattr(
-        app_module, "search_juristic_person",
-        lambda name_query, limit=10: [{"reg_id": "0105544000157", "name": "บริษัท ทดสอบ เก่า จำกัด", "status": "registration"}],
-    )
-    monkeypatch.setattr(app_module, "search_wikipedia_company", lambda company_name, log=lambda m: None: None)
-
-    res = client.post("/api/business-type-lookup", json={"company_name": "บริษัท ทดสอบ เก่า จำกัด"})
-    job_id = res.get_json()["job_id"]
-
-    status = None
-    for _ in range(50):
-        status = client.get(f"/api/business-type-lookup/{job_id}").get_json()
-        if status["status"] != "running":
-            break
-        time.sleep(0.05)
-
-    assert status["status"] == "success"
-    result = status["result"]
-    assert result["dbd_opendata_available"] is True
-    assert len(result["dbd_opendata_matches"]) == 1
-    assert result["dbd_opendata_matches"][0]["name"] == "บริษัท ทดสอบ เก่า จำกัด"
-    # ชื่อตรงเป๊ะกับคำค้น (case/เว้นวรรคเหมือนกัน) แต่ mock ไม่มี purpose_code เลยไม่มีข้อเสนอ
-    # ประเภทธุรกิจให้ — ยังต้อง mark ว่าตรงเป๊ะไว้ (ให้ UI auto-apply ได้ แม้จะไม่มีโปรไฟล์ก็ตาม)
-    assert result["dbd_opendata_exact_match_index"] == 0
-    assert result["dbd_opendata_matches"][0]["suggested_business_type_code"] is None
-
-
-def test_business_type_lookup_suggests_business_type_from_dbd_opendata_purpose_code(client, monkeypatch):
-    """ข้อมูล DBD Open Data มี "รหัสวัตถุประสงค์" (TSIC-like 5 หลัก) ติดมาด้วย — ต้องใช้จับคู่
-    ประเภทธุรกิจในระบบเราได้แบบเดียวกับผลจาก DBD DataWarehouse โดยตรง เพื่อพยากรณ์อัตโนมัติได้แม้
-    ตอน DBD DataWarehouse บล็อกอยู่ (ดู _suggest_business_type_for_division ใน web/app.py)"""
-
-    from amr_mapping.dbd_lookup import BlockedByAntiBot
-
-    def fake_lookup(company_name, log=lambda m: None, headless=True):
-        raise BlockedByAntiBot("Incapsula incident ID: 999")
-
-    class _FakeDriver:
-        def quit(self):
-            pass
-
-    monkeypatch.setattr(app_module, "lookup_business_type_for_company", fake_lookup)
-    monkeypatch.setattr(app_module, "setup_dataforthai_driver", lambda headless=True: _FakeDriver())
-    monkeypatch.setattr(app_module, "lookup_business_category", lambda *a, **k: None)
-    monkeypatch.setattr(app_module, "suggest_companies_with_fallback", lambda *a, **k: [])
-    monkeypatch.setattr(app_module, "dbd_opendata_is_available", lambda: True)
-    monkeypatch.setattr(
-        app_module, "search_juristic_person",
-        lambda name_query, limit=10: [
-            {
-                "reg_id": "0105544000199",
-                "name": "โรงแรม ทดสอบ จำกัด",
-                "status": "registration",
-                "purpose_code": "55101",
-                "purpose": "กิจการโรงแรม",
-            }
-        ],
-    )
-    monkeypatch.setattr(app_module, "search_wikipedia_company", lambda company_name, log=lambda m: None: None)
-
-    res = client.post("/api/business-type-lookup", json={"company_name": "โรงแรม ทดสอบ จำกัด"})
-    job_id = res.get_json()["job_id"]
-
-    status = None
-    for _ in range(50):
-        status = client.get(f"/api/business-type-lookup/{job_id}").get_json()
-        if status["status"] != "running":
-            break
-        time.sleep(0.05)
-
-    assert status["status"] == "success"
-    result = status["result"]
-    match = result["dbd_opendata_matches"][0]
-    assert match["tsic_code"] == "55101"
-    assert match["tsic_name_th"] == "กิจการโรงแรม"
-    assert match["suggested_business_type_code"] == "55101"  # ตรงกับ tsic_code จาก DBD Open Data เป๊ะ (exact match)
-    assert match["suggested_is_approximate"] is False
-    assert result["dbd_opendata_exact_match_index"] == 0
-
-
-def test_dbd_opendata_status_reports_unavailable_by_default(client):
-    res = client.get("/api/admin/dbd-opendata/status")
-    assert res.status_code == 200
-    assert res.get_json() == {"available": False}
-
-
-def test_dbd_opendata_fetch_starts_background_job(client, monkeypatch):
-    def fake_fetch(start_year=2020, start_month=1, log=lambda m: None):
-        log("📥 ดึง registration 2024-01 ...")
-        log("🏁 เสร็จสิ้น รวมทั้งหมด 5 แถว")
-        return {"total_rows": 5, "months_with_data": 1, "months_tried": 2, "db_path": "/tmp/fake.db"}
-
-    monkeypatch.setattr(app_module, "fetch_dbd_opendata", fake_fetch)
-
-    res = client.post("/api/admin/dbd-opendata/fetch", json={"start_year": 2024, "start_month": 1})
-    assert res.status_code == 200
-    job_id = res.get_json()["job_id"]
-
-    status = None
-    for _ in range(50):
-        status = client.get(f"/api/admin/dbd-opendata/fetch/{job_id}").get_json()
-        if status["status"] != "running":
-            break
-        time.sleep(0.05)
-
-    assert status["status"] == "success"
-    assert status["result"]["total_rows"] == 5
-    assert any("เสร็จสิ้น" in m for m in status["logs"])
-
-
-def test_dbd_opendata_fetch_rejects_non_numeric_year(client):
-    res = client.post("/api/admin/dbd-opendata/fetch", json={"start_year": "ไม่ใช่ตัวเลข"})
-    assert res.status_code == 400
-    assert res.get_json()["error"] == "invalid_request"
-
-
-def test_business_type_lookup_reports_blocked_even_when_dataforthai_fallback_fails(client, monkeypatch):
-    """fallback เองก็ล้มเหลวได้ (เช่น dataforthai.com ก็ใช้งานไม่ได้ตอนนั้น) — ต้องไม่ทำให้ job
-    กลายเป็น status "error" ไปด้วย แค่ fallback เป็น None แทน (blocked=True ยังอยู่ ผู้ใช้จะได้รู้
-    ว่า DBD บล็อก ไม่ใช่แค่ error กำกวม)"""
-
-    from amr_mapping.dbd_lookup import BlockedByAntiBot
-
-    def fake_lookup(company_name, log=lambda m: None, headless=True):
-        raise BlockedByAntiBot("Incapsula incident ID: 999")
-
-    def fake_category(driver, company_name, log=lambda m: None, timeout=20.0):
-        return None  # Selenium ก็หาหมวดธุรกิจไม่เจอเช่นกัน (จำลอง)
-
-    def fake_suggest(company_name, log=lambda m: None, timeout=10.0):
-        raise RuntimeError("dataforthai.com ก็ล่มด้วย (จำลอง)")
-
-    class _FakeDriver:
-        def quit(self):
-            pass
-
-    monkeypatch.setattr(app_module, "lookup_business_type_for_company", fake_lookup)
-    monkeypatch.setattr(app_module, "setup_dataforthai_driver", lambda headless=True: _FakeDriver())
-    monkeypatch.setattr(app_module, "lookup_business_category", fake_category)
-    monkeypatch.setattr(app_module, "suggest_companies_with_fallback", fake_suggest)
-
-    res = client.post("/api/business-type-lookup", json={"company_name": "บริษัท ทดสอบ จำกัด"})
-    job_id = res.get_json()["job_id"]
-
-    status = None
-    for _ in range(50):
-        status = client.get(f"/api/business-type-lookup/{job_id}").get_json()
-        if status["status"] != "running":
-            break
-        time.sleep(0.05)
-
-    assert status["status"] == "success"
-    assert status["result"]["blocked"] is True
-    assert status["result"]["fallback"] is None
 
 
 def test_overview_entry_normalizes_legacy_tsic_code_from_user_input(client, monkeypatch, tmp_path):

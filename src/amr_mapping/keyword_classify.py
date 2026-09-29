@@ -1,6 +1,5 @@
-"""เดา TSIC division คร่าวๆ จาก "คำสำคัญ" ในข้อความอิสระภาษาไทย (เช่น สรุปจาก Wikipedia หรือ
-"หมวดธุรกิจ" จาก dataforthai.com) — ใช้ตอนไม่มีรหัส TSIC จริงติดมาด้วยเลย (ต่างจาก dbd_lookup.py/
-dbd_opendata.py ที่มีรหัส TSIC จริงจาก DBD ให้ใช้โดยตรง)
+"""เดา TSIC division คร่าวๆ จาก "คำสำคัญ" ในข้อความอิสระภาษาไทย (เช่น สรุปจาก Wikipedia) — ใช้ตอน
+ไม่มีรหัส TSIC จริงติดมาด้วยเลย (ต่างจาก dbd_lookup.py ที่มีรหัส TSIC จริงจาก DBD ให้ใช้โดยตรง)
 
 ⚠️ นี่คือการจับคู่คำสำคัญแบบตรงตัว (substring match) ธรรมดา ไม่ใช่ AI/NLP ใดๆ ทั้งสิ้น — แม่นยำ
 น้อยกว่ารหัส TSIC จริงมาก และมีโอกาสเดาผิดได้ถ้าข้อความมีคำกำกวม/หลายธุรกิจปนกัน ผู้เรียกต้องแสดง
@@ -14,8 +13,8 @@ from __future__ import annotations
 
 from typing import List, Optional, Tuple
 
-# (คำสำคัญ, TSIC division code) — division code อิงตาม TSIC/ISIC Rev.4 มาตรฐานเดียวกับที่ใช้ใน
-# dbd_opendata.py (รหัสวัตถุประสงค์ 2 หลักแรก)
+# (คำสำคัญ, TSIC division code) — division code อิงตาม TSIC/ISIC Rev.4 มาตรฐานเดียวกับที่ใช้ทั้ง
+# ระบบ
 _KEYWORD_TO_DIVISION: List[Tuple[str, str]] = [
     ("ร้านสะดวกซื้อ", "47"),
     ("มินิมาร์ท", "47"),

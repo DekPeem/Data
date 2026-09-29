@@ -28,12 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from flask import Flask, jsonify, request, send_file
 
 from amr_mapping import load_reference_data
-from amr_mapping.dataforthai_lookup import lookup_business_category, suggest_companies_with_fallback
-from amr_mapping.dataforthai_lookup import setup_driver as setup_dataforthai_driver
 from amr_mapping.dbd_lookup import BlockedByAntiBot, find_exact_match, lookup_business_type_for_company
-from amr_mapping.dbd_opendata import fetch_all as fetch_dbd_opendata
-from amr_mapping.dbd_opendata import is_db_available as dbd_opendata_is_available
-from amr_mapping.dbd_opendata import search_juristic_person
 from amr_mapping.keyword_classify import guess_tsic_division
 from amr_mapping.loader import (
     DEFAULT_DATA_DIR,
@@ -296,55 +291,6 @@ def api_update_business_type_hierarchy(code: str):
     return jsonify({"code": code, "section_code": section_code, "division_code": division_code})
 
 
-def _run_dataforthai_fallback(company_name: str, log) -> Optional[dict]:
-    """เว็บ DBD โดนบล็อกการเข้าถึงอัตโนมัติ (ดู dbd_lookup.BlockedByAntiBot — ยืนยันจากผู้ใช้จริง
-    ว่าเจอหน้า "Request unsuccessful. Incapsula incident ID: ...") — ลอง fallback ไปที่
-    dataforthai.com แทน (เว็บบุคคลที่สามที่นำข้อมูลจดทะเบียนธุรกิจสาธารณะมาแสดงต่ออีกที ไม่ใช่
-    แหล่งข้อมูลทางการของ DBD เอง) ดู dataforthai_lookup.py
-
-    ⚠️ ผลลัพธ์จากเว็บนี้เป็น "หมวดธุรกิจ" แบบข้อความอิสระ (เช่น "ร้านสะดวกซื้อ/มินิมาร์ท") ไม่ใช่
-    รหัส TSIC มาตรฐานแบบที่ DBD ให้มา จึงจับคู่กับ business_type_code ของเราในระบบโดยอัตโนมัติ
-    ไม่ได้ (ไม่มีรหัสให้เทียบ) — ให้แค่ข้อความประกอบการตัดสินใจเลือกประเภทธุรกิจเองเท่านั้น
-
-    ⚠️ ขั้นตอนคลิกเลือก suggestion + อ่านหน้าโปรไฟล์ยังไม่เคยทดสอบกับเว็บจริง (ดู docstring ของ
-    dataforthai_lookup.lookup_business_category) คืน None ได้ถ้าล้มเหลว ไม่ raise ทำให้ job หลัก
-    ล้มไปด้วย เพราะเป็นแค่ทางเลือกเสริมตอน DBD ใช้ไม่ได้อยู่แล้ว
-
-    ยืนยันจากผู้ใช้จริง: เรียก /api/suggest ตรงๆ ด้วย HTTP GET ธรรมดา (ไม่ผ่านเบราว์เซอร์จริง)
-    ไม่เจอผลลัพธ์เลยแม้แต่คำค้นหาสั้นๆ ที่เคยเห็นเองในเบราว์เซอร์จริงว่ามี suggestion จริง — จึง
-    "ไม่ใช้ผลจาก HTTP request ตรงๆ เป็นเงื่อนไขตัดสินใจว่าจะลอง Selenium ต่อหรือไม่" อีกต่อไป (เดิม
-    เคยเขียนไว้แบบนั้น กลายเป็นบล็อกไม่ให้ไปถึงขั้น Selenium เลยทั้งที่ Selenium อาจจะเจอก็ได้ เพราะ
-    เป็นการพิมพ์ผ่านเบราว์เซอร์จริงเหมือนที่ผู้ใช้ทำเอง) — ไปลอง lookup_business_category (Selenium
-    เปิดเว็บจริง พิมพ์ค้นหา คลิกเลือก อ่านหน้า) ตรงๆ เลย ส่วนผล suggest_companies_with_fallback
-    เก็บไว้แค่เป็นข้อมูลประกอบ (รายชื่อใกล้เคียง) เท่านั้น ไม่ใช้ตัดสินใจว่าจะหยุดหรือไปต่อ"""
-
-    log("🔁 ลอง fallback ไปที่ dataforthai.com (เว็บบุคคลที่สาม ไม่ใช่แหล่งข้อมูลทางการของ DBD) ด้วยเบราว์เซอร์จริง")
-
-    category = None
-    try:
-        driver = setup_dataforthai_driver()
-        try:
-            category = lookup_business_category(driver, company_name, log=log)
-        finally:
-            driver.quit()
-    except Exception as e:  # noqa: BLE001 — fallback เสริม ล้มแล้วต้องไม่ทำให้ job หลักพังไปด้วย
-        log(f"⚠️ ดึงหมวดธุรกิจจาก dataforthai.com ไม่สำเร็จ: {e}")
-
-    # suggest_companies เป็นแค่ HTTP request ธรรมดา (ไม่ผ่านเบราว์เซอร์จริง) เก็บไว้แค่เป็นข้อมูล
-    # ประกอบเพิ่มเติมเฉยๆ (รายชื่อใกล้เคียง) — ล้มเหลวได้โดยไม่กระทบผลหลักจาก Selenium ข้างบน
-    suggestions = suggest_companies_with_fallback(company_name, log=log)
-
-    if not category and not suggestions:
-        log("⚠️ ไม่พบข้อมูลใดๆ จาก dataforthai.com เลยทั้งสองทาง")
-        return None
-
-    return {
-        "source": "dataforthai",
-        "candidates": [{"label": s.label, "value": s.value} for s in suggestions],
-        "business_category": category,
-    }
-
-
 def _suggest_business_type_for_division(
     tsic_code: Optional[str], division_code: Optional[str], reference
 ) -> tuple:
@@ -353,9 +299,9 @@ def _suggest_business_type_for_division(
     TSIC division เดียวกันแทน (ประมาณการ) ถ้ายังไม่มีเลยทั้งสองชั้น คืน (None, None, False, None)
     ให้ผู้ใช้เลือกเอง/เพิ่มประเภทธุรกิจใหม่เอง (ดู POST /api/business-types)
 
-    ใช้ร่วมกันทั้งผลจาก DBD DataWarehouse โดยตรง, ฐานข้อมูล DBD Open Data ในเครื่อง, และคำเดาจาก
-    Wikipedia (ทั้งสามมี division_code ติดมาด้วยเหมือนกัน แต่ dataforthai/Wikipedia มักไม่มี
-    tsic_code ที่แน่นอนให้ลองจับคู่แบบตรงเป๊ะ ส่งแค่ division_code มาแล้วปล่อย tsic_code=None ได้)"""
+    ใช้ร่วมกันทั้งผลจาก DBD DataWarehouse โดยตรง และคำเดาจาก Wikipedia (ทั้งสองมี division_code
+    ติดมาด้วยเหมือนกัน แต่ Wikipedia มักไม่มี tsic_code ที่แน่นอนให้ลองจับคู่แบบตรงเป๊ะ ส่งแค่
+    division_code มาแล้วปล่อย tsic_code=None ได้)"""
 
     if tsic_code and tsic_code in reference.business_types:
         bt = reference.business_types[tsic_code]
@@ -423,10 +369,10 @@ def _run_business_type_lookup_job(
             # แบบเปิดหน้าต่างจริง (headless=False) แล้วหยุดรอให้คลิก reload เองตอนโดนบล็อก (เหมือน
             # scripts/lookup_tsic.py ตอนรันแบบ interactive) แต่ผู้ใช้ไม่ต้องการให้มีหน้าต่าง popup
             # โผล่ขึ้นมาตอนค้นหาผ่านเว็บ จึงตัดกลไกนั้นออกจากเว็บไปเลย (ไม่ส่ง on_blocked — ไม่มีทาง
-            # ให้คนช่วยคลิก reload ได้อยู่แล้วถ้าไม่มีหน้าต่างให้เห็น) แลกกับการที่ถ้าโดนบล็อกจริงจะ
-            # fallback ไปหาข้อมูลจาก dataforthai.com / ฐานข้อมูล DBD Open Data ในเครื่อง / Wikipedia
-            # แทน (ดู except BlockedByAntiBot ด้านล่าง) ไม่ได้ TSIC ตรงจาก DBD เป๊ะเหมือนตอนคลิก reload
-            # เองได้ — ยังใช้กลไก on_blocked ได้อยู่ถ้าจะรัน scripts/lookup_tsic.py debug ในเครื่องเอง
+            # ให้คนช่วยคลิก reload ได้อยู่แล้วถ้าไม่มีหน้าต่างให้เห็น) แลกกับการที่ถ้าโดนบล็อกจริงจะลอง
+            # หาข้อมูลจาก Wikipedia แทน (ดู except BlockedByAntiBot ด้านล่าง) ไม่ได้ TSIC ตรงจาก DBD
+            # เป๊ะเหมือนตอนคลิก reload เองได้ — ยังใช้กลไก on_blocked ได้อยู่ถ้าจะรัน
+            # scripts/lookup_tsic.py debug ในเครื่องเอง
             results = lookup_tsic_by_registration_no(registration_no, log=log)
         else:
             results = lookup_business_type_for_company(company_name, log=log)
@@ -482,58 +428,14 @@ def _run_business_type_lookup_job(
                 "candidates": candidates,
                 "exact_match_index": exact_index,
                 "blocked": False,
-                "fallback": None,
                 "primary_index": primary_index,
                 "primary_is_ambiguous": primary_is_ambiguous,
             }
     except BlockedByAntiBot as e:
         log(f"🚫 {e}")
-        fallback = None
-        try:
-            fallback = _run_dataforthai_fallback(company_name, log)
-        except Exception as fallback_error:  # noqa: BLE001 — fallback ล้มก็ไม่ควรทำให้ job ทั้งหมดกลายเป็น error
-            log(f"⚠️ fallback ไป dataforthai.com ก็ไม่สำเร็จเช่นกัน: {fallback_error}")
-
-        # ทางเลือกสุดท้าย: ค้นจากฐานข้อมูล DBD Open Data ที่ดึงมาเก็บไว้ในเครื่องแล้ว (ถ้ามี — ดู
-        # dbd_opendata.py) เร็วเพราะไม่ต้องต่อเน็ต แต่ครอบคลุมแค่บริษัทที่ "ตั้งใหม่/เลิกกิจการ" ใน
-        # ช่วงที่เคยดึงมาเท่านั้น ไม่ใช่ทะเบียนเต็ม — ต้องบอกข้อจำกัดนี้ในผลลัพธ์เสมอ ไม่ใช่แค่คืนค่า
-        # ว่างเงียบๆ ถ้าไม่มีฐานข้อมูลนี้เลย (ยังไม่เคยกดดึงข้อมูล)
-        dbd_opendata_matches = []
-        dbd_opendata_exact_index = None
-        if dbd_opendata_is_available():
-            log("🔁 ลองค้นจากฐานข้อมูล DBD Open Data ที่เคยดึงมาเก็บในเครื่องแล้ว (ค้นออฟไลน์)")
-            try:
-                dbd_opendata_matches = search_juristic_person(company_name, limit=10)
-                log(f"✅ พบ {len(dbd_opendata_matches)} รายการในฐานข้อมูล DBD Open Data")
-
-                # ข้อมูล DBD Open Data มี "รหัสวัตถุประสงค์" ติดมาด้วย (เลข 5 หลัก 2 หลักแรกคือ TSIC
-                # division ตามมาตรฐานเดียวกับที่ DBD DataWarehouse ใช้) จึงจับคู่ประเภทธุรกิจใน
-                # ระบบเราได้แบบเดียวกับผลจาก DBD DataWarehouse โดยตรง (ดู _suggest_business_type_
-                # for_division) — ทำให้พยากรณ์อัตโนมัติได้แม้ตอน DBD DataWarehouse บล็อกอยู่ก็ตาม
-                normalized_query = company_name.strip().lower()
-                for i, m in enumerate(dbd_opendata_matches):
-                    purpose_code = (m.get("purpose_code") or "").strip()
-                    division_code = purpose_code[:2] if len(purpose_code) >= 2 and purpose_code[:2].isdigit() else None
-                    suggested_code, suggested_name, is_approximate, explanation = _suggest_business_type_for_division(
-                        purpose_code, division_code, reference
-                    )
-                    m["tsic_code"] = purpose_code
-                    m["tsic_name_th"] = m.get("purpose") or ""
-                    m["suggested_business_type_code"] = suggested_code
-                    m["suggested_business_type_name"] = suggested_name
-                    m["suggested_is_approximate"] = is_approximate
-                    m["suggested_explanation"] = explanation
-                    if dbd_opendata_exact_index is None and (m.get("name") or "").strip().lower() == normalized_query:
-                        dbd_opendata_exact_index = i
-            except Exception as opendata_error:  # noqa: BLE001
-                log(f"⚠️ ค้นจากฐานข้อมูล DBD Open Data ไม่สำเร็จ: {opendata_error}")
-        else:
-            log("ℹ️ ยังไม่เคยดึงฐานข้อมูล DBD Open Data มาเก็บในเครื่องเลย (ดึงได้จากหน้า Admin)")
 
         # ช่องทางฟรีเพิ่มเติม: Wikipedia ภาษาไทย (ดู wikipedia_lookup.py) — ครอบคลุมเฉพาะบริษัทใหญ่/
-        # มีชื่อเสียงเท่านั้น แต่บังเอิญเป็นกลุ่มเดียวกับที่ฐานข้อมูล DBD Open Data ด้านบนมักหาไม่เจอ
-        # พอดี (บริษัทเก่า ไม่ใช่ตั้งใหม่) จึงช่วยเติมเต็มจุดที่ยังขาดได้แบบไม่มีค่าใช้จ่าย — คืนแค่
-        # ข้อความอิสระเหมือน dataforthai's business_category ไม่ใช่รหัส TSIC จึงจับคู่อัตโนมัติไม่ได้
+        # มีชื่อเสียงเท่านั้น คืนแค่ข้อความอิสระ ไม่ใช่รหัส TSIC จึงจับคู่อัตโนมัติไม่ได้แบบมั่นใจเต็มที่
         wikipedia_result = None
         try:
             wp = search_wikipedia_company(company_name, log=log)
@@ -542,7 +444,7 @@ def _run_business_type_lookup_job(
 
                 # ลองเดาประเภทธุรกิจจากคำสำคัญในข้อความ Wikipedia (ดู keyword_classify.py) —
                 # ไม่ใช่รหัส TSIC จริง แค่จับคำตรงตัว จึงต้องบอกผู้ใช้ชัดเจนเสมอว่าเป็นการเดา
-                # (ดู guessed_keyword) ไม่ใช่ข้อมูลทางการเหมือนผลจาก DBD DataWarehouse/Open Data
+                # (ดู guessed_keyword) ไม่ใช่ข้อมูลทางการเหมือนผลจาก DBD DataWarehouse โดยตรง
                 guess = guess_tsic_division(f"{wp.title} {wp.summary}")
                 if guess:
                     guessed_division_code, guessed_keyword = guess
@@ -582,10 +484,6 @@ def _run_business_type_lookup_job(
                 "exact_match_index": None,
                 "blocked": True,
                 "blocked_message": str(e),
-                "fallback": fallback,
-                "dbd_opendata_matches": dbd_opendata_matches,
-                "dbd_opendata_available": dbd_opendata_is_available(),
-                "dbd_opendata_exact_match_index": dbd_opendata_exact_index,
                 "wikipedia_result": wikipedia_result,
             }
     except Exception as e:  # noqa: BLE001 — ต้อง catch ทุก error เพื่อรายงานสถานะ job ให้ถูกต้อง
@@ -621,63 +519,6 @@ def api_start_business_type_lookup():
 
 @app.route("/api/business-type-lookup/<job_id>")
 def api_get_business_type_lookup_status(job_id: str):
-    with _JOBS_LOCK:
-        job = _JOBS.get(job_id)
-        if job is None:
-            return jsonify({"error": "not_found", "message": "ไม่พบ job นี้"}), 404
-        return jsonify(dict(job))
-
-
-def _run_dbd_opendata_fetch_job(job_id: str, start_year: int, start_month: int) -> None:
-    """ดึงข้อมูล DBD Open Data (นิติบุคคลตั้งใหม่/เลิกกิจการรายเดือน) มาเก็บเป็นฐานข้อมูลในเครื่อง
-    (ดู dbd_opendata.py) — รันเป็น background job เพราะดึงทีละเดือนหลายปีอาจใช้เวลานาน"""
-
-    def log(msg: str) -> None:
-        with _JOBS_LOCK:
-            _JOBS[job_id]["logs"].append(msg)
-
-    try:
-        summary = fetch_dbd_opendata(start_year=start_year, start_month=start_month, log=log)
-        with _JOBS_LOCK:
-            _JOBS[job_id]["status"] = "success"
-            _JOBS[job_id]["result"] = summary
-    except Exception as e:  # noqa: BLE001 — ต้อง catch ทุก error เพื่อรายงานสถานะ job ให้ถูกต้อง
-        with _JOBS_LOCK:
-            _JOBS[job_id]["status"] = "error"
-            _JOBS[job_id]["error"] = str(e)
-
-
-@app.route("/api/admin/dbd-opendata/status")
-def api_dbd_opendata_status():
-    return jsonify({"available": dbd_opendata_is_available()})
-
-
-@app.route("/api/admin/dbd-opendata/fetch", methods=["POST"])
-def api_start_dbd_opendata_fetch():
-    """เริ่ม job ดึงข้อมูล DBD Open Data มาเก็บในเครื่อง (background job — ดู
-    _run_dbd_opendata_fetch_job) ค่าเริ่มต้นดึงตั้งแต่ปี 2020 จนถึงเดือนปัจจุบัน"""
-
-    body = request.get_json(force=True, silent=True) or {}
-    try:
-        start_year = int(body.get("start_year") or 2020)
-        start_month = int(body.get("start_month") or 1)
-    except (TypeError, ValueError):
-        return jsonify({"error": "invalid_request", "message": "ปี/เดือนเริ่มต้นต้องเป็นตัวเลข"}), 400
-
-    job_id = uuid.uuid4().hex
-    with _JOBS_LOCK:
-        _JOBS[job_id] = {"status": "running", "logs": [], "result": None, "error": None}
-
-    thread = threading.Thread(
-        target=_run_dbd_opendata_fetch_job, args=(job_id, start_year, start_month), daemon=True
-    )
-    thread.start()
-
-    return jsonify({"job_id": job_id})
-
-
-@app.route("/api/admin/dbd-opendata/fetch/<job_id>")
-def api_get_dbd_opendata_fetch_status(job_id: str):
     with _JOBS_LOCK:
         job = _JOBS.get(job_id)
         if job is None:
