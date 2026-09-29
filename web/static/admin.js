@@ -521,15 +521,11 @@ const amrBoxplotBizSelect = document.getElementById("amr-boxplot-biz-select");
 const amrBoxplotFiles = document.getElementById("amr-boxplot-files");
 const amrBoxplotUploadBtn = document.getElementById("amr-boxplot-upload-btn");
 const amrBoxplotUploadStatus = document.getElementById("amr-boxplot-upload-status");
-const amrBoxplotCoverage = document.getElementById("amr-boxplot-coverage");
-
-let amrBoxplotBizNameByCode = {};
 
 async function loadAmrBoxplotBizOptions() {
   try {
     const res = await fetch("/api/business-types-full");
     const types = await res.json();
-    amrBoxplotBizNameByCode = Object.fromEntries(types.map((t) => [t.code, t.name_th]));
     const optionsHtml = [...types]
       .sort((a, b) => (a.name_th || "").localeCompare(b.name_th || "", "th"))
       .map((t) => `<option value="${t.code}">${t.name_th} · ${t.code}</option>`)
@@ -538,25 +534,6 @@ async function loadAmrBoxplotBizOptions() {
     // ช่องเดียวกันในโหมด "ดึงจากเว็บ PEA อัตโนมัติ" มีตัวเลือกแรกเป็น "ตรวจจับอัตโนมัติ" (value ว่าง)
     // เสมอ ต้องคงไว้ ไม่ใช่เขียนทับด้วย optionsHtml ตรงๆ
     amrFetchBizSelect.innerHTML = amrFetchBizSelect.options[0].outerHTML + optionsHtml;
-  } catch (err) {
-    console.error(err);
-  }
-}
-
-async function loadAmrBoxplotCoverage() {
-  try {
-    const res = await fetch("/api/admin/amr-boxplot/status");
-    const status = await res.json();
-    const codes = Object.keys(status);
-    if (!codes.length) {
-      amrBoxplotCoverage.textContent = "ยังไม่มีข้อมูล AMR จริงในระบบเลย";
-      return;
-    }
-    amrBoxplotCoverage.innerHTML =
-      "มีข้อมูลแล้ว: " +
-      codes
-        .map((c) => `${amrBoxplotBizNameByCode[c] || c} (${c}) — ${status[c].intervals.toLocaleString("th-TH")} จุดข้อมูล, ${status[c].days} วัน`)
-        .join(" · ");
   } catch (err) {
     console.error(err);
   }
@@ -585,7 +562,6 @@ amrBoxplotUploadBtn.addEventListener("click", async () => {
     }
     amrBoxplotUploadStatus.innerHTML = `<span style="color:#006300;">✅ เพิ่มข้อมูลแล้ว ${data.added_intervals.toLocaleString("th-TH")} จุด (${data.days} วัน)</span>`;
     amrBoxplotFiles.value = "";
-    loadAmrBoxplotCoverage();
   } catch (err) {
     amrBoxplotUploadStatus.innerHTML = `<span style="color:#d03b3b;">เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ</span>`;
     console.error(err);
@@ -647,7 +623,6 @@ async function pollAmrFetchJob(jobId) {
       `<span style="color:#006300;">✅ เสร็จแล้ว — เพิ่ม ${(r.added_intervals || 0).toLocaleString("th-TH")} จุด ` +
       `(${r.days || 0} วัน, ${r.files_downloaded || 0} ไฟล์) เข้าประเภทธุรกิจ ${r.business_type_code || ""}` +
       (r.business_type_name ? ` — ${r.business_type_name}` : "") + `</span>`;
-    loadAmrBoxplotCoverage();
   } else {
     amrFetchResult.innerHTML = `<span style="color:#d03b3b;">${data.error || "เกิดข้อผิดพลาด"}</span>`;
   }
@@ -691,4 +666,45 @@ amrFetchBtn.addEventListener("click", async () => {
 });
 
 loadAmrBoxplotBizOptions();
-loadAmrBoxplotCoverage();
+
+// ── ดูกราฟ Boxplot ของประเภทธุรกิจที่เลือกไว้ตรงๆ จากหน้า Admin (ไม่ต้องไปหน้าแรกแล้วจับคู่ TSIC
+// ก่อน) — ใช้ TSIC จาก dropdown ของแผงที่กำลังเปิดอยู่ (แนบไฟล์เอง หรือดึงจากเว็บ PEA อัตโนมัติ)
+const amrBoxplotViewBtn = document.getElementById("amr-boxplot-view-btn");
+const amrBoxplotViewStatus = document.getElementById("amr-boxplot-view-status");
+const amrBoxplotViewImg = document.getElementById("amr-boxplot-view-img");
+let amrBoxplotViewImgObjectUrl = null;
+
+amrBoxplotViewBtn.addEventListener("click", async () => {
+  const activeSelect = amrBoxplotFetchPanel.style.display === "none" ? amrBoxplotBizSelect : amrFetchBizSelect;
+  const code = activeSelect.value;
+  if (!code) {
+    amrBoxplotViewStatus.innerHTML = `<span style="color:#d03b3b;">กรุณาเลือกประเภทธุรกิจ (TSIC) ก่อน</span>`;
+    amrBoxplotViewImg.style.display = "none";
+    return;
+  }
+
+  amrBoxplotViewBtn.disabled = true;
+  amrBoxplotViewStatus.textContent = "⏳ กำลังโหลด...";
+  amrBoxplotViewImg.style.display = "none";
+
+  try {
+    const res = await fetch(`/api/forecast-boxplot?business_type_code=${encodeURIComponent(code)}`);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      amrBoxplotViewStatus.innerHTML = `<span style="color:#8996ab;">${data.message || "ไม่พบข้อมูล"}</span>`;
+      return;
+    }
+
+    const blob = await res.blob();
+    if (amrBoxplotViewImgObjectUrl) URL.revokeObjectURL(amrBoxplotViewImgObjectUrl);
+    amrBoxplotViewImgObjectUrl = URL.createObjectURL(blob);
+    amrBoxplotViewImg.src = amrBoxplotViewImgObjectUrl;
+    amrBoxplotViewImg.style.display = "block";
+    amrBoxplotViewStatus.textContent = "";
+  } catch (err) {
+    amrBoxplotViewStatus.innerHTML = `<span style="color:#d03b3b;">เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ</span>`;
+    console.error(err);
+  } finally {
+    amrBoxplotViewBtn.disabled = false;
+  }
+});
