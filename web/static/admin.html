@@ -83,6 +83,14 @@
     .biz-type-combobox { margin-bottom: 4px; }
     .section-combobox { max-width: 520px; margin-bottom: 4px; }
     .biz-card-wrap { display: flex; flex-direction: column; }
+    .amr-log-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .amr-log-table th {
+      text-align: left; font-size: 12px; font-weight: 700; color: #55647a;
+      padding: 8px 10px; border-bottom: 2px solid rgba(15,23,42,0.1);
+    }
+    .amr-log-table td { padding: 8px 10px; border-bottom: 1px solid rgba(15,23,42,0.06); }
+    .amr-log-table tr:hover td { background: #f7f9fc; }
+    .amr-log-table .num { text-align: right; font-variant-numeric: tabular-nums; }
   </style>
 </head>
 <body>
@@ -184,6 +192,18 @@
         <button type="button" id="amr-boxplot-view-btn" class="day-type-btn" style="align-self:flex-start;">📊 ดูกราฟ Boxplot ของประเภทธุรกิจนี้</button>
         <div id="amr-boxplot-view-status" class="hint"></div>
         <img id="amr-boxplot-view-img" alt="กราฟ Boxplot การใช้ไฟจริงของประเภทธุรกิจที่เลือก" style="max-width:100%;border-radius:10px;border:1px solid rgba(15,23,42,0.1);display:none;">
+      </div>
+
+      <div class="card" style="padding: 28px; display: flex; flex-direction: column; gap: 16px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+          <div>
+            <div style="font-size: 15px; font-weight: 700;">ข้อมูล AMR จริงที่มีอยู่แล้วในระบบ (แยกตาม TSIC)</div>
+            <div class="hint">รายการประเภทธุรกิจที่เคยอัปโหลด/ดึงข้อมูล AMR จริงเข้ามาแล้ว (สะสมไว้ในเครื่องนี้) จำนวนจุดข้อมูล/จำนวนวัน มากพอสมควรถึงจะวาด Boxplot ได้น่าเชื่อถือ</div>
+          </div>
+          <button type="button" id="amr-boxplot-log-refresh-btn" class="day-type-btn">🔄 รีเฟรช</button>
+        </div>
+        <div id="amr-boxplot-log-status" class="hint"></div>
+        <div id="amr-boxplot-log-table"></div>
       </div>
 
       <div class="card" style="padding: 28px; display: flex; flex-direction: column; gap: 16px;">

@@ -539,6 +539,64 @@ async function loadAmrBoxplotBizOptions() {
   }
 }
 
+// ── log ข้อมูล AMR จริงที่มีอยู่แล้วในระบบ แยกตาม TSIC (ดู GET /api/admin/amr-boxplot/status —
+// amr_boxplot.summarize_available) ให้เห็นชัดๆ ว่าประเภทธุรกิจไหนมีข้อมูลสะสมไว้แล้วบ้าง กี่จุด/
+// กี่วัน แทนที่จะต้องเดา/ลองอัปโหลดซ้ำ หรือกดดู Boxplot ทีละ TSIC เอง — รีเฟรชอัตโนมัติทุกครั้งที่
+// อัปโหลด/ดึงข้อมูลสำเร็จ (ดู amrBoxplotUploadBtn/pollAmrFetchJob) และกดรีเฟรชเองได้ด้วย
+const amrBoxplotLogStatus = document.getElementById("amr-boxplot-log-status");
+const amrBoxplotLogTable = document.getElementById("amr-boxplot-log-table");
+const amrBoxplotLogRefreshBtn = document.getElementById("amr-boxplot-log-refresh-btn");
+
+async function loadAmrBoxplotLog() {
+  amrBoxplotLogStatus.textContent = "⏳ กำลังโหลด...";
+  amrBoxplotLogTable.innerHTML = "";
+  try {
+    const [statusRes, typesRes] = await Promise.all([
+      fetch("/api/admin/amr-boxplot/status"),
+      fetch("/api/business-types-full"),
+    ]);
+    const status = await statusRes.json();
+    const types = await typesRes.json();
+    const nameByCode = new Map(types.map((t) => [t.code, t.name_th]));
+
+    const rows = Object.entries(status).sort((a, b) => b[1].intervals - a[1].intervals);
+    if (!rows.length) {
+      amrBoxplotLogStatus.textContent = "";
+      amrBoxplotLogTable.innerHTML = `<div class="hint">ยังไม่มีข้อมูล AMR จริงในระบบเลย — อัปโหลด/ดึงจากเว็บ PEA ได้จากด้านบน</div>`;
+      return;
+    }
+
+    amrBoxplotLogStatus.textContent = "";
+    amrBoxplotLogTable.innerHTML = `
+      <table class="amr-log-table">
+        <thead><tr><th>ประเภทธุรกิจ (TSIC)</th><th class="num">จำนวนจุดข้อมูล</th><th class="num">จำนวนวัน</th><th></th></tr></thead>
+        <tbody>
+          ${rows
+            .map(([code, s]) => {
+              const name = nameByCode.get(code) || "";
+              return `<tr>
+                <td>${name ? `${escapeHtml(name)} · ` : ""}${escapeHtml(code)}${name ? "" : ` <span style="color:#d03b3b;">(ไม่พบชื่อในระบบ — อาจถูกลบ/ยังไม่ได้เพิ่มประเภทธุรกิจนี้)</span>`}</td>
+                <td class="num">${s.intervals.toLocaleString("th-TH")}</td>
+                <td class="num">${s.days.toLocaleString("th-TH")}</td>
+                <td><a target="_blank" rel="noopener" href="/api/forecast-boxplot?business_type_code=${encodeURIComponent(code)}">ดู Boxplot →</a></td>
+              </tr>`;
+            })
+            .join("")}
+        </tbody>
+      </table>`;
+  } catch (err) {
+    amrBoxplotLogStatus.innerHTML = `<span style="color:#d03b3b;">โหลดไม่สำเร็จ</span>`;
+    console.error(err);
+  }
+}
+
+function escapeHtml(s) {
+  return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+amrBoxplotLogRefreshBtn.addEventListener("click", loadAmrBoxplotLog);
+loadAmrBoxplotLog();
+
 amrBoxplotUploadBtn.addEventListener("click", async () => {
   const bizCode = amrBoxplotBizSelect.value;
   const files = amrBoxplotFiles.files;
@@ -562,6 +620,7 @@ amrBoxplotUploadBtn.addEventListener("click", async () => {
     }
     amrBoxplotUploadStatus.innerHTML = `<span style="color:#006300;">✅ เพิ่มข้อมูลแล้ว ${data.added_intervals.toLocaleString("th-TH")} จุด (${data.days} วัน)</span>`;
     amrBoxplotFiles.value = "";
+    loadAmrBoxplotLog();
   } catch (err) {
     amrBoxplotUploadStatus.innerHTML = `<span style="color:#d03b3b;">เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ</span>`;
     console.error(err);
@@ -623,6 +682,7 @@ async function pollAmrFetchJob(jobId) {
       `<span style="color:#006300;">✅ เสร็จแล้ว — เพิ่ม ${(r.added_intervals || 0).toLocaleString("th-TH")} จุด ` +
       `(${r.days || 0} วัน, ${r.files_downloaded || 0} ไฟล์) เข้าประเภทธุรกิจ ${r.business_type_code || ""}` +
       (r.business_type_name ? ` — ${r.business_type_name}` : "") + `</span>`;
+    loadAmrBoxplotLog();
   } else {
     amrFetchResult.innerHTML = `<span style="color:#d03b3b;">${data.error || "เกิดข้อผิดพลาด"}</span>`;
   }
