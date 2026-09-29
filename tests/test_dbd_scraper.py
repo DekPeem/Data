@@ -89,22 +89,24 @@ _SAMPLE_JURISTIC = {
 }
 
 
-def test_build_candidates_falls_back_to_body_text_when_dict_has_no_tsic():
+def test_build_candidates_uses_only_latest_financial_statement_from_body_text():
+    """ต้องอ่านแค่การ์ด "ประเภทธุรกิจที่ส่งงบการเงินปีล่าสุด" เท่านั้น — ไม่คืน "ตอนจดทะเบียน" มา
+    เป็นตัวเลือกเลยแม้จะเจอทั้งคู่ในหน้าเดียวกัน (ยืนยันชัดเจนจากผู้ใช้ว่าอยากได้แค่ตัวนี้ หลังเจอ
+    เคสจริงที่ "ตอนจดทะเบียน" หลุดมาเป็นตัวที่ระบบใช้อยู่ดีทั้งที่เคย sort ให้ "ปีล่าสุด" ขึ้นก่อนแล้ว)"""
+
     logs = []
     candidates = _build_candidates("0145537000805", _SAMPLE_JURISTIC, _SAMPLE_BODY_TEXT, logs.append)
 
-    assert len(candidates) == 2
-    # "ปีล่าสุด" ต้องขึ้นก่อนเสมอ (แม่นยำ/เป็นปัจจุบันกว่าตอนจดทะเบียนครั้งแรก)
+    assert len(candidates) == 1
     assert candidates[0].tsic_code == "32909"
     assert "ปีล่าสุด" in candidates[0].tsic_name_th
-    assert candidates[1].tsic_code == "28250"
-    assert "ตอนจดทะเบียน" in candidates[1].tsic_name_th
-    for c in candidates:
-        assert c.registration_no == "0145537000805"
-        assert c.juristic_name == "บริษัท สยามคาสท์ไนล่อน จำกัด"
-        assert c.juristic_type == "บริษัทจำกัด"
-        assert c.status == "ยังดำเนินกิจการอยู่"
-    assert any("พบ TSIC" in m for m in logs)
+    assert "ตอนจดทะเบียน" not in candidates[0].tsic_name_th
+    c = candidates[0]
+    assert c.registration_no == "0145537000805"
+    assert c.juristic_name == "บริษัท สยามคาสท์ไนล่อน จำกัด"
+    assert c.juristic_type == "บริษัทจำกัด"
+    assert c.status == "ยังดำเนินกิจการอยู่"
+    assert any("พบ TSIC" in m for m in logs) or any("TSIC" in m for m in logs)
 
 
 def test_build_candidates_prefers_juristic_dict_when_it_has_tsic():
@@ -116,12 +118,12 @@ def test_build_candidates_prefers_juristic_dict_when_it_has_tsic():
     assert candidates[0].tsic_code == "99999"
 
 
-def test_build_candidates_orders_latest_financial_statement_first_via_dict_path():
-    """เหมือน test_build_candidates_falls_back_to_body_text_when_dict_has_no_tsic (ลำดับ "ปีล่าสุด"
-    ต้องขึ้นก่อนเสมอ) แต่ผ่านทาง juristic dict โดยตรง ไม่ใช่ fallback ไปอ่าน body text — ยืนยันเคสจริง
-    ที่บริษัทมี TSIC ตอนจดทะเบียน/ปีล่าสุดต่างกัน (เช่น เปลี่ยนสายธุรกิจไปแล้ว) และ scraper.py's
-    _JURISTIC_JS ใช้หัวข้อการ์ดเป็น key แยกกันสำหรับ 2 การ์ดนี้โดยเฉพาะ (label "ประเภทธุรกิจ" ซ้ำกัน
-    ทั้งคู่ ต่างจาก label อื่นที่ปรากฏครั้งเดียว) — ก่อนแก้บั๊กนี้ การ์ดที่มาทีหลังใน DOM จะหายไปเงียบๆ"""
+def test_build_candidates_uses_only_latest_financial_statement_via_dict_path():
+    """เหมือน test_build_candidates_uses_only_latest_financial_statement_from_body_text แต่ผ่านทาง
+    juristic dict โดยตรง ไม่ใช่ fallback ไปอ่าน body text — ยืนยันเคสจริงที่บริษัทมี TSIC ตอนจดทะเบียน/
+    ปีล่าสุดต่างกัน (เช่น เปลี่ยนสายธุรกิจไปแล้ว) scraper.py's _JURISTIC_JS ใช้หัวข้อการ์ดเป็น key
+    แยกกันสำหรับ 2 การ์ดนี้โดยเฉพาะ (label "ประเภทธุรกิจ" ซ้ำกันทั้งคู่) แต่ _build_candidates ต้อง
+    เลือกอ่านเฉพาะการ์ด "ปีล่าสุด" เท่านั้น ไม่ใช่คืนทั้งคู่มาให้เลือก"""
 
     juristic = dict(_SAMPLE_JURISTIC)
     juristic["ประเภทธุรกิจตอนจดทะเบียน"] = "28250 การผลิตเครื่องจักร"
@@ -129,21 +131,26 @@ def test_build_candidates_orders_latest_financial_statement_first_via_dict_path(
 
     candidates = _build_candidates("0145537000805", juristic, "ข้อความหน้าอื่นที่ไม่เกี่ยวกัน", lambda m: None)
 
-    assert len(candidates) == 2
+    assert len(candidates) == 1
     assert candidates[0].tsic_code == "32909"
     assert "ปีล่าสุด" in candidates[0].tsic_name_th
-    assert candidates[1].tsic_code == "28250"
-    assert "ตอนจดทะเบียน" in candidates[1].tsic_name_th
 
 
-def test_build_candidates_dedupes_when_both_sources_give_same_code():
-    body_text = _SAMPLE_BODY_TEXT.replace(
-        "32909 การผลิตผลิตภัณฑ์อื่นๆซึ่งไม่ได้จัดประเภทไว้ในที่อื่น",
-        "28250 การผลิตเครื่องจักรที่ใช้ในกระบวนการผลิตอาหาร เครื่องดื่ม และ ยาสูบ",
-    )
-    candidates = _build_candidates("0145537000805", _SAMPLE_JURISTIC, body_text, lambda m: None)
+def test_build_candidates_falls_back_to_registration_when_no_latest_statement_found():
+    """บริษัทตั้งใหม่ที่ยังไม่เคยส่งงบการเงินเลย ไม่มีการ์ด "ปีล่าสุด" ให้อ่าน — ต้อง fallback ไปใช้
+    "ตอนจดทะเบียน" แทน (ดีกว่าไม่มีข้อมูลเลย) พร้อมบอกในชื่อ/log ว่าเป็นข้อมูลตอนจดทะเบียน ไม่ใช่
+    ปีล่าสุด"""
+
+    juristic = dict(_SAMPLE_JURISTIC)
+    juristic["ประเภทธุรกิจตอนจดทะเบียน"] = "28250 การผลิตเครื่องจักร"
+
+    logs = []
+    candidates = _build_candidates("0145537000805", juristic, "ข้อความหน้าอื่นที่ไม่เกี่ยวกัน", logs.append)
+
     assert len(candidates) == 1
     assert candidates[0].tsic_code == "28250"
+    assert "ตอนจดทะเบียน" in candidates[0].tsic_name_th
+    assert any("ยังไม่พบข้อมูลงบการเงิน" in m or "ตอนจดทะเบียน" in m for m in logs)
 
 
 def test_build_candidates_returns_empty_list_and_logs_when_no_tsic_found_anywhere():

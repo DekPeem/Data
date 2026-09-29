@@ -5,10 +5,10 @@ amr_mapping.dbd_lookup.lookup_business_type_for_company (Selenium, ค้นด�
 
 หลักการ: เข้าหน้าแรก → พิมพ์เลขทะเบียนในกล่องค้นหา → เลือกจาก autocomplete (หรือกด Enter/เข้า URL
 โปรไฟล์ตรงๆ เป็นสำรอง) → อ่านการ์ด "ข้อมูลนิติบุคคล" (scraper.scrape_juristic) ได้ชื่อ/ประเภท/
-สถานะนิติบุคคล จากนั้นหารหัส TSIC 2 จุดที่อาจมีอยู่ในหน้าเดียวกัน (ตอนจดทะเบียน / ตามงบการเงิน
-ปีล่าสุด) ด้วย regex บนข้อความทั้งหน้า (ไม่ผูกกับ CSS class เฉพาะของ 2 การ์ดนี้ เพราะไม่มีตัวอย่าง
-DOM จริงมายืนยัน ต่างจาก scrape_juristic ที่ยืนยันโครงสร้าง .prompt แล้วจริง) — เอา "ปีล่าสุด" ขึ้น
-ก่อนเสมอถ้าพบทั้งคู่และรหัสต่างกัน
+สถานะนิติบุคคล จากนั้นหารหัส TSIC จากการ์ด "ประเภทธุรกิจที่ส่งงบการเงินปีล่าสุด" เท่านั้น (สะท้อน
+กิจกรรมปัจจุบันของบริษัทมากกว่าการ์ด "ตอนจดทะเบียน" ที่อาจเก่ากว่ามาก — ไม่อ่านการ์ดนั้นเข้ามาเป็น
+ตัวเลือกเลยตามที่ผู้ใช้ยืนยันชัดเจน ดู _build_candidates) fallback ไปใช้ "ตอนจดทะเบียน" เฉพาะตอน
+หาการ์ด "ปีล่าสุด" ไม่เจอเลยจริงๆ (บริษัทตั้งใหม่ยังไม่เคยส่งงบการเงิน)
 
 ⚠️ ข้อสังเกตสำคัญเรื่องจริยธรรม/นโยบายของโปรเจกต์: โมดูลนี้ปลอม navigator.webdriver และคุณสมบัติ
 อื่นๆ ของเบราว์เซอร์ (ดู config.STEALTH_JS) เพื่อผ่านระบบป้องกันบอท (Incapsula) ของเว็บ DBD —
@@ -88,51 +88,69 @@ def _extract_tsic_from_juristic_dict(data: dict) -> List[Tuple[str, str, str]]:
 def _build_candidates(
     registration_no: str, juristic: dict, body_text: str, log: ProgressCallback
 ) -> List[CompanyBusinessInfo]:
+    """อ่านรหัส TSIC จากการ์ด "ประเภทธุรกิจที่ส่งงบการเงินปีล่าสุด" เท่านั้น (สะท้อนกิจกรรมปัจจุบัน
+    ของบริษัทมากกว่า "ตอนจดทะเบียน" ที่อาจเก่ากว่ามาก — ยืนยันตามที่ผู้ใช้ต้องการชัดเจน) — เคยลอง
+    คืนทั้งสองค่าเป็น candidate แยกกันแล้วให้ web/app.py เลือก "ปีล่าสุด" เป็นตัวหลักแทน แต่ยังเจอ
+    เคสจริงที่ตัว "ตอนจดทะเบียน" หลุดมาเป็นตัวที่ใช้อยู่ดี (โครงสร้างหน้าเว็บจริงไม่ตรงกับที่คาดไว้
+    เป๊ะทุกกรณี) ตัดความกำกวมทั้งหมดด้วยการไม่อ่าน "ตอนจดทะเบียน" เข้ามาเป็นตัวเลือกเลยง่ายกว่า —
+    fallback ไปใช้ "ตอนจดทะเบียน" เฉพาะตอนหาการ์ด "ปีล่าสุด" ไม่เจอเลยจริงๆ (เช่น บริษัทตั้งใหม่ยัง
+    ไม่เคยส่งงบการเงินเลย จึงไม่มีการ์ดนี้ให้อ่าน)"""
+
     juristic_name = juristic.get("ชื่อนิติบุคคล") or ""
     juristic_type = juristic.get("ประเภทนิติบุคคล") or ""
     status = juristic.get("สถานะนิติบุคคล") or ""
 
     from_dict = _extract_tsic_from_juristic_dict(juristic)
-    if from_dict:
-        entries = [(code, name, key) for code, name, key in from_dict]
-        # ให้ TSIC "ตามงบการเงินปีล่าสุด" ขึ้นก่อนเสมอถ้าเจอทั้งคู่ (เหมือน fallback ด้าน else
-        # ด้านล่าง) — สะท้อนกิจกรรมปัจจุบันของบริษัทมากกว่า "ตอนจดทะเบียน" ที่อาจเก่ากว่ามาก ยืนยัน
-        # จาก DBD จริง: บริษัทเดียวกันมี TSIC ตอนจดทะเบียน/ปีล่าสุดต่างกันได้จริง (เปลี่ยนสายธุรกิจ
-        # ไปแล้ว) — sort แบบ stable กันลำดับเดิมของรายการอื่นๆ ที่ไม่เกี่ยวกันพัง
-        entries.sort(key=lambda e: 0 if _HEADER_LATEST_FINANCIAL_STATEMENT in e[2] else 1)
-    else:
+    latest_entry = next((e for e in from_dict if _HEADER_LATEST_FINANCIAL_STATEMENT in e[2]), None)
+    registered_entry = next((e for e in from_dict if _HEADER_AT_REGISTRATION in e[2]), None)
+
+    if latest_entry is None and registered_entry is None:
+        if len(from_dict) == 1:
+            # หน้านี้ไม่มีการ์ด "ประเภทธุรกิจ" 2 ใบ (label ไม่ได้ถูกเปลี่ยนเป็นหัวข้อการ์ดโดย
+            # scraper.py's _JURISTIC_JS เพราะไม่ชนกัน) — ใช้ค่าเดียวที่มีได้เลย ไม่ต้องเดาว่าเป็น
+            # "ปีล่าสุด" หรือ "ตอนจดทะเบียน" (ไม่มีข้อมูลพอจะแยก แต่ก็ไม่มีความกำกวมให้เลือกผิดด้วย)
+            code, name, _key = from_dict[0]
+            log(f"✅ อ่านข้อมูลสำเร็จ: {juristic_name} — TSIC {code}")
+            return [
+                CompanyBusinessInfo(
+                    registration_no=registration_no, juristic_name=juristic_name,
+                    juristic_type=juristic_type, status=status, tsic_code=code, tsic_name_th=name,
+                )
+            ]
+        # จากข้อความทั้งหน้าแทน (fallback เดียวกับตอนการ์ด "ข้อมูลนิติบุคคล" ไม่มีคีย์ TSIC ปนอยู่เลย)
         latest = _extract_tsic_after_header(body_text, _HEADER_LATEST_FINANCIAL_STATEMENT)
         registered = _extract_tsic_after_header(
             body_text, _HEADER_AT_REGISTRATION, next_header=_HEADER_LATEST_FINANCIAL_STATEMENT
         )
-        entries = []
-        if latest:
-            entries.append((latest[0], latest[1], "ตามงบการเงินปีล่าสุด"))
-        if registered:
-            entries.append((registered[0], registered[1], "ตอนจดทะเบียน"))
+        latest_entry = (latest[0], latest[1], _HEADER_LATEST_FINANCIAL_STATEMENT) if latest else None
+        registered_entry = (registered[0], registered[1], _HEADER_AT_REGISTRATION) if registered else None
 
-    candidates: List[CompanyBusinessInfo] = []
-    seen_codes: set = set()
-    for code, name, label in entries:
-        if code in seen_codes:
-            continue
-        seen_codes.add(code)
-        candidates.append(
-            CompanyBusinessInfo(
-                registration_no=registration_no,
-                juristic_name=juristic_name,
-                juristic_type=juristic_type,
-                status=status,
-                tsic_code=code,
-                tsic_name_th=f"({label}) {name}",
-            )
-        )
-
-    if not candidates:
-        log("⚠️ พบหน้าบริษัทแต่อ่านรหัส TSIC ไม่สำเร็จ (โครงสร้างหน้าอาจเปลี่ยนไป จาก dbd_scraper ที่ยืนยันไว้ล่าสุด)")
+    if latest_entry is not None:
+        code, name, _key = latest_entry
+        label = "ตามงบการเงินปีล่าสุด"
+    elif registered_entry is not None:
+        code, name, _key = registered_entry
+        label = "ตอนจดทะเบียน (ยังไม่พบข้อมูลงบการเงินรอบล่าสุด)"
+        log("ℹ️ ไม่พบการ์ด 'ประเภทธุรกิจที่ส่งงบการเงินปีล่าสุด' — ใช้ 'ตอนจดทะเบียน' แทน")
     else:
-        log(f"✅ อ่านข้อมูลสำเร็จ: {juristic_name} — พบ TSIC {len(candidates)} รายการ")
-    return candidates
+        code = name = None
+        label = ""
+
+    if code is None:
+        log("⚠️ พบหน้าบริษัทแต่อ่านรหัส TSIC ไม่สำเร็จ (โครงสร้างหน้าอาจเปลี่ยนไป จาก dbd_scraper ที่ยืนยันไว้ล่าสุด)")
+        return []
+
+    log(f"✅ อ่านข้อมูลสำเร็จ: {juristic_name} — TSIC {code} ({label})")
+    return [
+        CompanyBusinessInfo(
+            registration_no=registration_no,
+            juristic_name=juristic_name,
+            juristic_type=juristic_type,
+            status=status,
+            tsic_code=code,
+            tsic_name_th=f"({label}) {name}",
+        )
+    ]
 
 
 def _launch(playwright, headless: bool):
