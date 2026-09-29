@@ -72,16 +72,6 @@
       background: #fff; color: #184f95; font-size: 13.5px; font-weight: 600; font-family: inherit; cursor: pointer;
     }
     .forecast-toggle-btn:hover { background: #eef3fa; }
-    .forecast-rate-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-    .forecast-rate-col { display: flex; flex-direction: column; gap: 10px; border: 1px solid rgba(15,23,42,0.1); border-radius: 10px; padding: 14px; }
-    .forecast-rate-col h3 { margin: 0; font-size: 13px; font-weight: 700; }
-    .forecast-rate-col .form-field label { font-size: 12px; }
-    .forecast-rate-col .form-field input {
-      height: 38px; border-radius: 8px; border: 1px solid rgba(15,23,42,0.14);
-      padding: 0 10px; font-size: 13px; font-family: inherit; background: #fff; color: #0f1b2d;
-    }
-    #forecast-shape-status { font-size: 12.5px; color: #55647a; }
-    #forecast-shape-img { max-width: 100%; border-radius: 10px; border: 1px solid rgba(15,23,42,0.1); display: none; }
     #boxplot-status { font-size: 12.5px; color: #55647a; }
     #boxplot-img { max-width: 100%; border-radius: 10px; border: 1px solid rgba(15,23,42,0.1); display: none; margin-top: 10px; }
   </style>
@@ -146,45 +136,6 @@
             <div id="boxplot-status"></div>
             <img id="boxplot-img" alt="กราฟ Boxplot การใช้ไฟจริงของธุรกิจประเภทนี้">
           </div>
-        </div>
-
-        <button type="button" id="forecast-shape-toggle-btn" class="forecast-toggle-btn">📈 พยากรณ์เส้นโค้งการใช้ไฟ (จาก Peak/หน่วยไฟบนบิล)</button>
-
-        <div id="forecast-shape-panel" style="display:none;flex-direction:column;gap:16px;">
-          <div class="warn-box">
-            ℹ️ นี่คือ "รูปทรง" เส้นโค้งที่สร้างขึ้นให้ดูสมเหตุสมผลจากตัวเลขบนบิลของคุณเอง (Peak + หน่วยไฟ) เท่านั้น — ไม่ใช่การวัดจริง และไม่ได้อิงข้อมูลจริงของบริษัทอื่น กรอกอย่างน้อย 1 ช่วง (P, OP หรือ H) ก็พยากรณ์ได้แล้ว
-            <a target="_blank" rel="noopener" href="/methodology">อ่านวิธีการคิด →</a>
-          </div>
-
-          <div class="forecast-rate-grid">
-            <div class="forecast-rate-col">
-              <h3 style="color:#eb6834;">P (Peak)</h3>
-              <div class="form-field"><label for="fc-peak-p">Peak (kW)</label><input id="fc-peak-p" type="number" step="any" min="0" placeholder="เช่น 650"></div>
-              <div class="form-field"><label for="fc-energy-p">หน่วยไฟ (kWh)</label><input id="fc-energy-p" type="number" step="any" min="0" placeholder="เช่น 69500"></div>
-              <div class="form-field"><label for="fc-days-p">จำนวนวัน</label><input id="fc-days-p" type="number" step="1" min="1" placeholder="ค่าเริ่มต้น 22"></div>
-            </div>
-            <div class="forecast-rate-col">
-              <h3 style="color:#1baf7a;">OP (Off-Peak)</h3>
-              <div class="form-field"><label for="fc-peak-op">Peak (kW)</label><input id="fc-peak-op" type="number" step="any" min="0" placeholder="เช่น 420"></div>
-              <div class="form-field"><label for="fc-energy-op">หน่วยไฟ (kWh)</label><input id="fc-energy-op" type="number" step="any" min="0" placeholder="เช่น 45000"></div>
-              <div class="form-field"><label for="fc-days-op">จำนวนวัน</label><input id="fc-days-op" type="number" step="1" min="1" placeholder="ค่าเริ่มต้น 22"></div>
-            </div>
-            <div class="forecast-rate-col">
-              <h3 style="color:#6250d6;">H (Holiday)</h3>
-              <div class="form-field"><label for="fc-peak-h">Peak (kW)</label><input id="fc-peak-h" type="number" step="any" min="0" placeholder="เช่น 300"></div>
-              <div class="form-field"><label for="fc-energy-h">หน่วยไฟ (kWh)</label><input id="fc-energy-h" type="number" step="any" min="0" placeholder="เช่น 24000"></div>
-              <div class="form-field"><label for="fc-days-h">จำนวนวัน</label><input id="fc-days-h" type="number" step="1" min="1" placeholder="ค่าเริ่มต้น 8"></div>
-            </div>
-          </div>
-
-          <div class="form-field" style="max-width:280px;">
-            <label for="fc-drop-pct">% ลดตอนพักเที่ยง</label>
-            <input id="fc-drop-pct" type="number" step="any" min="0" max="100" value="43">
-          </div>
-
-          <button type="button" id="forecast-shape-btn" class="day-type-btn" style="align-self:flex-start;">พยากรณ์เส้นโค้ง</button>
-          <div id="forecast-shape-status"></div>
-          <img id="forecast-shape-img" alt="กราฟพยากรณ์เส้นโค้งการใช้ไฟ">
         </div>
       </div>
 

@@ -708,3 +708,59 @@ amrBoxplotViewBtn.addEventListener("click", async () => {
     amrBoxplotViewBtn.disabled = false;
   }
 });
+
+// ── พยากรณ์เส้นโค้งการใช้ไฟ (P/OP/H) จาก Peak/หน่วยไฟบนบิลเท่านั้น (ไม่ต้องมี AMR จริง) — ย้ายมา
+// จากหน้าแรก (เดิมอยู่ index.html/app.js) เพราะคล้าย Boxplot ด้านบนตรงที่ไม่ต้องผูกกับการค้นหา
+// บริษัท/TSIC ใดๆ เลย จึงเหมาะเป็นเครื่องมือของ Admin มากกว่า — ดู
+// src/amr_mapping/forecast_shape.py ฝั่ง backend เอาเลขที่กรอกใน panel นี้ยิงไปที่
+// GET /api/forecast-shape ตรงๆ คืนรูปภาพ PNG ตรงๆ ไม่ใช่ JSON จึงต้อง fetch เป็น blob แล้วสร้าง
+// object URL แทนการตั้ง <img src> ตรงๆ (กันกรณี error ตอบกลับมาเป็น JSON แทน — ต้องเช็ค
+// response.ok ก่อนตัดสินใจว่าจะแสดงรูปหรือข้อความ error)
+const forecastBtn = document.getElementById("forecast-shape-btn");
+const forecastStatus = document.getElementById("forecast-shape-status");
+const forecastImg = document.getElementById("forecast-shape-img");
+
+let forecastImgObjectUrl = null; // ต้อง revoke ของเก่าทิ้งทุกครั้งก่อนสร้างใหม่ กัน memory leak
+
+function forecastFieldValue(id) {
+  return document.getElementById(id).value.trim();
+}
+
+forecastBtn.addEventListener("click", async () => {
+  const params = new URLSearchParams();
+  const fields = {
+    peak_p: "fc-peak-p", energy_p: "fc-energy-p", days_p: "fc-days-p",
+    peak_op: "fc-peak-op", energy_op: "fc-energy-op", days_op: "fc-days-op",
+    peak_h: "fc-peak-h", energy_h: "fc-energy-h", days_h: "fc-days-h",
+    drop_pct: "fc-drop-pct",
+  };
+  for (const [key, id] of Object.entries(fields)) {
+    const v = forecastFieldValue(id);
+    if (v !== "") params.set(key, v);
+  }
+
+  forecastBtn.disabled = true;
+  forecastStatus.textContent = "⏳ กำลังพยากรณ์...";
+  forecastImg.style.display = "none";
+
+  try {
+    const res = await fetch(`/api/forecast-shape?${params.toString()}`);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      forecastStatus.innerHTML = `<span style="color:#d03b3b;">${data.message || "เกิดข้อผิดพลาด"}</span>`;
+      return;
+    }
+
+    const blob = await res.blob();
+    if (forecastImgObjectUrl) URL.revokeObjectURL(forecastImgObjectUrl);
+    forecastImgObjectUrl = URL.createObjectURL(blob);
+    forecastImg.src = forecastImgObjectUrl;
+    forecastImg.style.display = "block";
+    forecastStatus.textContent = "";
+  } catch (err) {
+    forecastStatus.innerHTML = `<span style="color:#d03b3b;">เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ</span>`;
+    console.error(err);
+  } finally {
+    forecastBtn.disabled = false;
+  }
+});
