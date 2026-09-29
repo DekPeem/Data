@@ -11,7 +11,6 @@ function escapeHtml(s) {
   return (s || "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
-const nameInput = document.getElementById("f-name");
 // ค่าจริงเก็บใน hidden input ตัวนี้ (.value อ่าน/เขียนได้แบบเดิม) — ส่วน UI ที่มองเห็น/คลิกได้คือ
 // section-combobox + biz-type-combobox ด้านล่าง (ดู setupBusinessTypeCombobox) แยกออกจาก native
 // <select> เพราะ dropdown ของ native select เปิดขึ้นด้านบนเองเวลาพื้นที่ด้านล่างจอไม่พอ (ผู้ใช้
@@ -66,9 +65,23 @@ function filterComboboxList(input, wrap) {
   if (emptyMsg) emptyMsg.style.display = anyVisible ? "none" : "block";
 }
 
-// ตั้งค่าประเภทธุรกิจที่เลือก (ทั้ง hidden input และข้อความที่แสดงในกล่องค้นหาทั้ง 2 ขั้น)
-function setBusinessType(code) {
+// ชื่อบริษัทที่จับคู่ล่าสุดจากผล DBD (ไม่ใช่การพิมพ์เอง — อ่านมาจาก candidate.juristic_name
+// ตอนค้นหาด้วยเลขทะเบียนสำเร็จเท่านั้น) เก็บไว้ใช้โชว์คู่กับ Boxplot ด้านล่างด้วยว่ากำลังดูของ
+// ธุรกิจประเภทไหนที่จับคู่กับบริษัทไหน (เคลียร์ทิ้งทุกครั้งที่เปลี่ยนประเภทธุรกิจเองแบบไม่ผ่านการ
+// ค้นหา กันโชว์ชื่อบริษัทเก่าค้างคู่กับประเภทธุรกิจใหม่ที่ไม่เกี่ยวกัน)
+let matchedCompanyName = null;
+
+// ตั้งค่าประเภทธุรกิจที่เลือก (ทั้ง hidden input และข้อความที่แสดงในกล่องค้นหาทั้ง 2 ขั้น) —
+// companyName (ไม่บังคับ) ใส่เฉพาะตอนมาจากผลค้นหา DBD จริงเท่านั้น ไม่งั้นเว้นว่างไว้ (เคลียร์)
+function setBusinessType(code, companyName) {
   businessTypeSelect.value = code || "";
+
+  matchedCompanyName = companyName || null;
+  const matchedNameEl = document.getElementById("matched-company-name");
+  if (matchedNameEl) {
+    matchedNameEl.textContent = matchedCompanyName ? `🏢 บริษัทที่จับคู่: ${matchedCompanyName}` : "";
+    matchedNameEl.style.display = matchedCompanyName ? "" : "none";
+  }
   const sectionInput = document.querySelector("#f-business-type-section .biz-type-search-input");
   const bizInput = document.querySelector("#f-business-type-biz .biz-type-search-input");
   const clearBtn = document.getElementById("f-business-type-clear");
@@ -180,15 +193,17 @@ const registrationNoInput = document.getElementById("f-registration-no");
 
 // สร้างข้อความแจ้งผล + ตั้งค่าประเภทธุรกิจให้อัตโนมัติ (side effect)
 function buildBusinessTypeSuggestionMessage(candidate) {
+  const companyName = escapeHtml(candidate.juristic_name || "");
+
   if (!candidate.suggested_business_type_code) {
-    return `<div class="lookup-status-text">พบข้อมูล TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} แต่ยังไม่มีในระบบ กรุณาเลือกประเภทธุรกิจที่ใกล้เคียงเองด้านบน หรือเพิ่มประเภทธุรกิจใหม่</div>`;
+    return `<div class="lookup-status-text">พบบริษัท "${companyName}" — TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} แต่ยังไม่มีในระบบ กรุณาเลือกประเภทธุรกิจที่ใกล้เคียงเองด้านบน หรือเพิ่มประเภทธุรกิจใหม่</div>`;
   }
-  setBusinessType(candidate.suggested_business_type_code);
+  setBusinessType(candidate.suggested_business_type_code, candidate.juristic_name);
 
   if (candidate.suggested_is_approximate) {
-    return `<div class="lookup-status-text">⚠️ ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} — ไม่มีธุรกิจนี้ตรงๆ ในระบบ จึงตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" แทนแบบประมาณการ (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)<br><span style="color:#8996ab;">${candidate.suggested_explanation}</span></div>`;
+    return `<div class="lookup-status-text">⚠️ พบบริษัท "${companyName}" — ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} — ไม่มีธุรกิจนี้ตรงๆ ในระบบ จึงตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" แทนแบบประมาณการ (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)<br><span style="color:#8996ab;">${candidate.suggested_explanation}</span></div>`;
   }
-  return `<div class="lookup-status-text">✅ ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} → ตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" ให้อัตโนมัติแล้ว (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)</div>`;
+  return `<div class="lookup-status-text">✅ พบบริษัท "${companyName}" — ตรวจพบ TSIC ${candidate.tsic_code} - ${candidate.tsic_name_th} → ตั้งประเภทธุรกิจเป็น "${candidate.suggested_business_type_name}" ให้อัตโนมัติแล้ว (ตรวจสอบ/เปลี่ยนเองได้ด้านบน)</div>`;
 }
 
 // สร้างข้อความแจ้งผลของการเดาจากคำสำคัญใน Wikipedia (ดู keyword_classify.py ฝั่ง backend) — ต่าง
@@ -354,10 +369,9 @@ async function pollBusinessTypeLookupJob(jobId) {
 }
 
 async function runBusinessTypeLookup() {
-  const companyName = nameInput.value.trim();
   const registrationNo = registrationNoInput.value.trim();
-  if (!companyName && !registrationNo) {
-    lookupStatus.innerHTML = `<div class="lookup-status-text" style="color:#d03b3b;">กรุณาพิมพ์ชื่อบริษัทหรือเลขนิติบุคคลก่อน</div>`;
+  if (!registrationNo) {
+    lookupStatus.innerHTML = `<div class="lookup-status-text" style="color:#d03b3b;">กรุณากรอกเลขนิติบุคคล 13 หลักก่อน</div>`;
     return;
   }
 
@@ -368,10 +382,10 @@ async function runBusinessTypeLookup() {
     const res = await fetch("/api/business-type-lookup", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      // ถ้ากรอกเลขนิติบุคคลไว้ ใช้เป็นคำค้นหาแทนชื่อทันที (แม่นยำกว่ามาก) — ดู
-      // _run_business_type_lookup_job ฝั่ง backend company_name ยังต้องส่งไปเสมอ (ใช้เป็นคำค้นหา
-      // สำรองถ้าไม่กรอกเลขทะเบียน)
-      body: JSON.stringify({ company_name: companyName || registrationNo, registration_no: registrationNo || undefined }),
+      // ไม่มีช่องกรอกชื่อบริษัทแยกแล้ว — ใช้เลขนิติบุคคลเป็นทั้งคำค้นหาและ company_name (ฝั่ง
+      // backend ยังต้องการ company_name แบบไม่ว่างเปล่าเสมอ ดู _run_business_type_lookup_job แต่
+      // ตอนมี registration_no จะใช้เลขทะเบียนค้นหาจริงแทนอยู่ดี ไม่ได้เอา company_name ไปค้นหา)
+      body: JSON.stringify({ company_name: registrationNo, registration_no: registrationNo }),
     });
     const data = await res.json();
 
@@ -488,7 +502,11 @@ async function runBoxplot() {
     boxplotImgObjectUrl = URL.createObjectURL(blob);
     boxplotImg.src = boxplotImgObjectUrl;
     boxplotImg.style.display = "block";
-    boxplotStatus.textContent = "";
+    // โชว์กำกับด้วยว่ากราฟนี้จับคู่มาจากการค้นหาบริษัทไหน (ถ้ามี — เช่น เลือกประเภทธุรกิจเองโดยไม่
+    // ผ่านการค้นหาเลย จะไม่มีชื่อบริษัทให้โชว์ ก็ปล่อยว่างไว้เฉยๆ)
+    boxplotStatus.innerHTML = matchedCompanyName
+      ? `<span style="color:#55647a;">🏢 จับคู่กับบริษัท: ${escapeHtml(matchedCompanyName)}</span>`
+      : "";
   } catch (err) {
     boxplotStatus.innerHTML = `<span style="color:#d03b3b;">เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ</span>`;
     console.error(err);
