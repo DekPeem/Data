@@ -994,3 +994,91 @@ def test_amr_boxplot_fetch_reports_download_failure(client, monkeypatch, tmp_pat
     assert status["status"] == "error"
     assert "ดาวน์โหลดไม่สำเร็จ" in status["error"]
 
+
+def test_amr_boxplot_fetch_bulk_missing_credentials_returns_400(client):
+    res = client.post("/api/admin/amr-boxplot/fetch-bulk", json={"start_date": "2026-01-01", "end_date": "2026-01-31"})
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+
+def test_amr_boxplot_fetch_bulk_missing_password_returns_400(client):
+    res = client.post(
+        "/api/admin/amr-boxplot/fetch-bulk",
+        json={
+            "credentials": [{"username": "0199000001", "password": ""}],
+            "start_date": "2026-01-01", "end_date": "2026-01-31",
+        },
+    )
+    assert res.status_code == 400
+    assert "ลำดับที่ 1" in res.get_json()["message"]
+
+
+def test_amr_boxplot_fetch_bulk_invalid_date_range_returns_400(client):
+    res = client.post(
+        "/api/admin/amr-boxplot/fetch-bulk",
+        json={
+            "credentials": [{"username": "0199000001", "password": "p"}],
+            "start_date": "2026-02-01", "end_date": "2026-01-01",
+        },
+    )
+    assert res.status_code == 400
+
+
+def test_amr_boxplot_fetch_bulk_success_with_mixed_results(client, monkeypatch, tmp_path):
+    """บัญชีที่ 1 สำเร็จ (TSIC เก่า 93311 -> ถูกแปลงเป็น 86101) บัญชีที่ 2 ดาวน์โหลดไม่สำเร็จเลย
+    (ไม่มีไฟล์) — job ต้องไม่ล้มเหลวทั้งก้อน แค่บันทึกผลลัพธ์แยกทีละบัญชีไว้ให้ดู"""
+
+    import amr_mapping.amr_downloader as amr_downloader_module
+    from amr_mapping.amr_downloader import DownloadResult
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    (tmp_path / "tsic_code_mapping.csv").write_text("old_code,new_code,notes\n93311,86101,โรงพยาบาลทั่วไป\n", encoding="utf-8")
+
+    report_path = tmp_path / "downloaded_report.xls"
+    report_path.write_text(_make_amr_report_html(n_days=2), encoding="utf-8")
+
+    def fake_download_with_profile(username, password, start_date, end_date, download_dir, log, headless=True):
+        if username == "0199000002":
+            return {"business_type_code": "", "business_type_name": ""}, []
+        profile = {"business_type_code": "93311", "business_type_name": "กิจกรรมโรงพยาบาล (รหัสเก่า)"}
+        results = [DownloadResult(account_no=username, meter_text="m1", date_from=start_date, date_to=end_date, file_path=str(report_path), success=True)]
+        return profile, results
+
+    monkeypatch.setattr(amr_downloader_module, "download_amr_with_profile", fake_download_with_profile)
+
+    res = client.post(
+        "/api/admin/amr-boxplot/fetch-bulk",
+        json={
+            "credentials": [
+                {"username": "0199000001", "password": "p1"},
+                {"username": "0199000002", "password": "p2"},
+            ],
+            "start_date": "2026-01-01", "end_date": "2026-01-31",
+        },
+    )
+    assert res.status_code == 200
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/amr-boxplot/fetch/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    results = status["result"]["results"]
+    assert len(results) == 2
+
+    ok = next(r for r in results if r["username"] == "0199000001")
+    assert ok["success"] is True
+    assert ok["business_type_code"] == "86101"
+    assert ok["added_intervals"] == 2 * 96
+
+    failed = next(r for r in results if r["username"] == "0199000002")
+    assert failed["success"] is False
+    assert "error" in failed
+
+    coverage = client.get("/api/admin/amr-boxplot/status").get_json()
+    assert coverage["86101"]["intervals"] == 2 * 96
+

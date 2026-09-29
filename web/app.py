@@ -895,6 +895,25 @@ def _run_amr_boxplot_fetch_job(job_id: str, username: str, password: str, params
             _JOBS[job_id]["error"] = str(e)
 
 
+def _validate_amr_fetch_date_range(start_date: str, end_date: str) -> None:
+    """ตรวจสอบรูปแบบ/ความสมเหตุสมผลของช่วงวันที่สำหรับดึง AMR จาก PEA — ใช้ร่วมกันทั้งโหมดบัญชีเดียว
+    (api_amr_boxplot_fetch) และโหมดหลายบัญชี (api_amr_boxplot_fetch_bulk) raise ValueError พร้อม
+    ข้อความไทยถ้าไม่ผ่าน"""
+
+    try:
+        parsed_start = datetime.strptime(start_date, "%Y-%m-%d").date()
+        parsed_end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise ValueError("รูปแบบวันที่ไม่ถูกต้อง (ต้องเป็น YYYY-MM-DD)")
+
+    min_year = 2015
+    max_year = datetime.now().year + 1
+    if not (min_year <= parsed_start.year <= max_year) or not (min_year <= parsed_end.year <= max_year):
+        raise ValueError(f"ปีในวันที่ดูผิดปกติ ({parsed_start.year}-{parsed_end.year}) — ตรวจสอบว่าพิมพ์ปีครบ 4 หลัก")
+    if parsed_start > parsed_end:
+        raise ValueError("วันที่เริ่มต้นต้องไม่มากกว่าวันที่สิ้นสุด")
+
+
 @app.route("/api/admin/amr-boxplot/fetch", methods=["POST"])
 def api_amr_boxplot_fetch():
     """เริ่ม job ดาวน์โหลด + นำเข้า AMR จริงจากเว็บ PEA อัตโนมัติ (background job — ดู
@@ -969,6 +988,123 @@ def api_amr_boxplot_fetch_status(job_id: str):
         if job is None:
             return jsonify({"error": "not_found", "message": "ไม่พบ job นี้"}), 404
         return jsonify(dict(job))
+
+
+def _run_amr_boxplot_fetch_bulk_job(job_id: str, credentials: List[dict], start_date: str, end_date: str) -> None:
+    """ดาวน์โหลด + นำเข้า AMR จริงจากเว็บ PEA อัตโนมัติทีละหลายบัญชีต่อเนื่องกัน — แต่ละบัญชีคือ
+    "1 login = 1 บัญชี" เหมือนโหมดตรวจจับอัตโนมัติเดี่ยวของ _run_amr_boxplot_fetch_job ทุกประการ
+    (username เว็บ PEA เป็นเลขบัญชีนั้นโดยตรง) ต้องรันทีละบัญชีไล่ไปเรื่อยๆ ไม่ทำพร้อมกันหลาย
+    thread เพราะเปิดเบราว์เซอร์จริงผ่าน Selenium พร้อมกันหลายตัวเสี่ยงใช้ทรัพยากรเครื่องเกิน/โดนเว็บ
+    PEA บล็อกง่ายกว่า — บัญชีไหนพัง (login ผิด/ตรวจจับ TSIC ไม่ได้/ดาวน์โหลดไม่สำเร็จ ฯลฯ) แค่บันทึก
+    ผลลัพธ์ไว้แล้วข้ามไปบัญชีถัดไปเลย ไม่ทำให้ทั้ง job ล้มเหลวไปด้วย (ดู results ใน job result สรุป
+    ท้ายสุดว่าบัญชีไหนสำเร็จ/พังเพราะอะไร)"""
+
+    from amr_mapping.amr_boxplot import append_intervals_local, parse_amr_files
+    from amr_mapping.amr_downloader import download_amr_with_profile
+
+    def log(msg: str) -> None:
+        with _JOBS_LOCK:
+            _JOBS[job_id]["logs"].append(msg)
+
+    results: List[dict] = []
+    try:
+        download_dir = str(DEFAULT_DOWNLOAD_DIR)
+        os.makedirs(download_dir, exist_ok=True)
+        storage_path = DEFAULT_DATA_DIR / "amr_boxplot_intervals_local.csv"
+        tsic_mapping = load_tsic_code_mapping(DEFAULT_DATA_DIR / "tsic_code_mapping.csv")
+
+        for i, cred in enumerate(credentials):
+            username = cred["username"]
+            log(f"\n=== [{i + 1}/{len(credentials)}] บัญชี {username} ===")
+            try:
+                profile, dl_results = download_amr_with_profile(
+                    username=username, password=cred["password"],
+                    start_date=start_date, end_date=end_date,
+                    download_dir=download_dir, log=log,
+                )
+                raw_code = profile.get("business_type_code") or ""
+                detected_name = profile.get("business_type_name") or ""
+                if not raw_code:
+                    raise RuntimeError("ตรวจจับประเภทธุรกิจจากหน้า PEA ไม่ได้เลย (ช่องว่างเปล่า)")
+
+                business_type_code, raw = normalize_tsic_code_with_audit(raw_code, tsic_mapping)
+                if raw and raw != business_type_code:
+                    log(f"🔄 แปลงรหัส TSIC {raw} (ระบบเดิมของ PEA) -> {business_type_code} (มาตรฐานใหม่)")
+
+                downloaded_files = [r.file_path for r in dl_results if r.success and r.file_path]
+                if not downloaded_files:
+                    raise RuntimeError("ดาวน์โหลดไม่สำเร็จเลยแม้แต่ไฟล์เดียว — ตรวจสอบ log ด้านบน")
+
+                intervals = parse_amr_files(downloaded_files)
+                if not intervals:
+                    raise RuntimeError("ดาวน์โหลดไฟล์ได้ แต่อ่านข้อมูลจากไฟล์เหล่านั้นไม่ได้เลย")
+
+                added = append_intervals_local(business_type_code, intervals, storage_path)
+                log(f"✅ {username}: เพิ่ม {added} จุด (ประเภทธุรกิจ {business_type_code} — {detected_name})")
+                results.append(
+                    {
+                        "username": username,
+                        "success": True,
+                        "business_type_code": business_type_code,
+                        "business_type_name": detected_name,
+                        "added_intervals": added,
+                        "days": len({iv.date for iv in intervals}),
+                    }
+                )
+            except Exception as e:  # noqa: BLE001 — บัญชีนี้พังต้องไม่ทำให้บัญชีอื่นในคิวหยุดตาม
+                log(f"❌ {username}: {e}")
+                results.append({"username": username, "success": False, "error": str(e)})
+
+        with _JOBS_LOCK:
+            _JOBS[job_id]["status"] = "success"
+            _JOBS[job_id]["result"] = {"results": results}
+    except Exception as e:  # noqa: BLE001 — ต้อง catch ทุก error เพื่อรายงานสถานะ job ให้ถูกต้อง
+        with _JOBS_LOCK:
+            _JOBS[job_id]["status"] = "error"
+            _JOBS[job_id]["error"] = str(e)
+
+
+@app.route("/api/admin/amr-boxplot/fetch-bulk", methods=["POST"])
+def api_amr_boxplot_fetch_bulk():
+    """เหมือน /api/admin/amr-boxplot/fetch (โหมดตรวจจับอัตโนมัติ) แต่รับหลายบัญชีพร้อมกัน — แต่ละ
+    บัญชีคนละ username/password เอง (1 login = 1 บัญชี) วนดึงทีละบัญชีต่อเนื่องกันเป็น background
+    job เดียว (ดู _run_amr_boxplot_fetch_bulk_job) ใช้ตอนอยากเติมข้อมูล AMR จริงให้ครบหลาย TSIC ใน
+    รอบเดียว แทนที่จะกรอกทีละบัญชีเองผ่าน /api/admin/amr-boxplot/fetch"""
+
+    body = request.get_json(force=True, silent=True) or {}
+
+    raw_credentials = body.get("credentials")
+    if not isinstance(raw_credentials, list) or not raw_credentials:
+        return jsonify({"error": "invalid_request", "message": "กรุณาระบุบัญชีอย่างน้อย 1 รายการ"}), 400
+
+    credentials = []
+    for i, c in enumerate(raw_credentials):
+        c = c or {}
+        username = str(c.get("username") or "").strip()
+        password = c.get("password") or os.environ.get("PEA_AMR_PASSWORD")
+        if not username or not password:
+            return jsonify(
+                {"error": "invalid_request", "message": f"บัญชีลำดับที่ {i + 1} ไม่มี username หรือ password"}
+            ), 400
+        credentials.append({"username": username, "password": password})
+
+    start_date = (body.get("start_date") or "").strip()
+    end_date = (body.get("end_date") or "").strip()
+    try:
+        _validate_amr_fetch_date_range(start_date, end_date)
+    except ValueError as e:
+        return jsonify({"error": "invalid_request", "message": str(e)}), 400
+
+    job_id = uuid.uuid4().hex
+    with _JOBS_LOCK:
+        _JOBS[job_id] = {"status": "running", "logs": [], "result": None, "error": None}
+
+    thread = threading.Thread(
+        target=_run_amr_boxplot_fetch_bulk_job, args=(job_id, credentials, start_date, end_date), daemon=True
+    )
+    thread.start()
+
+    return jsonify({"job_id": job_id})
 
 
 @app.route("/admin")

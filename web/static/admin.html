@@ -91,6 +91,15 @@
     .amr-log-table td { padding: 8px 10px; border-bottom: 1px solid rgba(15,23,42,0.06); }
     .amr-log-table tr:hover td { background: #f7f9fc; }
     .amr-log-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+    #amr-bulk-accounts {
+      width: 100%; box-sizing: border-box; border-radius: 10px; border: 1px solid rgba(15,23,42,0.14);
+      padding: 10px 14px; font-size: 13px; font-family: 'Consolas', 'Courier New', monospace;
+      background: #fff; color: #0f1b2d; resize: vertical;
+    }
+    .amr-bulk-account-row {
+      display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      background: #fff; border: 1px solid rgba(15,23,42,0.08); border-radius: 8px; padding: 8px 12px; font-size: 13px;
+    }
   </style>
 </head>
 <body>
@@ -129,6 +138,7 @@
         <div class="mode-tab-bar">
           <button type="button" id="amr-boxplot-mode-upload-btn" class="mode-tab-btn active">📎 แนบไฟล์เอง</button>
           <button type="button" id="amr-boxplot-mode-fetch-btn" class="mode-tab-btn">🌐 ดึงจากเว็บ PEA อัตโนมัติ</button>
+          <button type="button" id="amr-boxplot-mode-bulk-btn" class="mode-tab-btn">📚 ดึงหลายบัญชีพร้อมกัน</button>
         </div>
 
         <div id="amr-boxplot-upload-panel" style="display:flex;flex-direction:column;gap:16px;">
@@ -186,6 +196,34 @@
           <div id="amr-fetch-job-area" style="display:none;flex-direction:column;gap:12px;">
             <div id="amr-fetch-log" class="log-console"></div>
             <div id="amr-fetch-result" class="hint"></div>
+          </div>
+        </div>
+
+        <div id="amr-boxplot-bulk-panel" style="display:none;flex-direction:column;gap:16px;">
+          <div class="warn-box">
+            ⚠️ โหมดตรวจจับประเภทธุรกิจอัตโนมัติทีละบัญชีเหมือนโหมด "ดึงจากเว็บ PEA อัตโนมัติ" (username คือเลขบัญชี, 1 login = 1 บัญชี)
+            แต่รันต่อเนื่องกันหลายบัญชีในรอบเดียว (เปิดเบราว์เซอร์จริงทีละบัญชี ไม่พร้อมกัน จึงช้าตามจำนวนบัญชี — ห้ามปิดหน้านี้ระหว่างทำงาน)
+            พิมพ์ 1 บัญชีต่อ 1 บรรทัด รูปแบบ <code>เลขบัญชี,รหัสผ่าน</code> ถ้าทุกบัญชีรหัสผ่านเดียวกัน เว้นรหัสผ่านว่างไว้ได้
+            (ใช้ <code>PEA_AMR_PASSWORD</code> แทน) — บัญชีไหนพังจะข้ามไปบัญชีถัดไปเอง ไม่หยุดทั้งหมด
+          </div>
+          <div class="form-field">
+            <label for="amr-bulk-accounts">รายชื่อบัญชี (บรรทัดละ 1 บัญชี — เลขบัญชี,รหัสผ่าน)</label>
+            <textarea id="amr-bulk-accounts" rows="8" placeholder="0200026096123,รหัสผ่าน1&#10;0200032921751,รหัสผ่าน2&#10;0200019352851"></textarea>
+          </div>
+          <div class="form-grid">
+            <div class="form-field">
+              <label for="amr-bulk-start-date">วันที่เริ่มต้น</label>
+              <input id="amr-bulk-start-date" type="date">
+            </div>
+            <div class="form-field">
+              <label for="amr-bulk-end-date">วันที่สิ้นสุด</label>
+              <input id="amr-bulk-end-date" type="date">
+            </div>
+          </div>
+          <button type="button" id="amr-bulk-btn" class="day-type-btn" style="align-self:flex-start;">⬇️ ดึงข้อมูลทั้งหมด</button>
+          <div id="amr-bulk-job-area" style="display:none;flex-direction:column;gap:12px;">
+            <div id="amr-bulk-log" class="log-console"></div>
+            <div id="amr-bulk-result" style="display:flex;flex-direction:column;gap:6px;"></div>
           </div>
         </div>
 

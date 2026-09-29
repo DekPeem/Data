@@ -629,25 +629,29 @@ amrBoxplotUploadBtn.addEventListener("click", async () => {
   }
 });
 
-// ── สลับโหมด "แนบไฟล์เอง" / "ดึงจากเว็บ PEA อัตโนมัติ" ──
+// ── สลับโหมด "แนบไฟล์เอง" / "ดึงจากเว็บ PEA อัตโนมัติ" / "ดึงหลายบัญชีพร้อมกัน" ──
 
 const amrBoxplotModeUploadBtn = document.getElementById("amr-boxplot-mode-upload-btn");
 const amrBoxplotModeFetchBtn = document.getElementById("amr-boxplot-mode-fetch-btn");
+const amrBoxplotModeBulkBtn = document.getElementById("amr-boxplot-mode-bulk-btn");
 const amrBoxplotUploadPanel = document.getElementById("amr-boxplot-upload-panel");
 const amrBoxplotFetchPanel = document.getElementById("amr-boxplot-fetch-panel");
+const amrBoxplotBulkPanel = document.getElementById("amr-boxplot-bulk-panel");
 
-amrBoxplotModeUploadBtn.addEventListener("click", () => {
-  amrBoxplotModeUploadBtn.classList.add("active");
-  amrBoxplotModeFetchBtn.classList.remove("active");
-  amrBoxplotUploadPanel.style.display = "flex";
-  amrBoxplotFetchPanel.style.display = "none";
-});
-amrBoxplotModeFetchBtn.addEventListener("click", () => {
-  amrBoxplotModeFetchBtn.classList.add("active");
-  amrBoxplotModeUploadBtn.classList.remove("active");
-  amrBoxplotFetchPanel.style.display = "flex";
-  amrBoxplotUploadPanel.style.display = "none";
-});
+function showAmrBoxplotMode(activeBtn, activePanel) {
+  for (const [btn, panel] of [
+    [amrBoxplotModeUploadBtn, amrBoxplotUploadPanel],
+    [amrBoxplotModeFetchBtn, amrBoxplotFetchPanel],
+    [amrBoxplotModeBulkBtn, amrBoxplotBulkPanel],
+  ]) {
+    btn.classList.toggle("active", btn === activeBtn);
+    panel.style.display = panel === activePanel ? "flex" : "none";
+  }
+}
+
+amrBoxplotModeUploadBtn.addEventListener("click", () => showAmrBoxplotMode(amrBoxplotModeUploadBtn, amrBoxplotUploadPanel));
+amrBoxplotModeFetchBtn.addEventListener("click", () => showAmrBoxplotMode(amrBoxplotModeFetchBtn, amrBoxplotFetchPanel));
+amrBoxplotModeBulkBtn.addEventListener("click", () => showAmrBoxplotMode(amrBoxplotModeBulkBtn, amrBoxplotBulkPanel));
 
 // ── ดึง AMR จริงจากเว็บ PEA อัตโนมัติ (Selenium — ดู amr_downloader.py) ──
 
@@ -726,6 +730,108 @@ amrFetchBtn.addEventListener("click", async () => {
 });
 
 loadAmrBoxplotBizOptions();
+
+// ── ดึง AMR จริงจากเว็บ PEA อัตโนมัติทีละหลายบัญชีพร้อมกัน (ดู POST /api/admin/amr-boxplot/fetch-bulk
+// — วนตรวจจับอัตโนมัติทีละบัญชีต่อเนื่องกันเป็น background job เดียวฝั่ง backend) ต่างจากโหมดบัญชี
+// เดียวด้านบนตรงที่รับหลาย username/password พร้อมกัน (คนละบัญชี คนละรหัสผ่าน) ไม่ใช่หลายเลขบัญชี
+// ภายใต้ login เดียว — ใช้ /api/admin/amr-boxplot/fetch/<job_id> ตัวเดิมโพลสถานะได้เลย (เป็น job
+// generic ไม่ผูกกับ endpoint ที่สร้างมัน)
+const amrBulkAccountsInput = document.getElementById("amr-bulk-accounts");
+const amrBulkStartDate = document.getElementById("amr-bulk-start-date");
+const amrBulkEndDate = document.getElementById("amr-bulk-end-date");
+const amrBulkBtn = document.getElementById("amr-bulk-btn");
+const amrBulkJobArea = document.getElementById("amr-bulk-job-area");
+const amrBulkLog = document.getElementById("amr-bulk-log");
+const amrBulkResult = document.getElementById("amr-bulk-result");
+
+// แกะ textarea (บรรทัดละ 1 บัญชี รูปแบบ "เลขบัญชี,รหัสผ่าน" — รหัสผ่านเว้นว่างได้ถ้าตั้ง
+// PEA_AMR_PASSWORD ไว้แล้วในเครื่อง) เป็น [{username, password}, ...] ข้ามบรรทัดว่างไปเฉยๆ
+function parseAmrBulkAccounts(raw) {
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const idx = line.indexOf(",");
+      const username = (idx === -1 ? line : line.slice(0, idx)).trim();
+      const password = idx === -1 ? "" : line.slice(idx + 1).trim();
+      return { username, password };
+    });
+}
+
+function renderAmrBulkResults(results) {
+  amrBulkResult.innerHTML = results
+    .map((r) => {
+      if (r.success) {
+        return `<div class="amr-bulk-account-row"><span>✅ ${escapeHtml(r.username)}</span>` +
+          `<span style="color:#55647a;">${(r.added_intervals || 0).toLocaleString("th-TH")} จุด (${r.days || 0} วัน) — ` +
+          `${escapeHtml(r.business_type_code || "")}${r.business_type_name ? ` · ${escapeHtml(r.business_type_name)}` : ""}</span></div>`;
+      }
+      return `<div class="amr-bulk-account-row"><span>❌ ${escapeHtml(r.username)}</span>` +
+        `<span style="color:#d03b3b;">${escapeHtml(r.error || "เกิดข้อผิดพลาด")}</span></div>`;
+    })
+    .join("");
+}
+
+async function pollAmrFetchBulkJob(jobId) {
+  const res = await fetch(`/api/admin/amr-boxplot/fetch/${jobId}`);
+  const data = await res.json();
+
+  amrBulkLog.textContent = (data.logs || []).join("\n");
+  amrBulkLog.scrollTop = amrBulkLog.scrollHeight;
+
+  if (data.status === "running") {
+    setTimeout(() => pollAmrFetchBulkJob(jobId), 1500);
+    return;
+  }
+
+  amrBulkBtn.disabled = false;
+
+  if (data.status === "success") {
+    renderAmrBulkResults((data.result || {}).results || []);
+    loadAmrBoxplotLog();
+  } else {
+    amrBulkResult.innerHTML = `<span style="color:#d03b3b;">${data.error || "เกิดข้อผิดพลาด"}</span>`;
+  }
+}
+
+amrBulkBtn.addEventListener("click", async () => {
+  const credentials = parseAmrBulkAccounts(amrBulkAccountsInput.value);
+  if (!credentials.length) {
+    amrBulkResult.innerHTML = `<span style="color:#d03b3b;">กรุณาพิมพ์รายชื่อบัญชีอย่างน้อย 1 บัญชี</span>`;
+    return;
+  }
+
+  amrBulkBtn.disabled = true;
+  amrBulkJobArea.style.display = "flex";
+  amrBulkLog.textContent = "";
+  amrBulkResult.textContent = "⏳ กำลังเริ่มงาน...";
+
+  try {
+    const res = await fetch("/api/admin/amr-boxplot/fetch-bulk", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        credentials,
+        start_date: amrBulkStartDate.value,
+        end_date: amrBulkEndDate.value,
+      }),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      amrBulkBtn.disabled = false;
+      amrBulkResult.innerHTML = `<span style="color:#d03b3b;">${data.message || "เกิดข้อผิดพลาด"}</span>`;
+      return;
+    }
+
+    pollAmrFetchBulkJob(data.job_id);
+  } catch (err) {
+    amrBulkBtn.disabled = false;
+    amrBulkResult.innerHTML = `<span style="color:#d03b3b;">เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ</span>`;
+    console.error(err);
+  }
+});
 
 // ── ดูกราฟ Boxplot ของประเภทธุรกิจที่เลือกไว้ตรงๆ จากหน้า Admin (ไม่ต้องไปหน้าแรกแล้วจับคู่ TSIC
 // ก่อน) — ใช้ TSIC จาก dropdown ของแผงที่กำลังเปิดอยู่ (แนบไฟล์เอง หรือดึงจากเว็บ PEA อัตโนมัติ)
