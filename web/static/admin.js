@@ -585,7 +585,7 @@ async function loadAmrBoxplotBizOptions() {
 // "ภาพรวมลูกค้าทั้งหมด" มีอยู่แล้ว) เพื่อให้ UX สอดคล้องกันทั้งระบบ ไม่ fix รายชื่อ section ตายตัว
 // คำนวณจาก section ที่เจอจริงในข้อมูลปัจจุบันเท่านั้น
 const AMR_LOG_UNCLASSIFIED_SECTION_KEY = "__unclassified__";
-const AMR_LOG_COLUMN_COUNT = 8;
+const AMR_LOG_COLUMN_COUNT = 6;
 
 const amrBoxplotLogStatus = document.getElementById("amr-boxplot-log-status");
 const amrBoxplotLogTable = document.getElementById("amr-boxplot-log-table");
@@ -670,44 +670,54 @@ function renderAmrBoxplotLogTable() {
     rowsHtml.push(
       `<tr class="amr-log-section-header"><td colspan="${AMR_LOG_COLUMN_COUNT}">${escapeHtml(amrBoxplotLogSectionLabelOf(group[0]))} (${group.length} รายการ)</td></tr>`
     );
-    let lastTsicCode = null;
+    // จัดกลุ่มย่อยตาม TSIC ภายใน section อีกชั้น — แสดงชื่อ/รหัส TSIC แค่ครั้งเดียวต่อกลุ่มในแถวหัว
+    // กลุ่มย่อย (ไม่ต้องพิมพ์ซ้ำทุกแถวเหมือนเดิมซึ่งทำให้ตารางรกและลิงก์ "ดู Boxplot" ถูกบีบจนตัดคำ)
+    // พร้อมลิงก์ดู Boxplot รวมทุกบัญชีไว้ในแถวหัวกลุ่มเดียวกัน (เฉพาะตอนมีมากกว่า 1 บัญชี)
+    const byTsic = new Map();
     for (const r of group) {
-      // ก่อนแถวแรกของแต่ละ TSIC ในกลุ่ม แทรกลิงก์ดูกราฟ Boxplot รวมทุกบัญชีของ TSIC นั้นไว้ก่อน —
-      // ลิงก์ "ดู Boxplot บัญชีนี้" รายแถวด้านล่างกรองเหลือแค่บัญชีเดียว ต้องมีทางเลือกดูกราฟรวมด้วย
-      // เพื่อไม่ให้สับสน (ผู้ใช้ถามว่าทำไมกดดูของ 2 บัญชีคนละอันแล้วกราฟเหมือนกันเป๊ะ — ตอนนั้นลิงก์
-      // รายแถวยังไม่กรองตามบัญชีเลย)
-      if (r.business_type_code !== lastTsicCode) {
-        lastTsicCode = r.business_type_code;
-        const accountCount = group.filter((x) => x.business_type_code === r.business_type_code).length;
-        if (accountCount > 1) {
-          rowsHtml.push(
-            `<tr class="amr-log-tsic-subheader"><td colspan="${AMR_LOG_COLUMN_COUNT}">📊 <a target="_blank" rel="noopener" href="/api/forecast-boxplot?business_type_code=${encodeURIComponent(r.business_type_code)}">ดู Boxplot รวมทุกบัญชี (${accountCount} บัญชี) ของ TSIC ${escapeHtml(r.business_type_code)} นี้ →</a></td></tr>`
-          );
-        }
+      if (!byTsic.has(r.business_type_code)) byTsic.set(r.business_type_code, []);
+      byTsic.get(r.business_type_code).push(r);
+    }
+
+    for (const [tsicCode, rows] of byTsic) {
+      const name = (amrBoxplotLogTypeByCode.get(tsicCode) || {}).name_th || "";
+      const tsicNameHtml = name
+        ? `${escapeHtml(name)} · ${escapeHtml(tsicCode)}`
+        : `${escapeHtml(tsicCode)} <span style="color:#d03b3b;">(ไม่พบชื่อในระบบ)</span>`;
+      const combinedLinkHtml =
+        rows.length > 1
+          ? `<a target="_blank" rel="noopener" href="/api/forecast-boxplot?business_type_code=${encodeURIComponent(tsicCode)}">📊 ดู Boxplot รวมทุกบัญชี →</a>`
+          : "";
+      rowsHtml.push(`<tr class="amr-log-tsic-header"><td colspan="${AMR_LOG_COLUMN_COUNT}">
+        <div class="amr-log-tsic-header-row">
+          <span class="amr-log-tsic-name">${tsicNameHtml}<span class="amr-log-tsic-count">(${rows.length} บัญชี)</span></span>
+          ${combinedLinkHtml}
+        </div>
+      </td></tr>`);
+
+      for (const r of rows) {
+        const companyLabel = r.company_name ? escapeHtml(r.company_name) : `<span style="color:#8996ab;">—</span>`;
+        const accountLabel = r.account_no ? escapeHtml(r.account_no) : `<span style="color:#8996ab;">ไม่ระบุบัญชี</span>`;
+        const regLabel = r.registration_no ? escapeHtml(r.registration_no) : `<span style="color:#8996ab;">—</span>`;
+        rowsHtml.push(`<tr>
+          <td>${companyLabel}</td>
+          <td>${accountLabel}</td>
+          <td>${regLabel}</td>
+          <td class="num">${r.intervals.toLocaleString("th-TH")}</td>
+          <td class="num">${r.days.toLocaleString("th-TH")}</td>
+          <td class="amr-log-action-cell">
+            <a target="_blank" rel="noopener" href="/api/forecast-boxplot?business_type_code=${encodeURIComponent(r.business_type_code)}&account_no=${encodeURIComponent(r.account_no || "")}">ดู Boxplot →</a>
+            &nbsp;·&nbsp;
+            <button type="button" class="amr-boxplot-log-delete-btn" data-code="${escapeHtml(r.business_type_code)}" data-account="${escapeHtml(r.account_no || "")}" data-intervals="${r.intervals}" style="border:none;background:none;color:#d03b3b;cursor:pointer;font-size:13px;padding:0;">🗑️ ลบ</button>
+          </td>
+        </tr>`);
       }
-      const name = (amrBoxplotLogTypeByCode.get(r.business_type_code) || {}).name_th || "";
-      const tsicLabel = name
-        ? `${escapeHtml(name)} · ${escapeHtml(r.business_type_code)}`
-        : `${escapeHtml(r.business_type_code)} <span style="color:#d03b3b;">(ไม่พบชื่อในระบบ)</span>`;
-      const companyLabel = r.company_name ? escapeHtml(r.company_name) : `<span style="color:#8996ab;">—</span>`;
-      const accountLabel = r.account_no ? escapeHtml(r.account_no) : `<span style="color:#8996ab;">ไม่ระบุบัญชี</span>`;
-      const regLabel = r.registration_no ? escapeHtml(r.registration_no) : `<span style="color:#8996ab;">—</span>`;
-      rowsHtml.push(`<tr>
-        <td>${tsicLabel}</td>
-        <td>${companyLabel}</td>
-        <td>${accountLabel}</td>
-        <td>${regLabel}</td>
-        <td class="num">${r.intervals.toLocaleString("th-TH")}</td>
-        <td class="num">${r.days.toLocaleString("th-TH")}</td>
-        <td><a target="_blank" rel="noopener" href="/api/forecast-boxplot?business_type_code=${encodeURIComponent(r.business_type_code)}&account_no=${encodeURIComponent(r.account_no || "")}">ดู Boxplot บัญชีนี้ →</a></td>
-        <td><button type="button" class="amr-boxplot-log-delete-btn" data-code="${escapeHtml(r.business_type_code)}" data-account="${escapeHtml(r.account_no || "")}" data-intervals="${r.intervals}" style="border:none;background:none;color:#d03b3b;cursor:pointer;font-size:13px;">🗑️ ลบ</button></td>
-      </tr>`);
     }
   }
 
   amrBoxplotLogTable.innerHTML = `
     <table class="amr-log-table">
-      <thead><tr><th>ประเภทธุรกิจ (TSIC)</th><th>บริษัท</th><th>เลขบัญชี</th><th>เลขนิติบุคคล</th><th class="num">จำนวนจุดข้อมูล</th><th class="num">จำนวนวัน</th><th></th><th></th></tr></thead>
+      <thead><tr><th>บริษัท</th><th>เลขบัญชี</th><th>เลขนิติบุคคล</th><th class="num">จำนวนจุดข้อมูล</th><th class="num">จำนวนวัน</th><th></th></tr></thead>
       <tbody>${rowsHtml.join("")}</tbody>
     </table>`;
 

@@ -88,18 +88,21 @@
       text-align: left; font-size: 11.5px; font-weight: 700; color: #8996ab; text-transform: uppercase; letter-spacing: 0.02em;
       padding: 10px; border-bottom: 1px solid rgba(15,23,42,0.1);
     }
-    .amr-log-table td { padding: 10px; border-bottom: 1px solid rgba(15,23,42,0.06); vertical-align: top; }
-    .amr-log-table tbody tr:not(.amr-log-section-header):hover td { background: #f7f9fc; }
-    .amr-log-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+    .amr-log-table td { padding: 10px 10px 10px 30px; border-bottom: 1px solid rgba(15,23,42,0.06); vertical-align: middle; }
+    .amr-log-table tbody tr:not(.amr-log-section-header):not(.amr-log-tsic-header):hover td { background: #f7f9fc; }
+    .amr-log-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .amr-log-table .amr-log-action-cell { white-space: nowrap; }
     .amr-log-section-header td {
-      background: #f7f9fc; font-weight: 700; font-size: 12.5px; color: #184f95;
+      background: #eef2f9; font-weight: 700; font-size: 12.5px; color: #184f95;
       padding: 9px 10px; border-bottom: 1px solid rgba(15,23,42,0.08);
     }
-    .amr-log-tsic-subheader td {
-      background: #fbfcfe; font-size: 12px; color: #55647a;
-      padding: 6px 10px 6px 22px; border-bottom: 1px solid rgba(15,23,42,0.06);
+    .amr-log-tsic-header td {
+      background: #f7f9fc; padding: 8px 10px 8px 20px; border-bottom: 1px solid rgba(15,23,42,0.06);
     }
-    .amr-log-tsic-subheader a { color: #184f95; font-weight: 600; }
+    .amr-log-tsic-header-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .amr-log-tsic-name { font-weight: 600; font-size: 12.5px; color: #29344a; }
+    .amr-log-tsic-count { font-weight: 400; color: #8996ab; margin-left: 4px; }
+    .amr-log-tsic-header a { color: #184f95; font-weight: 600; white-space: nowrap; }
     .amr-log-filter-bar { display: flex; flex-wrap: wrap; gap: 8px; }
     .amr-log-filter-chip {
       height: 30px; padding: 0 12px; border-radius: 999px; font-size: 12px; font-weight: 600;
