@@ -525,14 +525,47 @@ const amrBoxplotRegistrationNo = document.getElementById("amr-boxplot-registrati
 const amrBoxplotUploadBtn = document.getElementById("amr-boxplot-upload-btn");
 const amrBoxplotUploadStatus = document.getElementById("amr-boxplot-upload-status");
 
+const AMR_BIZ_SELECT_UNCLASSIFIED_KEY = "__unclassified__";
+
+// จัดกลุ่มตัวเลือกในดรอปดาวน์ประเภทธุรกิจเป็น <optgroup> ตาม TSIC Section (A-U) แทนรายการยาว
+// เรียงตามชื่ออย่างเดียว — ผู้ใช้ฟีดแบ็กว่ารายการแบบเดิมยาวลายตาเกินไป หาไม่เจอ (เลียนแบบการจัดกลุ่ม
+// ตาม section ที่ overview.js ใช้กับตารางลูกค้าอยู่แล้ว)
+function buildBizSelectOptionsHtml(types) {
+  const groups = new Map(); // section_code (หรือ UNCLASSIFIED) -> { label, items: [] }
+  for (const t of types) {
+    const key = t.section_code || AMR_BIZ_SELECT_UNCLASSIFIED_KEY;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        label: t.section_code ? `${t.section_code} · ${t.section_name_th || ""}` : "ยังไม่ระบุหมวด",
+        items: [],
+      });
+    }
+    groups.get(key).items.push(t);
+  }
+
+  const sortedKeys = Array.from(groups.keys()).sort((a, b) => {
+    if (a === AMR_BIZ_SELECT_UNCLASSIFIED_KEY) return 1;
+    if (b === AMR_BIZ_SELECT_UNCLASSIFIED_KEY) return -1;
+    return a.localeCompare(b);
+  });
+
+  return sortedKeys
+    .map((key) => {
+      const group = groups.get(key);
+      const optionsHtml = group.items
+        .sort((a, b) => (a.name_th || "").localeCompare(b.name_th || "", "th"))
+        .map((t) => `<option value="${t.code}">${t.name_th} · ${t.code}</option>`)
+        .join("");
+      return `<optgroup label="${escapeHtml(group.label)}">${optionsHtml}</optgroup>`;
+    })
+    .join("");
+}
+
 async function loadAmrBoxplotBizOptions() {
   try {
     const res = await fetch("/api/business-types-full");
     const types = await res.json();
-    const optionsHtml = [...types]
-      .sort((a, b) => (a.name_th || "").localeCompare(b.name_th || "", "th"))
-      .map((t) => `<option value="${t.code}">${t.name_th} · ${t.code}</option>`)
-      .join("");
+    const optionsHtml = buildBizSelectOptionsHtml(types);
     amrBoxplotBizSelect.innerHTML = optionsHtml;
     // ช่องเดียวกันในโหมด "ดึงจากเว็บ PEA อัตโนมัติ" มีตัวเลือกแรกเป็น "ตรวจจับอัตโนมัติ" (value ว่าง)
     // เสมอ ต้องคงไว้ ไม่ใช่เขียนทับด้วย optionsHtml ตรงๆ
