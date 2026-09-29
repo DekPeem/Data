@@ -143,6 +143,61 @@ def _make_amr_xlsx(tmp_path, start_date: dt.datetime, n_days: int, account_no: s
     return path
 
 
+def _make_amr_monthly_kwh_xlsx(
+    tmp_path, start_date: dt.datetime, n_days: int, account_no: str = "", company_name: str = ""
+) -> Path:
+    """สร้างไฟล์ .xlsx จริงจำลองรายงาน "กิโลวัตต์ชั่วโมงรายเดือน" ของ PEA (รูปแบบไฟล์ AMR จริงแบบที่ 3
+    ที่เจอ — ชีตเดียว รวม header/ข้อมูล/ท้ายรายงานปนกันหมด หน่วยข้อมูลเป็น kWh ไม่ใช่ kW เฉลี่ยแบบ 2
+    รูปแบบแรก ต้องแปลง ×4 ก่อนใช้ — ดู _read_one_monthly_kwh ใน amr_boxplot.py) ไม่มีแถวขยะ
+    "0,1,2,...,6" แบบไฟล์รูปแบบที่ 2 (เจอเฉพาะไฟล์รูปแบบนั้น)"""
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "kWh0000000000000101202612000"
+
+    ws.append([None, "การไฟฟ้าส่วนภูมิภาค", None, None, None])
+    ws.append([None, "ที่อยู่การไฟฟ้าส่วนภูมิภาค", None, None, None])
+    ws.append(["รายงานข้อมูลกิโลวัตต์ชั่วโมงรายเดือน", None, None, None, None])
+    ws.append(["[ประจำเดือน : มกราคม 2569]", None, None, None, None])
+    ws.append(["บัญชีผู้ใช้ไฟ :", f"{account_no}\xa0", "ชื่อผู้ใช้ไฟ :", company_name, None])
+    ws.append(["หมายเลขมิเตอร์ :", "METER123\xa0", "Tariff :", "TOU", None])
+    ws.append(["CT Ratio :", "100:5 A.\xa0", "VT Ratio :", "115000:115 V.", None])
+    ws.append([None, None, None, None, None])
+    ws.append([None, "RATE A", "RATE B", "RATE C", "ผลรวม"])
+
+    totals = [0.0, 0.0, 0.0]
+    d = start_date
+    for _ in range(n_days):
+        for interval_i in range(96):
+            minutes = interval_i * 15
+            t = d + dt.timedelta(minutes=minutes) + dt.timedelta(minutes=15)
+            hour = (minutes // 60) % 24
+            # kWh สะสมของ 15 นาที (÷4 ของ kW เฉลี่ยที่ตั้งใจให้ได้หลังแปลง ×4 กลับ) — ใช้เลขกลมๆ
+            # หาร 4 ลงตัวพอดี กันปัญหาเทียบ float เพี้ยนนิดหน่อยตอนเทส
+            if d.weekday() >= 5:
+                col, kwh = 2, 25.0  # -> kW เฉลี่ยหลังแปลง = 100.0
+            elif 9 <= hour < 22:
+                col, kwh = 0, 100.0  # -> 400.0
+            else:
+                col, kwh = 1, 37.5  # -> 150.0
+            row_vals = [None, None, None]
+            row_vals[col] = kwh
+            totals[col] += kwh
+            ws.append([f"\xa0{t.strftime('%d/%m/%Y %H.%M')}", *row_vals, kwh])
+        d += dt.timedelta(days=1)
+
+    ws.append(["ผลรวมทั้งหมด", totals[0], totals[1], totals[2], sum(totals)])
+    ws.append(["***หมายเหตุ***", None, None, None, None])
+    ws.append([None, None, None, None, None])
+    ws.append([f"พิมพ์โดย : {account_no}", None, None, None, "วันที่พิมพ์ : 01/01/2026 00:00"])
+
+    path = tmp_path / "report_monthly.xlsx"
+    wb.save(path)
+    return path
+
+
 def test_parse_amr_file_extracts_all_intervals(amr_report_file):
     intervals = parse_amr_file(amr_report_file)
     assert len(intervals) == 5 * 96  # 5 วัน x 96 จุดต่อวัน ไม่มีจุดไหนถูกทิ้ง
@@ -464,3 +519,27 @@ def test_extract_customer_info_supports_real_xlsx_binary_format(tmp_path):
     account_no, company_name = extract_customer_info(path)
     assert account_no == "0199000003"
     assert company_name == "บริษัท สาม จำกัด"
+
+
+def test_parse_amr_file_supports_monthly_kwh_format_and_converts_to_kw(tmp_path):
+    """ไฟล์ .xlsx จริงรูปแบบที่ 3 "กิโลวัตต์ชั่วโมงรายเดือน" — ชีตเดียว หน่วยเป็น kWh สะสมต่อช่วง 15
+    นาที ต้องถูกแปลงเป็น kW เฉลี่ย (×4) ให้หน่วยตรงกับรายงานแบบอื่นที่ระบบรองรับอยู่ก่อนแล้ว"""
+
+    path = _make_amr_monthly_kwh_xlsx(tmp_path, dt.datetime(2026, 1, 1), n_days=5)
+    intervals = parse_amr_file(path)
+    assert len(intervals) == 5 * 96
+    assert {i.rate for i in intervals} == {"P", "OP", "H"}
+
+    by_rate = {i.rate: i.kw for i in intervals}
+    assert by_rate["P"] == pytest.approx(400.0)
+    assert by_rate["OP"] == pytest.approx(150.0)
+    assert by_rate["H"] == pytest.approx(100.0)
+
+
+def test_extract_customer_info_supports_monthly_kwh_format(tmp_path):
+    path = _make_amr_monthly_kwh_xlsx(
+        tmp_path, dt.datetime(2026, 1, 1), n_days=1, account_no="0199000004", company_name="บริษัท สี่ จำกัด"
+    )
+    account_no, company_name = extract_customer_info(path)
+    assert account_no == "0199000004"
+    assert company_name == "บริษัท สี่ จำกัด"
