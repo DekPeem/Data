@@ -119,10 +119,32 @@ def _setup_font() -> bool:
     return False
 
 
+BG = "#FAFAFA"  # สีพื้นหลังของแต่ละ panel
+GRID = "#FFFFFF"  # สีเส้น gridline (โผล่เป็นเส้นจางๆ บนพื้นสีเทาอ่อน)
+LINE = "#333333"  # สีเส้น/จุดที่ลากต่อยอดแท่งกราฟ
+
+
+def _rounded_bar(ax, x: float, height: float, width: float, color: str, alpha: float = 0.88) -> None:
+    """แท่งกราฟมุมมนด้านบน (ฐานเรียบ) — สวยกว่า ax.bar() เหลี่ยมธรรมดา (ต้นฉบับ forecast_load.py
+    เวอร์ชันล่าสุดของผู้ใช้ใช้แบบนี้ ดู README/git history ของสคริปต์นั้นถ้าอยากดูเทียบ)"""
+
+    from matplotlib.patches import FancyBboxPatch
+
+    if height <= 0:
+        return
+    ax.add_patch(FancyBboxPatch(
+        (x - width / 2, 0), width, height,
+        boxstyle=f"round,pad=0,rounding_size={width * 0.16}",
+        linewidth=0, facecolor=color, alpha=alpha, mutation_aspect=1, zorder=3,
+    ))
+
+
 def draw(curve_wd: Dict[int, float], curve_h: Dict[int, float], peaks: Dict[str, float]):
     """คืน matplotlib Figure — วาดเฉพาะ panel ที่มีข้อมูลจริง (ข้าม weekday panel ถ้าไม่มีทั้ง P/OP,
-    ข้าม holiday panel ถ้าไม่มี H) เลือกภาษาไทย/อังกฤษของข้อความในกราฟเองตามฟอนต์ที่มีอยู่จริงบน
-    เซิร์ฟเวอร์ (กันตัวอักษรไทยกลายเป็นกล่องว่างถ้าเซิร์ฟเวอร์ไม่มีฟอนต์ไทยติดตั้งไว้)"""
+    ข้าม holiday panel ถ้าไม่มี H — ต่างจาก forecast_load.py ต้นฉบับที่วาดทั้ง 2 panel เสมอ เพราะเว็บนี้
+    รองรับกรอกแค่บางช่วง P/OP/H ก็พยากรณ์ได้ ถ้าวาดครบ 2 panel เสมอจะ error ตอนหา peaks[r] ของช่วง
+    ที่ไม่ได้กรอกมา) เลือกภาษาไทย/อังกฤษของข้อความในกราฟเองตามฟอนต์ที่มีอยู่จริงบนเซิร์ฟเวอร์ (กัน
+    ตัวอักษรไทยกลายเป็นกล่องว่างถ้าเซิร์ฟเวอร์ไม่มีฟอนต์ไทยติดตั้งไว้)"""
 
     import matplotlib.pyplot as plt
 
@@ -134,7 +156,7 @@ def draw(curve_wd: Dict[int, float], curve_h: Dict[int, float], peaks: Dict[str,
         hour="ชั่วโมงของวัน" if thai else "Hour of day",
         peak="Peak",
     )
-    ymax = max(peaks.values()) * 1.25
+    ymax = max(peaks.values()) * 1.28
 
     panels = []
     if curve_wd:
@@ -143,46 +165,54 @@ def draw(curve_wd: Dict[int, float], curve_h: Dict[int, float], peaks: Dict[str,
     if curve_h:
         panels.append((curve_h, lambda h: "H", [(0, 24, "H")], L["hd"]))
 
-    fig, axes = plt.subplots(len(panels), 1, figsize=(12, 4.25 * len(panels)), sharey=True, squeeze=False)
+    fig, axes = plt.subplots(len(panels), 1, figsize=(12, 4.5 * len(panels)), facecolor="white", squeeze=False)
     axes = axes[:, 0]
 
     def panel(ax, curve, rate_of, segs, name):
-        xs = np.arange(24) + 0.5
-        ys = [curve.get(h, 0) for h in range(24)]
+        ax.set_facecolor(BG)
+        xs = np.arange(24)
+        ys = np.array([curve.get(h, 0) for h in range(24)], dtype=float)
+        width = 0.64
         for h in range(24):
-            c = COLORS[rate_of(h)]
-            ax.bar(h + 0.5, ys[h], width=0.82, color=c, alpha=0.55, edgecolor=c)
-        ax.plot(xs, ys, color="black", linewidth=1.2, alpha=0.6, marker="o", markersize=3)
+            _rounded_bar(ax, h, ys[h], width, COLORS[rate_of(h)])
+        ax.plot(xs, ys, color=LINE, linewidth=1.3, alpha=0.55, zorder=4)
+        ax.scatter(xs, ys, color=LINE, s=15, zorder=5, linewidths=0)
+
         for a, b, r in segs:
             if r not in peaks:
                 continue
             pk = peaks[r]
-            ax.hlines(pk, a, b, colors=COLORS[r], linestyles="--", linewidth=2, zorder=3)
+            ax.hlines(pk, a, b, colors=COLORS[r], linestyles=(0, (5, 3)), linewidth=2, zorder=2)
             if b - a >= 4:
-                ax.text((a + b) / 2, pk + ymax * 0.03, f"{L['peak']} {r}: {pk:,.0f} kW",
-                        ha="center", va="bottom", fontsize=10, weight="bold", zorder=6,
-                        bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor="none", alpha=0.9))
-        ax.set_title(name, loc="left", fontsize=12)
-        ax.set_xlim(0, 24)
+                ax.annotate(
+                    f"{L['peak']} {r}: {pk:,.0f} kW", ((a + b) / 2, pk),
+                    xytext=(0, 10), textcoords="offset points", ha="center",
+                    fontsize=10.5, fontweight="bold", color="#222", zorder=6,
+                    bbox=dict(boxstyle="round,pad=0.35", fc="white", ec=COLORS[r], lw=1.3),
+                )
+
+        ax.set_title(name, loc="left", fontsize=13, fontweight="bold", color="#222", pad=14)
+        ax.set_xlim(-0.6, 23.6)
         ax.set_ylim(0, ymax)
-        ax.set_xticks(np.arange(0, 24, 3) + 0.5)
-        ax.set_xticklabels(range(0, 24, 3))
-        ax.set_ylabel("kW")
-        ax.grid(axis="y", alpha=0.25)
-        for s in ("top", "right"):
-            ax.spines[s].set_visible(False)
+        ax.set_xticks(range(0, 24, 3))
+        ax.set_ylabel("kW", fontsize=10, color="#555")
+        ax.grid(axis="y", color=GRID, linewidth=1.6, zorder=0)
+        ax.set_axisbelow(True)
+        for s in ax.spines.values():
+            s.set_visible(False)
+        ax.tick_params(colors="#777", labelsize=9.5)
 
     for ax, (curve, rate_of, segs, name) in zip(axes, panels):
         panel(ax, curve, rate_of, segs, name)
-    axes[-1].set_xlabel(L["hour"])
+    axes[-1].set_xlabel(L["hour"], fontsize=10, color="#555")
 
-    fig.suptitle(title, fontsize=14, weight="bold")
+    fig.suptitle(title, fontsize=15, fontweight="bold", color="#111", y=0.995)
     fig.text(
         0.01, 0.005,
         "Forecast shape only - not a measurement. Built from Peak + energy (kWh) + lunch-dip %.",
-        fontsize=8, color="gray",
+        fontsize=8, color="#999",
     )
-    fig.tight_layout(rect=(0, 0.02, 1, 0.97))
+    fig.tight_layout(rect=(0, 0.02, 1, 0.965), h_pad=3.5)
     return fig
 
 
