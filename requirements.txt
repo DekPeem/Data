@@ -8,3 +8,5 @@ flask
 selenium
 webdriver-manager
 playwright
+numpy
+matplotlib

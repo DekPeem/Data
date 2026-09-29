@@ -382,3 +382,68 @@ async function runBusinessTypeLookup() {
 lookupBtn.addEventListener("click", runBusinessTypeLookup);
 
 loadBusinessTypes();
+
+// ── พยากรณ์เส้นโค้งการใช้ไฟ (P/OP/H) จาก Peak/หน่วยไฟบนบิลเท่านั้น (ไม่ต้องมี AMR จริง) —
+// ดู src/amr_mapping/forecast_shape.py ฝั่ง backend เอาเลขที่กรอกใน panel นี้ยิงไปที่
+// GET /api/forecast-shape ตรงๆ (ไม่มีความสัมพันธ์กับประเภทธุรกิจ/TSIC ที่เลือกไว้ด้านบนเลย —
+// สคริปต์ต้นฉบับใช้รูปทรงเดียวกันทุกธุรกิจ ไม่ได้แยกตาม TSIC) คืนรูปภาพ PNG ตรงๆ ไม่ใช่ JSON
+// จึงต้อง fetch เป็น blob แล้วสร้าง object URL แทนการตั้ง <img src> ตรงๆ (กันกรณี error ตอบกลับมา
+// เป็น JSON แทน — ต้องเช็ค response.ok ก่อนตัดสินใจว่าจะแสดงรูปหรือข้อความ error)
+const forecastToggleBtn = document.getElementById("forecast-shape-toggle-btn");
+const forecastPanel = document.getElementById("forecast-shape-panel");
+const forecastBtn = document.getElementById("forecast-shape-btn");
+const forecastStatus = document.getElementById("forecast-shape-status");
+const forecastImg = document.getElementById("forecast-shape-img");
+
+let forecastImgObjectUrl = null; // ต้อง revoke ของเก่าทิ้งทุกครั้งก่อนสร้างใหม่ กัน memory leak
+
+forecastToggleBtn.addEventListener("click", () => {
+  const isOpen = forecastPanel.style.display !== "none";
+  forecastPanel.style.display = isOpen ? "none" : "flex";
+});
+
+function forecastFieldValue(id) {
+  const v = document.getElementById(id).value.trim();
+  return v === "" ? null : v;
+}
+
+async function runForecastShape() {
+  const params = new URLSearchParams();
+  const fields = {
+    peak_p: "fc-peak-p", energy_p: "fc-energy-p", days_p: "fc-days-p",
+    peak_op: "fc-peak-op", energy_op: "fc-energy-op", days_op: "fc-days-op",
+    peak_h: "fc-peak-h", energy_h: "fc-energy-h", days_h: "fc-days-h",
+    drop_pct: "fc-drop-pct",
+  };
+  for (const [key, id] of Object.entries(fields)) {
+    const v = forecastFieldValue(id);
+    if (v !== null) params.set(key, v);
+  }
+
+  forecastBtn.disabled = true;
+  forecastStatus.textContent = "⏳ กำลังพยากรณ์...";
+  forecastImg.style.display = "none";
+
+  try {
+    const res = await fetch(`/api/forecast-shape?${params.toString()}`);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      forecastStatus.innerHTML = `<span style="color:#d03b3b;">${escapeHtml(data.message || "เกิดข้อผิดพลาด")}</span>`;
+      return;
+    }
+
+    const blob = await res.blob();
+    if (forecastImgObjectUrl) URL.revokeObjectURL(forecastImgObjectUrl);
+    forecastImgObjectUrl = URL.createObjectURL(blob);
+    forecastImg.src = forecastImgObjectUrl;
+    forecastImg.style.display = "block";
+    forecastStatus.textContent = "";
+  } catch (err) {
+    forecastStatus.innerHTML = `<span style="color:#d03b3b;">เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ</span>`;
+    console.error(err);
+  } finally {
+    forecastBtn.disabled = false;
+  }
+}
+
+forecastBtn.addEventListener("click", runForecastShape);

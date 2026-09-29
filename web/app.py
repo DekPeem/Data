@@ -526,6 +526,65 @@ def api_get_business_type_lookup_status(job_id: str):
         return jsonify(dict(job))
 
 
+def _parse_optional_float(raw: Optional[str], field_name: str) -> Optional[float]:
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        raise ValueError(f"{field_name} ต้องเป็นตัวเลข")
+
+
+def _parse_optional_int(raw: Optional[str], field_name: str) -> Optional[int]:
+    if raw is None or raw.strip() == "":
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValueError(f"{field_name} ต้องเป็นจำนวนเต็ม")
+
+
+@app.route("/api/forecast-shape")
+def api_forecast_shape():
+    """พยากรณ์ "รูปทรง" เส้นโค้งการใช้ไฟรายชั่วโมง (P/OP/H) จากตัวเลขบนบิลค่าไฟ (Peak kW + หน่วยไฟ
+    kWh) เท่านั้น — ไม่ต้องมี AMR จริงเลย (ดู src/amr_mapping/forecast_shape.py) คืนรูปภาพ PNG ตรงๆ
+    (ไม่ใช่ JSON) ให้ฝั่งหน้าเว็บเอาไปแสดงเป็น <img> ได้เลย — ต่างจาก endpoint อื่นๆ ในไฟล์นี้ที่คืน
+    JSON ทั้งหมด เพราะเนื้อหาเป็นรูปภาพโดยตรง ไม่มีอะไรต้อง serialize เพิ่ม
+
+    ⚠️ import matplotlib.pyplot/forecast_shape แบบ lazy ในนี้ (ไม่ใช่ top-level ของไฟล์) เพราะเป็น
+    dependency หนักที่ใช้แค่ endpoint เดียว เหมือนที่ dbd_scraper (playwright) ถูก lazy-import ไว้ใน
+    _run_business_type_lookup_job เช่นกัน — กันไม่ให้ทั้งแอป boot ช้าลงถ้าไม่ได้ใช้ฟีเจอร์นี้เลย"""
+
+    from amr_mapping.forecast_shape import forecast_shape_png
+
+    args = request.args
+    try:
+        peak_p = _parse_optional_float(args.get("peak_p"), "Peak P")
+        energy_p = _parse_optional_float(args.get("energy_p"), "หน่วยไฟ P")
+        days_p = _parse_optional_int(args.get("days_p"), "จำนวนวัน P")
+        peak_op = _parse_optional_float(args.get("peak_op"), "Peak OP")
+        energy_op = _parse_optional_float(args.get("energy_op"), "หน่วยไฟ OP")
+        days_op = _parse_optional_int(args.get("days_op"), "จำนวนวัน OP")
+        peak_h = _parse_optional_float(args.get("peak_h"), "Peak H")
+        energy_h = _parse_optional_float(args.get("energy_h"), "หน่วยไฟ H")
+        days_h = _parse_optional_int(args.get("days_h"), "จำนวนวัน H")
+        drop_pct = _parse_optional_float(args.get("drop_pct"), "% ลดตอนพักเที่ยง")
+    except ValueError as e:
+        return jsonify({"error": "invalid_request", "message": str(e)}), 400
+
+    try:
+        png_bytes = forecast_shape_png(
+            peak_p=peak_p, energy_p=energy_p, days_p=days_p,
+            peak_op=peak_op, energy_op=energy_op, days_op=days_op,
+            peak_h=peak_h, energy_h=energy_h, days_h=days_h,
+            drop_pct=drop_pct if drop_pct is not None else 43.0,
+        )
+    except ValueError as e:
+        return jsonify({"error": "invalid_request", "message": str(e)}), 400
+
+    return app.response_class(png_bytes, mimetype="image/png")
+
+
 @app.route("/admin")
 def admin_page():
     return app.send_static_file("admin.html")

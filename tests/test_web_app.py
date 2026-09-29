@@ -579,3 +579,37 @@ def test_overview_entry_editing_unrelated_field_does_not_clobber_existing_raw_au
     assert data["business_type_code_raw"] == "93311"
     assert data["registration_no"] == "0105544000157"
 
+
+def test_forecast_shape_missing_params_returns_400(client):
+    res = client.get("/api/forecast-shape")
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+
+def test_forecast_shape_rejects_non_numeric_peak(client):
+    res = client.get("/api/forecast-shape?peak_p=ไม่ใช่ตัวเลข")
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+
+def test_forecast_shape_returns_png_on_success(client):
+    res = client.get(
+        "/api/forecast-shape",
+        query_string={
+            "peak_p": "650", "energy_p": "69500",
+            "peak_op": "420", "energy_op": "45000",
+            "peak_h": "300", "energy_h": "24000", "days_h": "8",
+        },
+    )
+    assert res.status_code == 200
+    assert res.headers["Content-Type"] == "image/png"
+    assert res.data[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_forecast_shape_works_with_only_one_segment(client):
+    """ไม่ต้องกรอกครบทั้ง 3 ช่วง (P/OP/H) — แค่ P อย่างเดียวก็พยากรณ์ได้"""
+
+    res = client.get("/api/forecast-shape", query_string={"peak_p": "500", "energy_p": "50000"})
+    assert res.status_code == 200
+    assert res.data[:8] == b"\x89PNG\r\n\x1a\n"
+
