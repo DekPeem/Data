@@ -821,6 +821,7 @@ def test_amr_boxplot_upload_with_account_no_and_company_name(client, monkeypatch
             "business_type_code": "55101",
             "account_no": "0199000099",
             "company_name": "บริษัท อัปโหลดเอง จำกัด",
+            "registration_no": "0105544000157",
             "files": (io.BytesIO(_make_amr_report_html(n_days=1).encode("utf-8")), "report.xls"),
         },
         content_type="multipart/form-data",
@@ -831,6 +832,7 @@ def test_amr_boxplot_upload_with_account_no_and_company_name(client, monkeypatch
     assert len(by_account) == 1
     assert by_account[0]["account_no"] == "0199000099"
     assert by_account[0]["company_name"] == "บริษัท อัปโหลดเอง จำกัด"
+    assert by_account[0]["registration_no"] == "0105544000157"
     assert by_account[0]["intervals"] == 96
 
 

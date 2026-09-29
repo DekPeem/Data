@@ -735,14 +735,15 @@ def api_amr_boxplot_upload():
     """อัปโหลดไฟล์ AMR จริง (รายงาน 15 นาทีจาก PEA) ผูกกับประเภทธุรกิจ (TSIC) หนึ่งรายการ — อ่าน
     แล้วเก็บเฉพาะตัวเลขกำลังไฟฟ้ารายชั่วโมง ลงไฟล์ local-only (amr_boxplot_intervals_local.csv)
     สะสมไปเรื่อยๆ ทุกครั้งที่อัปโหลดเพิ่ม (ดู src/amr_mapping/amr_boxplot.py) — account_no/
-    company_name ไม่บังคับ (ผู้ใช้ยืนยันอยากระบุได้ถ้ารู้ เพื่อแยกดูภายหลังว่าอัปโหลดบัญชีไหนไปแล้ว
-    บ้าง ดู GET /api/admin/amr-boxplot/status-by-account)"""
+    company_name/registration_no ไม่บังคับทั้งหมด (ผู้ใช้ยืนยันอยากระบุได้ถ้ารู้ เพื่อแยกดูภายหลัง
+    ว่าอัปโหลดบัญชีไหนไปแล้วบ้าง ดู GET /api/admin/amr-boxplot/status-by-account)"""
 
     from amr_mapping.amr_boxplot import append_intervals_local, parse_amr_files
 
     business_type_code = (request.form.get("business_type_code") or "").strip()
     account_no = (request.form.get("account_no") or "").strip()
     company_name = (request.form.get("company_name") or "").strip()
+    registration_no = (request.form.get("registration_no") or "").strip()
     files = request.files.getlist("files")
     if not business_type_code:
         return jsonify({"error": "invalid_request", "message": "กรุณาเลือกประเภทธุรกิจ (TSIC)"}), 400
@@ -769,7 +770,10 @@ def api_amr_boxplot_upload():
         ), 400
 
     storage_path = DEFAULT_DATA_DIR / "amr_boxplot_intervals_local.csv"
-    added = append_intervals_local(business_type_code, intervals, storage_path, account_no=account_no, company_name=company_name)
+    added = append_intervals_local(
+        business_type_code, intervals, storage_path,
+        account_no=account_no, company_name=company_name, registration_no=registration_no,
+    )
 
     return jsonify({"added_intervals": added, "days": len({i.date for i in intervals})})
 

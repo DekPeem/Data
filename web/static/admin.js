@@ -521,6 +521,7 @@ const amrBoxplotBizSelect = document.getElementById("amr-boxplot-biz-select");
 const amrBoxplotFiles = document.getElementById("amr-boxplot-files");
 const amrBoxplotAccountNo = document.getElementById("amr-boxplot-account-no");
 const amrBoxplotCompanyName = document.getElementById("amr-boxplot-company-name");
+const amrBoxplotRegistrationNo = document.getElementById("amr-boxplot-registration-no");
 const amrBoxplotUploadBtn = document.getElementById("amr-boxplot-upload-btn");
 const amrBoxplotUploadStatus = document.getElementById("amr-boxplot-upload-status");
 
@@ -580,7 +581,7 @@ async function loadAmrBoxplotLog() {
     amrBoxplotLogStatus.textContent = "";
     amrBoxplotLogTable.innerHTML = `
       <table class="amr-log-table">
-        <thead><tr><th>ประเภทธุรกิจ (TSIC)</th><th>บริษัท</th><th>เลขบัญชี</th><th class="num">จำนวนจุดข้อมูล</th><th class="num">จำนวนวัน</th><th></th></tr></thead>
+        <thead><tr><th>ประเภทธุรกิจ (TSIC)</th><th>บริษัท</th><th>เลขบัญชี</th><th>เลขนิติบุคคล</th><th class="num">จำนวนจุดข้อมูล</th><th class="num">จำนวนวัน</th><th></th></tr></thead>
         <tbody>
           ${sorted
             .map((r) => {
@@ -590,10 +591,12 @@ async function loadAmrBoxplotLog() {
                 : `${escapeHtml(r.business_type_code)} <span style="color:#d03b3b;">(ไม่พบชื่อในระบบ)</span>`;
               const companyLabel = r.company_name ? escapeHtml(r.company_name) : `<span style="color:#8996ab;">—</span>`;
               const accountLabel = r.account_no ? escapeHtml(r.account_no) : `<span style="color:#8996ab;">ไม่ระบุบัญชี</span>`;
+              const regLabel = r.registration_no ? escapeHtml(r.registration_no) : `<span style="color:#8996ab;">—</span>`;
               return `<tr>
                 <td>${tsicLabel}</td>
                 <td>${companyLabel}</td>
                 <td>${accountLabel}</td>
+                <td>${regLabel}</td>
                 <td class="num">${r.intervals.toLocaleString("th-TH")}</td>
                 <td class="num">${r.days.toLocaleString("th-TH")}</td>
                 <td><a target="_blank" rel="noopener" href="/api/forecast-boxplot?business_type_code=${encodeURIComponent(r.business_type_code)}">ดู Boxplot →</a></td>
@@ -628,6 +631,7 @@ amrBoxplotUploadBtn.addEventListener("click", async () => {
   for (const f of files) formData.append("files", f);
   if (amrBoxplotAccountNo.value.trim()) formData.append("account_no", amrBoxplotAccountNo.value.trim());
   if (amrBoxplotCompanyName.value.trim()) formData.append("company_name", amrBoxplotCompanyName.value.trim());
+  if (amrBoxplotRegistrationNo.value.trim()) formData.append("registration_no", amrBoxplotRegistrationNo.value.trim());
 
   amrBoxplotUploadBtn.disabled = true;
   amrBoxplotUploadStatus.textContent = "⏳ กำลังอัปโหลด...";

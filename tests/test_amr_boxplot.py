@@ -131,11 +131,15 @@ def test_load_intervals_local_missing_file_returns_empty(tmp_path):
 def test_append_intervals_local_stores_account_and_company_name(amr_report_file, tmp_path):
     storage = tmp_path / "storage.csv"
     intervals = parse_amr_file(amr_report_file)
-    append_intervals_local("55101", intervals, storage, account_no="0199000001", company_name="บริษัท ทดสอบ จำกัด")
+    append_intervals_local(
+        "55101", intervals, storage,
+        account_no="0199000001", company_name="บริษัท ทดสอบ จำกัด", registration_no="0105544000157",
+    )
 
     df = load_intervals_local(storage, "55101")
     assert (df["account_no"] == "0199000001").all()
     assert (df["company_name"] == "บริษัท ทดสอบ จำกัด").all()
+    assert (df["registration_no"] == "0105544000157").all()
 
 
 def test_append_intervals_local_defaults_account_fields_to_blank(amr_report_file, tmp_path):
@@ -179,7 +183,7 @@ def test_summarize_available_by_account_groups_per_tsic_and_account(amr_report_f
     intervals = parse_amr_file(amr_report_file)  # 5*96 = 480 intervals
 
     # บัญชีเดียวกัน อัปโหลด 2 รอบ (คนละไฟล์/คนละเดือน) ต้องรวมเป็นกลุ่มเดียวกัน
-    append_intervals_local("55101", intervals[:100], storage, account_no="A1", company_name="บริษัท เอ")
+    append_intervals_local("55101", intervals[:100], storage, account_no="A1", company_name="บริษัท เอ", registration_no="0105544000157")
     append_intervals_local("55101", intervals[100:], storage, account_no="A1", company_name="บริษัท เอ")
     # อีกบัญชีของ TSIC เดียวกัน
     append_intervals_local("55101", intervals[:50], storage, account_no="A2", company_name="บริษัท บี")
@@ -191,6 +195,7 @@ def test_summarize_available_by_account_groups_per_tsic_and_account(amr_report_f
 
     assert by_account[("55101", "A1")]["intervals"] == 480
     assert by_account[("55101", "A1")]["company_name"] == "บริษัท เอ"
+    assert by_account[("55101", "A1")]["registration_no"] == "0105544000157"  # เจอในรอบแรกพอ
     assert by_account[("55101", "A2")]["intervals"] == 50
     assert by_account[("55101", "A2")]["company_name"] == "บริษัท บี"
     assert by_account[("55101", "")]["intervals"] == 20

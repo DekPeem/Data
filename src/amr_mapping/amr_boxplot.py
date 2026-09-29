@@ -12,10 +12,13 @@
 (amr_boxplot_intervals_local.csv — อยู่ใน .gitignore ห้าม commit เด็ดขาด เหมือนหลักการเดียวกับ
 customers_local.csv) เดิมไม่เก็บชื่อ/เลขบัญชีลูกค้าเลยเพื่อความเป็นส่วนตัว แต่ผู้ใช้ยืนยันชัดเจน
 ว่าอยากให้แยก/ระบุบัญชีที่มาของแต่ละแถวได้ (เพื่อดูว่าอัปโหลดบัญชีไหนไปแล้วบ้าง ไม่ต้องเดา) จึงเพิ่ม
-คอลัมน์ account_no/company_name เป็น "ไม่บังคับ" (ไม่ใส่ก็ยังใช้งานได้ปกติ เว้นว่างไว้เฉยๆ) — ไฟล์
-นี้เป็น local-only อยู่แล้วไม่เคย commit เข้า git เลย จึงยังไม่กระทบความเป็นส่วนตัวของใครนอกเครื่อง
-ที่รันอยู่ (ดู web/app.py จุดที่เรียก append_intervals_local ว่าใส่ account_no/company_name มาจาก
-ไหนบ้าง — โหมดตรวจจับอัตโนมัติจาก PEA ได้มาฟรีจากหน้าโปรไฟล์อยู่แล้ว โหมดแนบไฟล์เองต้องกรอกเอง)
+คอลัมน์ account_no/company_name/registration_no เป็น "ไม่บังคับ" ทั้งหมด (ไม่ใส่ก็ยังใช้งานได้
+ปกติ เว้นว่างไว้เฉยๆ) — account_no คือเลขบัญชีผู้ใช้ไฟของ PEA (ใช้กับหน้าดึง AMR อัตโนมัติ) ส่วน
+registration_no คือเลขทะเบียนนิติบุคคล 13 หลักของ DBD (คนละความหมายกัน บริษัทเดียวมีได้หลายบัญชี
+PEA แต่มีเลขทะเบียนเดียว) — ไฟล์นี้เป็น local-only อยู่แล้วไม่เคย commit เข้า git เลย จึงยังไม่
+กระทบความเป็นส่วนตัวของใครนอกเครื่องที่รันอยู่ (ดู web/app.py จุดที่เรียก append_intervals_local
+ว่าใส่ฟิลด์เหล่านี้มาจากไหนบ้าง — โหมดตรวจจับอัตโนมัติจาก PEA ได้ account_no/company_name มาฟรีจาก
+หน้าโปรไฟล์อยู่แล้ว (PEA ไม่มีเลขทะเบียนนิติบุคคลให้) โหมดแนบไฟล์เองต้องกรอกเองทั้งหมด)
 """
 
 from __future__ import annotations
@@ -36,7 +39,7 @@ import pandas as pd
 COLORS = {"P": "#eb6834", "OP": "#1baf7a", "H": "#6250d6"}
 THAI_FONTS = ["Noto Sans Thai", "Sarabun", "TH Sarabun New", "Tahoma", "Leelawadee UI", "Thonburi"]
 
-_INTERVAL_FIELDNAMES = ["business_type_code", "account_no", "company_name", "date", "hour", "rate", "kw"]
+_INTERVAL_FIELDNAMES = ["business_type_code", "account_no", "company_name", "registration_no", "date", "hour", "rate", "kw"]
 
 DEFAULT_SHUTDOWN_KW = 150.0
 
@@ -139,10 +142,11 @@ def append_intervals_local(
     path: Path,
     account_no: str = "",
     company_name: str = "",
+    registration_no: str = "",
 ) -> int:
-    """เพิ่มข้อมูล interval ที่อ่านมาแล้วต่อท้ายไฟล์ local — account_no/company_name ไม่บังคับ (เว้น
-    ว่างไว้ได้ถ้าไม่รู้/ไม่อยากระบุ) ใส่มาเพื่อให้แยกดูได้ภายหลังว่าข้อมูลแต่ละก้อนมาจากบัญชี/บริษัท
-    ไหนบ้าง (ดู summarize_available_by_account) คืนจำนวนแถวที่เพิ่มจริง"""
+    """เพิ่มข้อมูล interval ที่อ่านมาแล้วต่อท้ายไฟล์ local — account_no/company_name/registration_no
+    ไม่บังคับทั้งหมด (เว้นว่างไว้ได้ถ้าไม่รู้/ไม่อยากระบุ) ใส่มาเพื่อให้แยกดูได้ภายหลังว่าข้อมูลแต่ละ
+    ก้อนมาจากบัญชี/บริษัทไหนบ้าง (ดู summarize_available_by_account) คืนจำนวนแถวที่เพิ่มจริง"""
 
     import csv
 
@@ -159,6 +163,7 @@ def append_intervals_local(
                     "business_type_code": business_type_code,
                     "account_no": account_no,
                     "company_name": company_name,
+                    "registration_no": registration_no,
                     "date": interval.date,
                     "hour": interval.hour,
                     "rate": interval.rate,
@@ -176,11 +181,11 @@ def load_intervals_local(path: Path, business_type_code: Optional[str] = None) -
         return pd.DataFrame(columns=_INTERVAL_FIELDNAMES)
     # business_type_code/account_no ต้องอ่านเป็น string เสมอ (ไม่งั้น pandas เดาว่าเป็น int ถ้ารหัส/
     # เลขบัญชีเป็นตัวเลขล้วน เช่น "55101" ทำให้เทียบกับค่าที่ส่งเข้ามา (string) ไม่ตรงกันเงียบๆ)
-    df = pd.read_csv(path, encoding="utf-8-sig", dtype={"business_type_code": str, "account_no": str})
-    # ไฟล์เก่าก่อนเพิ่มคอลัมน์ account_no/company_name (ยังไม่เคย append ใหม่เลยหลังอัปเดตโค้ด — ดู
-    # _migrate_intervals_file_header_if_needed) จะไม่มี 2 คอลัมน์นี้เลย เติมว่างไว้กันโค้ดฝั่งเรียกใช้
+    df = pd.read_csv(path, encoding="utf-8-sig", dtype={"business_type_code": str, "account_no": str, "registration_no": str})
+    # ไฟล์เก่าก่อนเพิ่มคอลัมน์เหล่านี้ (ยังไม่เคย append ใหม่เลยหลังอัปเดตโค้ด — ดู
+    # _migrate_intervals_file_header_if_needed) จะไม่มีคอลัมน์นี้เลย เติมว่างไว้กันโค้ดฝั่งเรียกใช้
     # (เช่น summarize_available_by_account) KeyError
-    for col in ("account_no", "company_name"):
+    for col in ("account_no", "company_name", "registration_no"):
         if col not in df.columns:
             df[col] = ""
         df[col] = df[col].fillna("")
@@ -237,10 +242,10 @@ def summarize_available_by_account(path: Path) -> List[dict]:
 
     if not path.exists():
         return []
-    df = pd.read_csv(path, encoding="utf-8-sig", dtype={"business_type_code": str, "account_no": str})
+    df = pd.read_csv(path, encoding="utf-8-sig", dtype={"business_type_code": str, "account_no": str, "registration_no": str})
     if df.empty:
         return []
-    for col in ("account_no", "company_name"):
+    for col in ("account_no", "company_name", "registration_no"):
         if col not in df.columns:
             df[col] = ""
         df[col] = df[col].fillna("")
@@ -248,11 +253,13 @@ def summarize_available_by_account(path: Path) -> List[dict]:
     out: List[dict] = []
     for (code, account_no), sub in df.groupby(["business_type_code", "account_no"], dropna=False):
         company_name = next((n for n in sub["company_name"] if n), "")
+        registration_no = next((n for n in sub["registration_no"] if n), "")
         out.append(
             {
                 "business_type_code": str(code),
                 "account_no": str(account_no),
                 "company_name": company_name,
+                "registration_no": registration_no,
                 "intervals": len(sub),
                 "days": int(sub["date"].nunique()),
             }
