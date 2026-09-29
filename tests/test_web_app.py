@@ -715,9 +715,12 @@ def test_forecast_shape_from_files_returns_png_with_stats_header(client, monkeyp
     assert not (tmp_path / "amr_boxplot_intervals_local.csv").exists()
 
 
-def _make_amr_report_html(n_days: int = 3) -> str:
+def _make_amr_report_html(n_days: int = 3, account_no: str = "", company_name: str = "") -> str:
     """สร้างไฟล์รายงาน AMR จำลอง (รูปแบบเดียวกับ tests/test_amr_boxplot.py) — ใช้ทดสอบ endpoint
-    อัปโหลดโดยไม่ต้องมีไฟล์ AMR จริง"""
+    อัปโหลดโดยไม่ต้องมีไฟล์ AMR จริง
+
+    ถ้าไม่ส่ง account_no/company_name จะได้ header ทั่วไปแบบเดิม (ไม่มีข้อมูลให้ extract_customer_info
+    อ่านได้) — ส่งมาเพื่อจำลองหัวรายงานจริงของ PEA (ดู extract_customer_info ใน amr_boxplot.py)"""
 
     import datetime as dt
 
@@ -739,7 +742,30 @@ def _make_amr_report_html(n_days: int = 3) -> str:
             rows.append(row)
         d += dt.timedelta(days=1)
 
-    header = "<table><tr><td>Header info</td></tr></table>"
+    if account_no or company_name:
+        header = (
+            "<table width='800px' cellpadding='4' cellspacing='4'><tr>"
+            "<td colspan='7' class='header'>รายงานข้อมูลกิโลวัตต์แบบช่วงเวลา</td></tr>"
+            "<tr><td colspan='7' class='header'>[ระหว่างวันที่ : 01/01/2026 - 03/01/2026]</td></tr>"
+            "<tr>"
+            f"<td class='detail'>บัญชีผู้ใช้ไฟ : </td><td>{account_no}&nbsp;</td>"
+            f"<td class='detail'>ชื่อผู้ใช้ไฟ : </td><td>{company_name}</td>"
+            "<td></td><td></td><td></td>"
+            "</tr>"
+            "<tr>"
+            "<td class='detail'>เครื่องวัด : </td><td>METER123&nbsp;</td>"
+            "<td class='detail'>Tariff : </td><td>3.2&nbsp;</td>"
+            "<td></td><td></td><td></td>"
+            "</tr>"
+            "<tr>"
+            "<td class='detail'>CT Ratio : </td><td>1&nbsp;</td>"
+            "<td class='detail'>VT Ratio : </td><td>1&nbsp;</td>"
+            "<td></td><td></td><td></td>"
+            "</tr>"
+            "</table>"
+        )
+    else:
+        header = "<table><tr><td>Header info</td></tr></table>"
     data_rows = "".join(
         "<tr>" + "".join(f"<td>{r[c]}</td>" for c in ["ts", "a1", "a2", "b1", "b2", "c1", "c2"]) + "</tr>"
         for r in rows
@@ -834,6 +860,84 @@ def test_amr_boxplot_upload_with_account_no_and_company_name(client, monkeypatch
     assert by_account[0]["company_name"] == "บริษัท อัปโหลดเอง จำกัด"
     assert by_account[0]["registration_no"] == "0105544000157"
     assert by_account[0]["intervals"] == 96
+
+
+def test_amr_boxplot_upload_auto_detects_account_no_and_company_name_from_file(client, monkeypatch, tmp_path):
+    """ไม่กรอกเลขบัญชี/ชื่อบริษัทเลย — ระบบต้องอ่านจากหัวรายงานในไฟล์ให้เองอัตโนมัติ"""
+
+    import io
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+
+    html = _make_amr_report_html(n_days=1, account_no="0199000001", company_name="บริษัท ทดสอบ จำกัด")
+    res = client.post(
+        "/api/admin/amr-boxplot/upload",
+        data={
+            "business_type_code": "55101",
+            "files": (io.BytesIO(html.encode("utf-8")), "report.xls"),
+        },
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["account_no"] == "0199000001"
+    assert data["company_name"] == "บริษัท ทดสอบ จำกัด"
+    assert data["account_no_detected_from_file"] is True
+    assert data["company_name_detected_from_file"] is True
+
+    by_account = client.get("/api/admin/amr-boxplot/status-by-account").get_json()
+    assert len(by_account) == 1
+    assert by_account[0]["account_no"] == "0199000001"
+    assert by_account[0]["company_name"] == "บริษัท ทดสอบ จำกัด"
+
+
+def test_amr_boxplot_upload_file_detection_takes_priority_over_form_fields(client, monkeypatch, tmp_path):
+    """ถ้าไฟล์อ่านเจอเอง ให้ใช้ค่าจากไฟล์ ไม่ใช่ค่าที่กรอกในฟอร์ม (กันคนกรอกผิด/กรอกของเก่าค้างไว้)"""
+
+    import io
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+
+    html = _make_amr_report_html(n_days=1, account_no="0199000001", company_name="บริษัท ทดสอบ จำกัด")
+    res = client.post(
+        "/api/admin/amr-boxplot/upload",
+        data={
+            "business_type_code": "55101",
+            "account_no": "9999999999",
+            "company_name": "บริษัท กรอกเอง จำกัด",
+            "files": (io.BytesIO(html.encode("utf-8")), "report.xls"),
+        },
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["account_no"] == "0199000001"
+    assert data["company_name"] == "บริษัท ทดสอบ จำกัด"
+
+
+def test_amr_boxplot_upload_falls_back_to_form_fields_when_not_detected(client, monkeypatch, tmp_path):
+    """ไฟล์ที่อ่านไม่เจอ (header ไม่ตรงรูปแบบ) ต้องยังใช้ค่าที่กรอกในฟอร์มได้เหมือนเดิม (backward-compat)"""
+
+    import io
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+
+    res = client.post(
+        "/api/admin/amr-boxplot/upload",
+        data={
+            "business_type_code": "55101",
+            "account_no": "0199000099",
+            "company_name": "บริษัท อัปโหลดเอง จำกัด",
+            "files": (io.BytesIO(_make_amr_report_html(n_days=1).encode("utf-8")), "report.xls"),
+        },
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["account_no"] == "0199000099"
+    assert data["company_name"] == "บริษัท อัปโหลดเอง จำกัด"
+    assert data["account_no_detected_from_file"] is False
+    assert data["company_name_detected_from_file"] is False
 
 
 def test_amr_boxplot_delete_data_requires_business_type_code(client):

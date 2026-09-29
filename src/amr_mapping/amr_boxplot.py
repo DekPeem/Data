@@ -27,7 +27,7 @@ import io
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import matplotlib
 
@@ -110,6 +110,45 @@ def parse_amr_files(paths: List[Union[str, Path]]) -> List[ParsedInterval]:
             seen.add(key)
             out.append(interval)
     return out
+
+
+def extract_customer_info(path: Union[str, Path]) -> Tuple[str, str]:
+    """หาเลขบัญชีผู้ใช้ไฟ + ชื่อผู้ใช้ไฟ จากตารางหัวรายงาน (tables[0] — ตัวที่ parse_amr_file ข้าม
+    ไปเฉยๆ) ของไฟล์ AMR จริง 1 ไฟล์ — คืน ("", "") ถ้าอ่าน/หาไม่เจอ (ไม่ raise เหมือน parse_amr_file
+    ปล่อยให้ผู้ใช้กรอกเองแทนตอนหาไม่เจอ) โครงสร้างยืนยันจากไฟล์ตัวอย่างจริงของผู้ใช้แล้ว (รายงาน
+    "ข้อมูลกิโลวัตต์แบบช่วงเวลา" จากเว็บ amr.pea.co.th): tables[0] มีแถวหนึ่งที่คอลัมน์หนึ่งเป็น
+    ข้อความ "บัญชีผู้ใช้ไฟ :" ตามด้วยเลขบัญชีในคอลัมน์ถัดไปทันที และอีกคู่คอลัมน์ในแถวเดียวกันเป็น
+    "ชื่อผู้ใช้ไฟ :" ตามด้วยชื่อบริษัทในคอลัมน์ถัดไป (pandas.read_html แกะ &nbsp;/ช่องว่างหัวท้าย
+    ให้เรียบร้อยแล้วในตัว ไม่ต้อง strip เพิ่ม แต่ strip ไว้กันเหนียวเผื่อโครงสร้างเปลี่ยนเล็กน้อย)"""
+
+    try:
+        html = Path(path).read_text(encoding="utf-8", errors="ignore")
+        header = pd.read_html(io.StringIO(html))[0]
+    except Exception:  # noqa: BLE001 — ไฟล์เสีย/รูปแบบไม่ตรง/ไม่มี tables[0] เลย ถือว่าหาไม่เจอ
+        return "", ""
+
+    account_no = ""
+    company_name = ""
+    for _, row in header.iterrows():
+        cells = [str(c).strip() if pd.notna(c) else "" for c in row]
+        for i, cell in enumerate(cells):
+            if "บัญชีผู้ใช้ไฟ" in cell and i + 1 < len(cells):
+                account_no = cells[i + 1]
+            if "ชื่อผู้ใช้ไฟ" in cell and i + 1 < len(cells):
+                company_name = cells[i + 1]
+    return account_no, company_name
+
+
+def extract_customer_info_from_files(paths: List[Union[str, Path]]) -> Tuple[str, str]:
+    """เหมือน extract_customer_info แต่รับหลายไฟล์พร้อมกัน (เช่น อัปโหลดพร้อมกันหลายเดือนของบัญชี
+    เดียวกัน) คืนค่าจากไฟล์แรกที่หาเจอครบทั้งคู่ (ทุกไฟล์ของบัญชีเดียวกันควรมีค่าตรงกันหมดอยู่แล้ว
+    ไม่ต้องรวม/เช็คว่าตรงกันเป๊ะทุกไฟล์) คืน ("", "") ถ้าไม่มีไฟล์ไหนหาเจอเลย"""
+
+    for p in paths:
+        account_no, company_name = extract_customer_info(p)
+        if account_no or company_name:
+            return account_no, company_name
+    return "", ""
 
 
 def _migrate_intervals_file_header_if_needed(path: Path) -> None:

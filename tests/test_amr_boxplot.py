@@ -10,6 +10,8 @@ from amr_mapping.amr_boxplot import (
     ParsedInterval,
     append_intervals_local,
     compute_bill_stats_from_intervals,
+    extract_customer_info,
+    extract_customer_info_from_files,
     load_intervals_local,
     parse_amr_file,
     parse_amr_files,
@@ -20,9 +22,12 @@ from amr_mapping.amr_boxplot import (
 )
 
 
-def _make_amr_html(start_date: dt.datetime, n_days: int) -> str:
+def _make_amr_html(start_date: dt.datetime, n_days: int, account_no: str = "", company_name: str = "") -> str:
     """สร้างไฟล์ HTML จำลองรูปแบบเดียวกับรายงาน "ข้อมูลกิโลวัตต์ชั่วโมงแบบช่วงเวลา" ของ PEA
-    (ts + a1/b1/c1 ตาม P/OP/H) — ใช้ทดสอบ parse_amr_file โดยไม่ต้องมีไฟล์จริง"""
+    (ts + a1/b1/c1 ตาม P/OP/H) — ใช้ทดสอบ parse_amr_file โดยไม่ต้องมีไฟล์จริง
+
+    ถ้าไม่ส่ง account_no/company_name จะได้ header ทั่วไปแบบเดิม — ส่งมาเพื่อจำลองหัวรายงานจริงของ
+    PEA (ดู extract_customer_info)"""
 
     rows = []
     d = start_date
@@ -43,7 +48,30 @@ def _make_amr_html(start_date: dt.datetime, n_days: int) -> str:
             rows.append(row)
         d += dt.timedelta(days=1)
 
-    header = "<table><tr><td>Header info</td></tr></table>"
+    if account_no or company_name:
+        header = (
+            "<table width='800px' cellpadding='4' cellspacing='4'><tr>"
+            "<td colspan='7' class='header'>รายงานข้อมูลกิโลวัตต์แบบช่วงเวลา</td></tr>"
+            "<tr><td colspan='7' class='header'>[ระหว่างวันที่ : 01/01/2026 - 03/01/2026]</td></tr>"
+            "<tr>"
+            f"<td class='detail'>บัญชีผู้ใช้ไฟ : </td><td>{account_no}&nbsp;</td>"
+            f"<td class='detail'>ชื่อผู้ใช้ไฟ : </td><td>{company_name}</td>"
+            "<td></td><td></td><td></td>"
+            "</tr>"
+            "<tr>"
+            "<td class='detail'>เครื่องวัด : </td><td>METER123&nbsp;</td>"
+            "<td class='detail'>Tariff : </td><td>3.2&nbsp;</td>"
+            "<td></td><td></td><td></td>"
+            "</tr>"
+            "<tr>"
+            "<td class='detail'>CT Ratio : </td><td>1&nbsp;</td>"
+            "<td class='detail'>VT Ratio : </td><td>1&nbsp;</td>"
+            "<td></td><td></td><td></td>"
+            "</tr>"
+            "</table>"
+        )
+    else:
+        header = "<table><tr><td>Header info</td></tr></table>"
     data_rows = "".join(
         "<tr>" + "".join(f"<td>{r[c]}</td>" for c in ["ts", "a1", "a2", "b1", "b2", "c1", "c2"]) + "</tr>"
         for r in rows
@@ -279,3 +307,49 @@ def test_render_boxplot_png_empty_dataframe_raises(amr_report_file, tmp_path):
     df = load_intervals_local(storage, "55101")  # ไม่มีไฟล์เลย -> DataFrame ว่าง
     with pytest.raises(ValueError):
         render_boxplot_png(df, business_type_code="55101")
+
+
+def test_extract_customer_info_reads_account_and_company_from_header(tmp_path):
+    html = _make_amr_html(
+        dt.datetime(2026, 1, 1), n_days=1, account_no="0199000001", company_name="บริษัท ทดสอบ จำกัด"
+    )
+    path = tmp_path / "report.xls"
+    path.write_text(html, encoding="utf-8")
+
+    account_no, company_name = extract_customer_info(path)
+    assert account_no == "0199000001"
+    assert company_name == "บริษัท ทดสอบ จำกัด"
+
+
+def test_extract_customer_info_returns_empty_when_not_found(amr_report_file):
+    # amr_report_file ใช้ header ทั่วไป ไม่มี "บัญชีผู้ใช้ไฟ"/"ชื่อผู้ใช้ไฟ" ให้อ่าน
+    account_no, company_name = extract_customer_info(amr_report_file)
+    assert account_no == ""
+    assert company_name == ""
+
+
+def test_extract_customer_info_missing_file_returns_empty(tmp_path):
+    account_no, company_name = extract_customer_info(tmp_path / "nope.xls")
+    assert account_no == ""
+    assert company_name == ""
+
+
+def test_extract_customer_info_from_files_uses_first_match(tmp_path):
+    empty_html = _make_amr_html(dt.datetime(2026, 1, 1), n_days=1)
+    matched_html = _make_amr_html(
+        dt.datetime(2026, 1, 1), n_days=1, account_no="0199000002", company_name="บริษัท สอง จำกัด"
+    )
+    path1 = tmp_path / "report1.xls"
+    path1.write_text(empty_html, encoding="utf-8")
+    path2 = tmp_path / "report2.xls"
+    path2.write_text(matched_html, encoding="utf-8")
+
+    account_no, company_name = extract_customer_info_from_files([path1, path2])
+    assert account_no == "0199000002"
+    assert company_name == "บริษัท สอง จำกัด"
+
+
+def test_extract_customer_info_from_files_all_empty_returns_empty(amr_report_file):
+    account_no, company_name = extract_customer_info_from_files([amr_report_file])
+    assert account_no == ""
+    assert company_name == ""

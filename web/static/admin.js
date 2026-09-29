@@ -755,7 +755,11 @@ amrBoxplotUploadBtn.addEventListener("click", async () => {
       amrBoxplotUploadStatus.innerHTML = `<span style="color:#d03b3b;">${data.message || "เกิดข้อผิดพลาด"}</span>`;
       return;
     }
-    amrBoxplotUploadStatus.innerHTML = `<span style="color:#006300;">✅ เพิ่มข้อมูลแล้ว ${data.added_intervals.toLocaleString("th-TH")} จุด (${data.days} วัน)</span>`;
+    const detectedParts = [];
+    if (data.account_no_detected_from_file) detectedParts.push(`บัญชี ${escapeHtml(data.account_no)}`);
+    if (data.company_name_detected_from_file) detectedParts.push(escapeHtml(data.company_name));
+    const detectedNote = detectedParts.length ? ` — อ่านจากไฟล์ได้: ${detectedParts.join(" · ")}` : "";
+    amrBoxplotUploadStatus.innerHTML = `<span style="color:#006300;">✅ เพิ่มข้อมูลแล้ว ${data.added_intervals.toLocaleString("th-TH")} จุด (${data.days} วัน)${detectedNote}</span>`;
     amrBoxplotFiles.value = "";
     loadAmrBoxplotLog();
   } catch (err) {

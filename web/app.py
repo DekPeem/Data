@@ -735,14 +735,16 @@ def api_amr_boxplot_upload():
     """อัปโหลดไฟล์ AMR จริง (รายงาน 15 นาทีจาก PEA) ผูกกับประเภทธุรกิจ (TSIC) หนึ่งรายการ — อ่าน
     แล้วเก็บเฉพาะตัวเลขกำลังไฟฟ้ารายชั่วโมง ลงไฟล์ local-only (amr_boxplot_intervals_local.csv)
     สะสมไปเรื่อยๆ ทุกครั้งที่อัปโหลดเพิ่ม (ดู src/amr_mapping/amr_boxplot.py) — account_no/
-    company_name/registration_no ไม่บังคับทั้งหมด (ผู้ใช้ยืนยันอยากระบุได้ถ้ารู้ เพื่อแยกดูภายหลัง
-    ว่าอัปโหลดบัญชีไหนไปแล้วบ้าง ดู GET /api/admin/amr-boxplot/status-by-account)"""
+    company_name อ่านจากตารางหัวรายงานในไฟล์เองอัตโนมัติก่อนเสมอ (ยืนยันโครงสร้างจริงจากไฟล์
+    ตัวอย่างของผู้ใช้แล้ว ดู amr_boxplot.extract_customer_info_from_files) ไม่ต้องพิมพ์เอง — ช่อง
+    กรอกในฟอร์มเป็นแค่ fallback ตอนอ่านจากไฟล์ไม่เจอเท่านั้น (เช่น ไฟล์ผิดรูปแบบ) registration_no
+    (เลขทะเบียนนิติบุคคล) ไม่มีในไฟล์ PEA เลย ต้องพิมพ์เองอย่างเดียวเสมอ"""
 
-    from amr_mapping.amr_boxplot import append_intervals_local, parse_amr_files
+    from amr_mapping.amr_boxplot import append_intervals_local, extract_customer_info_from_files, parse_amr_files
 
     business_type_code = (request.form.get("business_type_code") or "").strip()
-    account_no = (request.form.get("account_no") or "").strip()
-    company_name = (request.form.get("company_name") or "").strip()
+    form_account_no = (request.form.get("account_no") or "").strip()
+    form_company_name = (request.form.get("company_name") or "").strip()
     registration_no = (request.form.get("registration_no") or "").strip()
     files = request.files.getlist("files")
     if not business_type_code:
@@ -769,13 +771,26 @@ def api_amr_boxplot_upload():
             {"error": "invalid_request", "message": "อ่านไฟล์ที่แนบมาไม่ได้เลย (รูปแบบอาจไม่ตรงกับรายงาน AMR ของ PEA)"}
         ), 400
 
+    detected_account_no, detected_company_name = extract_customer_info_from_files(file_paths)
+    account_no = detected_account_no or form_account_no
+    company_name = detected_company_name or form_company_name
+
     storage_path = DEFAULT_DATA_DIR / "amr_boxplot_intervals_local.csv"
     added = append_intervals_local(
         business_type_code, intervals, storage_path,
         account_no=account_no, company_name=company_name, registration_no=registration_no,
     )
 
-    return jsonify({"added_intervals": added, "days": len({i.date for i in intervals})})
+    return jsonify(
+        {
+            "added_intervals": added,
+            "days": len({i.date for i in intervals}),
+            "account_no": account_no,
+            "company_name": company_name,
+            "account_no_detected_from_file": bool(detected_account_no),
+            "company_name_detected_from_file": bool(detected_company_name),
+        }
+    )
 
 
 @app.route("/api/admin/amr-boxplot/status")

@@ -143,8 +143,8 @@
           <div class="hint">
             อัปโหลดไฟล์ AMR จริง (รายงาน 15 นาทีจาก PEA — .xls/.zip) ของธุรกิจประเภทหนึ่ง ระบบจะเก็บตัวเลขกำลังไฟฟ้ารายชั่วโมง
             สะสมไว้ในเครื่องนี้ทุกครั้งที่อัปโหลดเพิ่ม — ใช้วาดกราฟ Boxplot ให้ผู้ใช้ไฟที่ยังไม่มี AMR ของธุรกิจประเภทเดียวกันดูเป็น
-            ข้อมูลอ้างอิง (ดูจากหน้าแรกได้หลังจับคู่ประเภทธุรกิจแล้ว) ระบุเลขบัญชี/ชื่อบริษัทได้ (ไม่บังคับ) เพื่อแยกดูภายหลังว่า
-            อัปโหลดบัญชีไหนไปแล้วบ้าง (ดูตาราง log ด้านล่าง)
+            ข้อมูลอ้างอิง (ดูจากหน้าแรกได้หลังจับคู่ประเภทธุรกิจแล้ว) <strong>เลขบัญชี/ชื่อบริษัทอ่านจากไฟล์ให้อัตโนมัติ</strong> —
+            ไม่ต้องพิมพ์เอง เว้นว่างไว้ได้เลย (ช่องด้านล่างใช้เฉพาะตอนอ่านจากไฟล์ไม่เจอเท่านั้น)
           </div>
         </div>
         <div class="mode-tab-bar">
@@ -164,12 +164,12 @@
               <input id="amr-boxplot-files" type="file" multiple accept=".xls,.xlsx,.html,.htm,.zip">
             </div>
             <div class="form-field">
-              <label for="amr-boxplot-account-no">เลขบัญชีผู้ใช้ไฟ (PEA) — ไม่บังคับ</label>
-              <input id="amr-boxplot-account-no" type="text" autocomplete="off" placeholder="เช่น 0199000001">
+              <label for="amr-boxplot-account-no">เลขบัญชีผู้ใช้ไฟ (PEA) — เว้นว่างได้ อ่านจากไฟล์ให้อัตโนมัติ</label>
+              <input id="amr-boxplot-account-no" type="text" autocomplete="off" placeholder="เว้นว่างไว้ ระบบอ่านจากไฟล์ให้เอง">
             </div>
             <div class="form-field">
-              <label for="amr-boxplot-company-name">ชื่อบริษัท — ไม่บังคับ</label>
-              <input id="amr-boxplot-company-name" type="text" autocomplete="off" placeholder="เช่น บริษัท ตัวอย่าง จำกัด">
+              <label for="amr-boxplot-company-name">ชื่อบริษัท — เว้นว่างได้ อ่านจากไฟล์ให้อัตโนมัติ</label>
+              <input id="amr-boxplot-company-name" type="text" autocomplete="off" placeholder="เว้นว่างไว้ ระบบอ่านจากไฟล์ให้เอง">
             </div>
             <div class="form-field">
               <label for="amr-boxplot-registration-no">เลขทะเบียนนิติบุคคล (DBD) — ไม่บังคับ</label>
