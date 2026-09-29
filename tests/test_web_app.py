@@ -290,6 +290,57 @@ def test_business_type_lookup_uses_registration_no_profile_fetch_when_provided(c
     assert status["result"]["exact_match_index"] == 0  # ตรงกันด้วยเลขทะเบียน แม้ชื่อสะกดต่างกัน
 
 
+def test_business_type_lookup_prefers_latest_financial_statement_tsic_as_primary(client, monkeypatch):
+    """DBD คืน TSIC 2 ค่าต่อบริษัทเดียวได้ ("ตอนจดทะเบียน" vs "ตามงบการเงินปีล่าสุด") เป็น 2
+    candidates ที่ใช้เลขทะเบียนเดียวกัน — ต้องเลือก "ปีล่าสุด" เป็นตัวหลัก (primary_index) เสมอ
+    ไม่ว่า dbd_scraper จะคืนมาเรียงลำดับไหนก็ตาม (จำลองกรณีคืนมาผิดลำดับ — ตอนจดทะเบียนมาก่อน —
+    เพื่อยืนยันว่า web/app.py เช็คซ้ำเองอีกชั้น ไม่ได้พึ่งพา sort ของ scraper อย่างเดียว)"""
+
+    from amr_mapping.dbd_lookup import CompanyBusinessInfo
+
+    def fake_profile_fetch(registration_no, log=lambda m: None, headless=True, on_blocked=None):
+        return [
+            CompanyBusinessInfo(
+                registration_no="0105544000999",
+                juristic_name="บริษัท ทดสอบยาง จำกัด",
+                juristic_type="บริษัทจำกัด",
+                status="ยังดำเนินกิจการอยู่",
+                tsic_code="22199",
+                tsic_name_th="(ตอนจดทะเบียน) การผลิตผลิตภัณฑ์ยางอื่นๆ ซึ่งมิได้จัดประเภทไว้ในที่อื่น",
+            ),
+            CompanyBusinessInfo(
+                registration_no="0105544000999",
+                juristic_name="บริษัท ทดสอบยาง จำกัด",
+                juristic_type="บริษัทจำกัด",
+                status="ยังดำเนินกิจการอยู่",
+                tsic_code="32909",
+                tsic_name_th="(ตามงบการเงินปีล่าสุด) การผลิตผลิตภัณฑ์อื่นๆ ซึ่งมิได้จัดประเภทไว้ในที่อื่น",
+            ),
+        ]
+
+    import amr_mapping.dbd_scraper as dbd_scraper_module
+
+    monkeypatch.setattr(dbd_scraper_module, "lookup_tsic_by_registration_no", fake_profile_fetch)
+
+    res = client.post(
+        "/api/business-type-lookup",
+        json={"company_name": "บริษัท ทดสอบยาง จำกัด", "registration_no": "0105544000999"},
+    )
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/business-type-lookup/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    result = status["result"]
+    assert result["primary_index"] == 1  # index 1 คือตัว "ปีล่าสุด" แม้จะมาทีหลังในลิสต์
+    assert result["candidates"][result["primary_index"]]["tsic_code"] == "32909"
+
+
 def test_business_type_lookup_suggests_approximate_match_when_no_exact_division(client, monkeypatch):
     """DBD คืนรหัส TSIC 5 หลักที่ไม่มีธุรกิจไหนในระบบเราตรงเป๊ะ แต่ TSIC division เดียวกัน (46 —
     การขายส่งสินค้า) มีธุรกิจอื่นอยู่ในข้อมูลอ้างอิงจริง — ต้อง fallback ไปแนะนำธุรกิจที่อยู่ division

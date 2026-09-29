@@ -401,7 +401,15 @@ def _run_business_type_lookup_job(
 
         if registration_no:
             normalized_reg_no = registration_no.strip()
-            exact = next((r for r in results if r.registration_no.strip() == normalized_reg_no), None)
+            same_company = [r for r in results if r.registration_no.strip() == normalized_reg_no]
+            # DBD คืน TSIC ได้ 2 ค่าต่อบริษัทเดียว ("ตอนจดทะเบียน" vs "ตามงบการเงินปีล่าสุด" — ดู
+            # dbd_scraper.tsic_lookup._build_candidates) เป็น 2 candidates แยกกันที่ใช้เลขทะเบียน
+            # เดียวกันทั้งคู่ — ต้องเลือก "ปีล่าสุด" เป็นตัวหลักเสมอถ้ามีทั้งคู่ (สะท้อนกิจกรรมปัจจุบัน
+            # ของบริษัทมากกว่า) ไม่ใช่แค่ตัวแรกที่เจอในลิสต์เฉยๆ (แม้ scraper จะพยายาม sort ให้ปีล่าสุด
+            # ขึ้นก่อนอยู่แล้ว แต่เช็คซ้ำตรงนี้อีกชั้น กันกรณี sort พลาด/โครงสร้างหน้าเว็บเปลี่ยนไป)
+            exact = next((r for r in same_company if "ปีล่าสุด" in (r.tsic_name_th or "")), None) or (
+                same_company[0] if same_company else None
+            )
         else:
             exact = find_exact_match(results, company_name)
         exact_index = results.index(exact) if exact is not None else None
