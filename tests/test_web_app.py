@@ -1015,6 +1015,59 @@ def test_forecast_boxplot_returns_404_without_data(client, monkeypatch, tmp_path
     assert res.get_json()["error"] == "not_found"
 
 
+def test_forecast_boxplot_filters_by_account_no(client, monkeypatch, tmp_path):
+    """เคยเป็นบั๊ก: /api/forecast-boxplot กรองแค่ business_type_code ไม่กรองตาม account_no เลย ทำให้
+    กด "ดู Boxplot" ของคนละบัญชีในประเภทธุรกิจเดียวกัน ได้กราฟรวมเหมือนกันเป๊ะทุกครั้ง — ตอนนี้ระบุ
+    account_no มาแล้วต้องได้กราฟเฉพาะบัญชีนั้น (ไม่ raise/error แค่เพราะข้อมูลน้อยกว่าตอนรวม)"""
+
+    import io
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+
+    for account_no in ("A1", "A2"):
+        client.post(
+            "/api/admin/amr-boxplot/upload",
+            data={
+                "business_type_code": "55101",
+                "account_no": account_no,
+                "files": (io.BytesIO(_make_amr_report_html(n_days=3).encode("utf-8")), "report.xls"),
+            },
+            content_type="multipart/form-data",
+        )
+
+    all_res = client.get("/api/forecast-boxplot", query_string={"business_type_code": "55101"})
+    assert all_res.status_code == 200
+
+    a1_res = client.get("/api/forecast-boxplot", query_string={"business_type_code": "55101", "account_no": "A1"})
+    assert a1_res.status_code == 200
+    assert a1_res.headers["Content-Type"] == "image/png"
+
+    a2_res = client.get("/api/forecast-boxplot", query_string={"business_type_code": "55101", "account_no": "A2"})
+    assert a2_res.status_code == 200
+    # กราฟของ A1/A2 ถูกกรองมาจากข้อมูลคนละก้อน (แม้ในเทสนี้เนื้อหาข้อมูลเหมือนกัน) — เช็คแค่ว่าทั้งคู่
+    # เรียกสำเร็จแยกกันได้จริง ไม่ error/ทับกันเป็นกราฟเดียว (ยืนยันด้วยเทสระดับ unit ของ
+    # load_intervals_local ที่เช็คเนื้อหา DataFrame ตรงๆ แล้วใน test_amr_boxplot.py)
+    assert a2_res.data[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_forecast_boxplot_account_no_not_found_returns_404(client, monkeypatch, tmp_path):
+    import io
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    client.post(
+        "/api/admin/amr-boxplot/upload",
+        data={
+            "business_type_code": "55101",
+            "account_no": "A1",
+            "files": (io.BytesIO(_make_amr_report_html(n_days=3).encode("utf-8")), "report.xls"),
+        },
+        content_type="multipart/form-data",
+    )
+
+    res = client.get("/api/forecast-boxplot", query_string={"business_type_code": "55101", "account_no": "NOPE"})
+    assert res.status_code == 404
+
+
 def test_amr_boxplot_fetch_missing_credentials_returns_400(client):
     res = client.post("/api/admin/amr-boxplot/fetch", json={})
     assert res.status_code == 400

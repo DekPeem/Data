@@ -204,6 +204,39 @@ def test_load_intervals_local_missing_file_returns_empty(tmp_path):
     assert df.empty
 
 
+def test_load_intervals_local_filters_by_account_no(amr_report_file, tmp_path):
+    """account_no=None (ค่าเริ่มต้น) ต้องรวมทุกบัญชี ส่วนระบุ account_no มาต้องกรองเหลือเฉพาะบัญชี
+    นั้น — เคยเป็นบั๊กที่ /api/forecast-boxplot กรองแค่ business_type_code ทำให้กดดูกราฟของคนละบัญชี
+    ใน TSIC เดียวกันแล้วได้กราฟเหมือนกันเป๊ะ"""
+
+    storage = tmp_path / "storage.csv"
+    intervals = parse_amr_file(amr_report_file)
+    append_intervals_local("55101", intervals, storage, account_no="A1")
+    append_intervals_local("55101", intervals, storage, account_no="A2")
+
+    all_df = load_intervals_local(storage, "55101")
+    assert len(all_df) == len(intervals) * 2
+
+    a1_df = load_intervals_local(storage, "55101", account_no="A1")
+    assert len(a1_df) == len(intervals)
+    assert (a1_df["account_no"] == "A1").all()
+
+    a2_df = load_intervals_local(storage, "55101", account_no="A2")
+    assert len(a2_df) == len(intervals)
+    assert (a2_df["account_no"] == "A2").all()
+
+
+def test_load_intervals_local_filters_unspecified_account_group(amr_report_file, tmp_path):
+    storage = tmp_path / "storage.csv"
+    intervals = parse_amr_file(amr_report_file)
+    append_intervals_local("55101", intervals, storage)  # ไม่ระบุ account_no
+    append_intervals_local("55101", intervals, storage, account_no="A1")
+
+    unspecified_df = load_intervals_local(storage, "55101", account_no="")
+    assert len(unspecified_df) == len(intervals)
+    assert (unspecified_df["account_no"] == "").all()
+
+
 def test_append_intervals_local_stores_account_and_company_name(amr_report_file, tmp_path):
     storage = tmp_path / "storage.csv"
     intervals = parse_amr_file(amr_report_file)
@@ -346,6 +379,18 @@ def test_render_boxplot_png_returns_valid_png(amr_report_file, tmp_path):
     df = load_intervals_local(storage, "55101")
 
     png = render_boxplot_png(df, business_type_code="55101", business_type_name="โรงแรม")
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_render_boxplot_png_with_subtitle_returns_valid_png(amr_report_file, tmp_path):
+    """subtitle (ใช้ตอนกราฟถูกกรองเหลือบัญชีเดียว) ต้องไม่ทำให้วาดกราฟพัง"""
+
+    storage = tmp_path / "storage.csv"
+    intervals = parse_amr_file(amr_report_file)
+    append_intervals_local("55101", intervals, storage, account_no="A1")
+    df = load_intervals_local(storage, "55101", account_no="A1")
+
+    png = render_boxplot_png(df, business_type_code="55101", business_type_name="โรงแรม", subtitle="บัญชี A1 — บริษัท ทดสอบ จำกัด")
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
 
 

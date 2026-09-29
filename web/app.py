@@ -839,27 +839,42 @@ def api_amr_boxplot_delete_data():
 def api_forecast_boxplot():
     """คืนกราฟ Boxplot (PNG) จากข้อมูล AMR จริงที่สะสมไว้สำหรับประเภทธุรกิจ (TSIC) หนึ่งรายการ —
     ต่างจาก /api/forecast-shape ตรงที่นี่คือข้อมูลวัดจริง ไม่ใช่เส้นโค้งสมมติ ต้องมีคนอัปโหลด AMR
-    จริงของธุรกิจประเภทนี้ไว้ก่อนแล้ว (ผ่าน /api/admin/amr-boxplot/upload) ไม่งั้นคืน 404"""
+    จริงของธุรกิจประเภทนี้ไว้ก่อนแล้ว (ผ่าน /api/admin/amr-boxplot/upload) ไม่งั้นคืน 404
+
+    ไม่ระบุ account_no (ค่าเริ่มต้น — ปุ่ม "ดูกราฟ Boxplot ของประเภทธุรกิจนี้" หน้าอัปโหลดใช้แบบนี้)
+    จะรวมทุกบัญชีของ TSIC นั้นเข้าด้วยกัน ให้เป็นข้อมูลอ้างอิงกลางสำหรับลูกค้าที่ยังไม่มี AMR เอง —
+    ถ้าระบุ account_no มา (ใส่ "" ได้เพื่อดูเฉพาะกลุ่ม "ไม่ระบุบัญชี" — ดูปุ่ม "ดู Boxplot" รายแถวใน
+    ตาราง log ของหน้า Admin) จะกรองเหลือเฉพาะบัญชีนั้นบัญชีเดียว ไม่รวมกับบัญชีอื่นของ TSIC เดียวกัน"""
 
     from amr_mapping.amr_boxplot import load_intervals_local, render_boxplot_png
 
     business_type_code = (request.args.get("business_type_code") or "").strip()
     if not business_type_code:
         return jsonify({"error": "invalid_request", "message": "กรุณาระบุประเภทธุรกิจ (TSIC)"}), 400
+    account_no = request.args.get("account_no")  # None = ไม่กรอง (รวมทุกบัญชี), "" = เฉพาะกลุ่มไม่ระบุบัญชี
 
     storage_path = DEFAULT_DATA_DIR / "amr_boxplot_intervals_local.csv"
-    df = load_intervals_local(storage_path, business_type_code)
+    df = load_intervals_local(storage_path, business_type_code, account_no=account_no)
     if df.empty:
-        return jsonify(
-            {"error": "not_found", "message": "ยังไม่มีข้อมูล AMR จริงสำหรับประเภทธุรกิจนี้เลย (อัปโหลดได้จากหน้า Admin)"}
-        ), 404
+        message = (
+            "ยังไม่มีข้อมูล AMR จริงของบัญชีนี้เลย (อัปโหลดได้จากหน้า Admin)"
+            if account_no is not None
+            else "ยังไม่มีข้อมูล AMR จริงสำหรับประเภทธุรกิจนี้เลย (อัปโหลดได้จากหน้า Admin)"
+        )
+        return jsonify({"error": "not_found", "message": message}), 404
 
     reference = get_reference()
     bt = reference.business_types.get(business_type_code)
     business_type_name = bt.name_th if bt else ""
 
+    subtitle = ""
+    if account_no is not None:
+        company_name = next((c for c in df["company_name"] if c), "")
+        account_label = account_no or "ไม่ระบุบัญชี"
+        subtitle = f"บัญชี {account_label} — {company_name}" if company_name else f"บัญชี {account_label}"
+
     try:
-        png_bytes = render_boxplot_png(df, business_type_code, business_type_name)
+        png_bytes = render_boxplot_png(df, business_type_code, business_type_name, subtitle=subtitle)
     except ValueError as e:
         return jsonify({"error": "invalid_request", "message": str(e)}), 400
 

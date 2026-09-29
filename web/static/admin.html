@@ -95,6 +95,11 @@
       background: #f7f9fc; font-weight: 700; font-size: 12.5px; color: #184f95;
       padding: 9px 10px; border-bottom: 1px solid rgba(15,23,42,0.08);
     }
+    .amr-log-tsic-subheader td {
+      background: #fbfcfe; font-size: 12px; color: #55647a;
+      padding: 6px 10px 6px 22px; border-bottom: 1px solid rgba(15,23,42,0.06);
+    }
+    .amr-log-tsic-subheader a { color: #184f95; font-weight: 600; }
     .amr-log-filter-bar { display: flex; flex-wrap: wrap; gap: 8px; }
     .amr-log-filter-chip {
       height: 30px; padding: 0 12px; border-radius: 999px; font-size: 12px; font-weight: 600;
@@ -262,8 +267,9 @@
             <div style="font-size: 15px; font-weight: 700;">ข้อมูล AMR จริงที่มีอยู่แล้วในระบบ (แยกตาม TSIC + บัญชี)</div>
             <div class="hint">
               รายการประเภทธุรกิจ/บัญชีที่เคยอัปโหลด/ดึงข้อมูล AMR จริงเข้ามาแล้ว (สะสมไว้ในเครื่องนี้) แยกทีละบัญชีให้เห็นชัดๆ
-              (บัญชีที่ไม่เคยระบุตอนอัปโหลดจะรวมเป็นแถว "ไม่ระบุบัญชี") จำนวนจุดข้อมูล/จำนวนวัน มากพอสมควรถึงจะวาด Boxplot ของ
-              TSIC นั้นได้น่าเชื่อถือ (Boxplot รวมทุกบัญชีของ TSIC เดียวกันเข้าด้วยกันเสมอ)
+              (บัญชีที่ไม่เคยระบุตอนอัปโหลดจะรวมเป็นแถว "ไม่ระบุบัญชี") "ดู Boxplot บัญชีนี้" ในแต่ละแถวดูเฉพาะบัญชีนั้น
+              ส่วนลิงก์ "ดู Boxplot รวมทุกบัญชี" ที่ขึ้นก่อนกลุ่มของแต่ละ TSIC (ถ้ามีมากกว่า 1 บัญชี) จะรวมทุกบัญชีของ
+              TSIC เดียวกันเข้าด้วยกัน
             </div>
           </div>
           <button type="button" id="amr-boxplot-log-refresh-btn" class="day-type-btn">🔄 รีเฟรช</button>

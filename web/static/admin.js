@@ -670,7 +670,21 @@ function renderAmrBoxplotLogTable() {
     rowsHtml.push(
       `<tr class="amr-log-section-header"><td colspan="${AMR_LOG_COLUMN_COUNT}">${escapeHtml(amrBoxplotLogSectionLabelOf(group[0]))} (${group.length} รายการ)</td></tr>`
     );
+    let lastTsicCode = null;
     for (const r of group) {
+      // ก่อนแถวแรกของแต่ละ TSIC ในกลุ่ม แทรกลิงก์ดูกราฟ Boxplot รวมทุกบัญชีของ TSIC นั้นไว้ก่อน —
+      // ลิงก์ "ดู Boxplot บัญชีนี้" รายแถวด้านล่างกรองเหลือแค่บัญชีเดียว ต้องมีทางเลือกดูกราฟรวมด้วย
+      // เพื่อไม่ให้สับสน (ผู้ใช้ถามว่าทำไมกดดูของ 2 บัญชีคนละอันแล้วกราฟเหมือนกันเป๊ะ — ตอนนั้นลิงก์
+      // รายแถวยังไม่กรองตามบัญชีเลย)
+      if (r.business_type_code !== lastTsicCode) {
+        lastTsicCode = r.business_type_code;
+        const accountCount = group.filter((x) => x.business_type_code === r.business_type_code).length;
+        if (accountCount > 1) {
+          rowsHtml.push(
+            `<tr class="amr-log-tsic-subheader"><td colspan="${AMR_LOG_COLUMN_COUNT}">📊 <a target="_blank" rel="noopener" href="/api/forecast-boxplot?business_type_code=${encodeURIComponent(r.business_type_code)}">ดู Boxplot รวมทุกบัญชี (${accountCount} บัญชี) ของ TSIC ${escapeHtml(r.business_type_code)} นี้ →</a></td></tr>`
+          );
+        }
+      }
       const name = (amrBoxplotLogTypeByCode.get(r.business_type_code) || {}).name_th || "";
       const tsicLabel = name
         ? `${escapeHtml(name)} · ${escapeHtml(r.business_type_code)}`
@@ -685,7 +699,7 @@ function renderAmrBoxplotLogTable() {
         <td>${regLabel}</td>
         <td class="num">${r.intervals.toLocaleString("th-TH")}</td>
         <td class="num">${r.days.toLocaleString("th-TH")}</td>
-        <td><a target="_blank" rel="noopener" href="/api/forecast-boxplot?business_type_code=${encodeURIComponent(r.business_type_code)}">ดู Boxplot →</a></td>
+        <td><a target="_blank" rel="noopener" href="/api/forecast-boxplot?business_type_code=${encodeURIComponent(r.business_type_code)}&account_no=${encodeURIComponent(r.account_no || "")}">ดู Boxplot บัญชีนี้ →</a></td>
         <td><button type="button" class="amr-boxplot-log-delete-btn" data-code="${escapeHtml(r.business_type_code)}" data-account="${escapeHtml(r.account_no || "")}" data-intervals="${r.intervals}" style="border:none;background:none;color:#d03b3b;cursor:pointer;font-size:13px;">🗑️ ลบ</button></td>
       </tr>`);
     }

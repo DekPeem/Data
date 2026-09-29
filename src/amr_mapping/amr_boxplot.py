@@ -269,9 +269,11 @@ def remove_interval_rows(path: Path, business_type_code: str, account_no: str) -
     return removed
 
 
-def load_intervals_local(path: Path, business_type_code: Optional[str] = None) -> pd.DataFrame:
-    """โหลดข้อมูล interval จริงทั้งหมด (หรือกรองเฉพาะ business_type_code เดียว) คืน DataFrame ว่าง
-    ถ้ายังไม่มีไฟล์เลย/ไม่มีข้อมูลของ business_type_code นั้น"""
+def load_intervals_local(path: Path, business_type_code: Optional[str] = None, account_no: Optional[str] = None) -> pd.DataFrame:
+    """โหลดข้อมูล interval จริงทั้งหมด (หรือกรองเฉพาะ business_type_code/account_no) คืน DataFrame
+    ว่างถ้ายังไม่มีไฟล์เลย/ไม่มีข้อมูลตรงเงื่อนไข — account_no=None (ค่าเริ่มต้น) คือไม่กรองตามบัญชี
+    เลย (รวมทุกบัญชี) ส่วน account_no="" คือกรองเฉพาะกลุ่ม "ไม่ระบุบัญชี" เท่านั้น (คนละความหมายกับ
+    None — ดู remove_interval_rows ที่ใช้ธรรมเนียมเดียวกันอยู่แล้ว)"""
 
     if not path.exists():
         return pd.DataFrame(columns=_INTERVAL_FIELDNAMES)
@@ -287,6 +289,8 @@ def load_intervals_local(path: Path, business_type_code: Optional[str] = None) -
         df[col] = df[col].fillna("")
     if business_type_code:
         df = df[df["business_type_code"] == business_type_code]
+    if account_no is not None:
+        df = df[df["account_no"] == account_no]
     return df
 
 
@@ -402,11 +406,16 @@ def render_boxplot_png(
     business_type_code: str,
     business_type_name: str = "",
     shutdown_kw: float = DEFAULT_SHUTDOWN_KW,
+    subtitle: str = "",
 ) -> bytes:
     """วาด boxplot จาก DataFrame ของ interval จริง (คอลัมน์ date/hour/rate/kw) คืน PNG bytes —
     แยกเป็น panel วันทำการ (P+OP) กับวันหยุด (H) เหมือน load_boxplot.py ต้นฉบับ วันหยุดจะถูกแยก
     เป็น "วันที่เดินเครื่อง"/"วันที่หยุดเครื่อง" อีกชั้นถ้ามีข้อมูลพอทั้งสองแบบ (ดูจากค่าเฉลี่ยรายวัน
     ต่ำกว่า shutdown_kw หรือไม่) raise ValueError ถ้าไม่มีข้อมูลเลย
+
+    subtitle (ไม่บังคับ) ใส่ต่อท้ายหัวเรื่องกราฟได้ เช่น "บัญชี 0199000001 — บริษัท ทดสอบ จำกัด"
+    เวลากราฟถูกกรองเหลือเฉพาะบัญชีเดียว (ดู web/app.py api_forecast_boxplot) กันสับสนว่ากราฟที่เห็น
+    เป็นของ TSIC รวมทุกบัญชี หรือของบัญชีใดบัญชีหนึ่งโดยเฉพาะ
 
     เลือกภาษาไทย/อังกฤษของหัวเรื่องกราฟเองตามฟอนต์ที่มีอยู่จริงบนเซิร์ฟเวอร์ (กันตัวอักษรไทย
     กลายเป็นกล่องว่างถ้าเซิร์ฟเวอร์ไม่มีฟอนต์ไทยติดตั้งไว้ — ชื่อธุรกิจเป็นภาษาไทยเสมอ จึงตัดออก
@@ -424,6 +433,8 @@ def render_boxplot_png(
     thai = _setup_font()
     if thai:
         title = f"Boxplot การใช้ไฟจริง — {business_type_name} ({business_type_code})" if business_type_name else f"Boxplot การใช้ไฟจริง — {business_type_code}"
+        if subtitle:  # subtitle (บัญชี/ชื่อบริษัท) เป็นภาษาไทยเสมอ ตัดออกถ้าไม่มีฟอนต์ไทยจริง เหมือน business_type_name
+            title = f"{title}\n{subtitle}"
     else:
         title = f"Real AMR usage boxplot — business type {business_type_code}"
     L = dict(
