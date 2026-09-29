@@ -8,6 +8,7 @@ import pytest
 
 from amr_mapping.amr_boxplot import (
     append_intervals_local,
+    compute_bill_stats_from_intervals,
     load_intervals_local,
     parse_amr_file,
     parse_amr_files,
@@ -103,6 +104,21 @@ def test_append_and_load_intervals_local_round_trip(amr_report_file, tmp_path):
     # ประเภทธุรกิจอื่นต้องไม่เห็นข้อมูลนี้
     other = load_intervals_local(storage, "86101")
     assert other.empty
+
+
+def test_compute_bill_stats_from_intervals_matches_fixture(amr_report_file):
+    """amr_report_file = 5 วันเริ่มพฤหัส (พฤ/ศุกร์/เสาร์/อาทิตย์/จันทร์) → 3 วันทำการ (P peak=400kW,
+    OP peak=150kW) + 2 วันหยุด (H peak=100kW) — เช็คว่าคำนวณ peak/หน่วยไฟ/จำนวนวันตรงเป๊ะ"""
+
+    stats = compute_bill_stats_from_intervals(parse_amr_file(amr_report_file))
+
+    assert stats["P"] == {"peak": 400.0, "energy_kwh": 15600.0, "days": 3}
+    assert stats["OP"] == {"peak": 150.0, "energy_kwh": 4950.0, "days": 3}
+    assert stats["H"] == {"peak": 100.0, "energy_kwh": 4800.0, "days": 2}
+
+
+def test_compute_bill_stats_from_intervals_empty_input_returns_empty_dict():
+    assert compute_bill_stats_from_intervals([]) == {}
 
 
 def test_load_intervals_local_missing_file_returns_empty(tmp_path):

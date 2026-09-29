@@ -665,6 +665,56 @@ def test_forecast_shape_works_with_only_one_segment(client):
     assert res.data[:8] == b"\x89PNG\r\n\x1a\n"
 
 
+def test_forecast_shape_from_files_missing_files_returns_400(client):
+    res = client.post("/api/admin/forecast-shape-from-files", data={}, content_type="multipart/form-data")
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+
+def test_forecast_shape_from_files_rejects_unparseable_files(client, monkeypatch, tmp_path):
+    import io
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    res = client.post(
+        "/api/admin/forecast-shape-from-files",
+        data={"files": (io.BytesIO("<html>ไม่ใช่รายงาน AMR</html>".encode("utf-8")), "junk.xls")},
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+
+def test_forecast_shape_from_files_returns_png_with_stats_header(client, monkeypatch, tmp_path):
+    """อ่าน Peak/หน่วยไฟ/จำนวนวันจากไฟล์ AMR จริงเอง ไม่ต้องพิมพ์เอง — เหลือแค่ % ลดตอนพักเที่ยง
+    ใช้ fixture เดียวกับ _make_amr_report_html(n_days=3): 2 วันทำการ (P 9-22 = 400kW, OP = 150kW)
+    + 1 วันหยุด (H = 100kW) คำนวณตัวเลขที่ควรได้แม่นๆ ไว้เทียบ"""
+
+    import io
+    import json
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    res = client.post(
+        "/api/admin/forecast-shape-from-files",
+        data={
+            "files": (io.BytesIO(_make_amr_report_html(n_days=3).encode("utf-8")), "report.xls"),
+            "drop_pct": "43",
+        },
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 200
+    assert res.headers["Content-Type"] == "image/png"
+    assert res.data[:8] == b"\x89PNG\r\n\x1a\n"
+
+    stats = json.loads(res.headers["X-Forecast-Stats"])
+    assert stats["P"] == {"peak": 400.0, "energy_kwh": 10400.0, "days": 2}
+    assert stats["OP"] == {"peak": 150.0, "energy_kwh": 3300.0, "days": 2}
+    assert stats["H"] == {"peak": 100.0, "energy_kwh": 2400.0, "days": 1}
+
+    # ไฟล์ที่แนบมาใช้คำนวณครั้งเดียวแล้วทิ้งจริง ไม่เก็บสะสมไว้เหมือน amr-boxplot/upload
+    assert not (tmp_path / "_amr_boxplot_uploads").exists() or not any((tmp_path / "_amr_boxplot_uploads").iterdir())
+    assert not (tmp_path / "amr_boxplot_intervals_local.csv").exists()
+
+
 def _make_amr_report_html(n_days: int = 3) -> str:
     """สร้างไฟล์รายงาน AMR จำลอง (รูปแบบเดียวกับ tests/test_amr_boxplot.py) — ใช้ทดสอบ endpoint
     อัปโหลดโดยไม่ต้องมีไฟล์ AMR จริง"""

@@ -142,6 +142,29 @@ def load_intervals_local(path: Path, business_type_code: Optional[str] = None) -
     return df
 
 
+def compute_bill_stats_from_intervals(intervals: List[ParsedInterval]) -> Dict[str, dict]:
+    """สรุป Peak (kW) / หน่วยไฟ (kWh) / จำนวนวัน จาก interval จริงที่อ่านมาแล้ว แยกตาม rate
+    (P/OP/H) — ใช้ป้อนให้ forecast_shape.forecast_shape_png แทนการให้แอดมินพิมพ์ตัวเลขจากบิลเอง
+    (ดู web/app.py api_forecast_shape_from_files) แต่ละ interval คือช่วง 15 นาที (kw คือกำลังไฟฟ้า
+    เฉลี่ยของช่วงนั้น ไม่ใช่หน่วยไฟสะสม) จึงต้องคูณ 0.25 ชม. ก่อนรวมเป็นหน่วยไฟ (kWh) ไม่ใช่บวก kw
+    ตรงๆ — คืนเฉพาะ rate ที่มีข้อมูลจริงเท่านั้น (เช่น ไฟล์ที่แนบมาไม่มีวันหยุดเลย จะไม่มีคีย์ "H")"""
+
+    by_rate: Dict[str, List[ParsedInterval]] = {}
+    for iv in intervals:
+        if iv.rate not in ("P", "OP", "H"):
+            continue
+        by_rate.setdefault(iv.rate, []).append(iv)
+
+    out: Dict[str, dict] = {}
+    for rate, ivs in by_rate.items():
+        out[rate] = {
+            "peak": max(iv.kw for iv in ivs),
+            "energy_kwh": sum(iv.kw for iv in ivs) * 0.25,
+            "days": len({iv.date for iv in ivs}),
+        }
+    return out
+
+
 def summarize_available(path: Path) -> Dict[str, dict]:
     """สรุปว่าแต่ละ business_type_code มีข้อมูล AMR จริงสะสมไว้เท่าไหร่แล้ว (จำนวน interval +
     จำนวนวันที่ต่างกัน) — ใช้แสดงในหน้า Admin"""

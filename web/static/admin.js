@@ -709,54 +709,74 @@ amrBoxplotViewBtn.addEventListener("click", async () => {
   }
 });
 
-// ── พยากรณ์เส้นโค้งการใช้ไฟ (P/OP/H) จาก Peak/หน่วยไฟบนบิลเท่านั้น (ไม่ต้องมี AMR จริง) — ย้ายมา
-// จากหน้าแรก (เดิมอยู่ index.html/app.js) เพราะคล้าย Boxplot ด้านบนตรงที่ไม่ต้องผูกกับการค้นหา
-// บริษัท/TSIC ใดๆ เลย จึงเหมาะเป็นเครื่องมือของ Admin มากกว่า — ดู
-// src/amr_mapping/forecast_shape.py ฝั่ง backend เอาเลขที่กรอกใน panel นี้ยิงไปที่
-// GET /api/forecast-shape ตรงๆ คืนรูปภาพ PNG ตรงๆ ไม่ใช่ JSON จึงต้อง fetch เป็น blob แล้วสร้าง
-// object URL แทนการตั้ง <img src> ตรงๆ (กันกรณี error ตอบกลับมาเป็น JSON แทน — ต้องเช็ค
-// response.ok ก่อนตัดสินใจว่าจะแสดงรูปหรือข้อความ error)
+// ── พยากรณ์เส้นโค้งการใช้ไฟ จากไฟล์ AMR จริงบนบิล (ไม่ต้องพิมพ์ Peak/หน่วยไฟ/จำนวนวันเอง — อ่านจาก
+// ไฟล์ที่แนบมาให้อัตโนมัติ เหลือแค่ % ลดตอนพักเที่ยง) — ย้ายมาจากหน้าแรก (เดิมอยู่ index.html/
+// app.js เป็นฟอร์มกรอกตัวเลขเอง) เพราะคล้าย Boxplot ด้านบนตรงที่ไม่ต้องผูกกับการค้นหาบริษัท/TSIC
+// ใดๆ เลย จึงเหมาะเป็นเครื่องมือของ Admin มากกว่า — ดู POST /api/admin/forecast-shape-from-files
+// (web/app.py) ฝั่ง backend อ่านไฟล์ที่แนบมาด้วย amr_boxplot.parse_amr_files + คำนวณ Peak/หน่วยไฟ/
+// จำนวนวันของแต่ละช่วง P/OP/H เอง (amr_boxplot.compute_bill_stats_from_intervals) แล้วค่อยยิงเข้า
+// forecast_shape.forecast_shape_png ตัวเดิม — คืนรูปภาพ PNG ตรงๆ ไม่ใช่ JSON จึงต้อง fetch เป็น
+// blob แล้วสร้าง object URL แทนการตั้ง <img src> ตรงๆ (กันกรณี error ตอบกลับมาเป็น JSON แทน —
+// ต้องเช็ค response.ok ก่อนตัดสินใจว่าจะแสดงรูปหรือข้อความ error) ตัวเลขที่ระบบอ่านได้จริงจากไฟล์
+// (Peak/หน่วยไฟ/จำนวนวันของแต่ละช่วง) ส่งกลับมาทาง response header X-Forecast-Stats (JSON) เอาไว้
+// โชว์ให้แอดมินตรวจสอบว่าอ่านไฟล์ถูกไหม ไม่ใช่กล่องดำ
+const forecastFilesInput = document.getElementById("fc-files");
+const forecastDropPct = document.getElementById("fc-drop-pct");
 const forecastBtn = document.getElementById("forecast-shape-btn");
 const forecastStatus = document.getElementById("forecast-shape-status");
 const forecastImg = document.getElementById("forecast-shape-img");
 
 let forecastImgObjectUrl = null; // ต้อง revoke ของเก่าทิ้งทุกครั้งก่อนสร้างใหม่ กัน memory leak
 
-function forecastFieldValue(id) {
-  return document.getElementById(id).value.trim();
+const FORECAST_RATE_LABELS = { P: "P (Peak)", OP: "OP (Off-Peak)", H: "H (Holiday)" };
+
+function formatForecastStats(rawHeader) {
+  let stats;
+  try {
+    stats = JSON.parse(rawHeader);
+  } catch {
+    return "";
+  }
+  const parts = Object.entries(FORECAST_RATE_LABELS)
+    .filter(([code]) => stats[code])
+    .map(([code, label]) => {
+      const s = stats[code];
+      return `${label}: Peak ${s.peak.toLocaleString("th-TH", { maximumFractionDigits: 1 })} kW · ` +
+        `${s.energy_kwh.toLocaleString("th-TH", { maximumFractionDigits: 0 })} kWh · ${s.days} วัน`;
+    });
+  return parts.length ? `อ่านจากไฟล์ได้: ${parts.join(" — ")}` : "";
 }
 
 forecastBtn.addEventListener("click", async () => {
-  const params = new URLSearchParams();
-  const fields = {
-    peak_p: "fc-peak-p", energy_p: "fc-energy-p", days_p: "fc-days-p",
-    peak_op: "fc-peak-op", energy_op: "fc-energy-op", days_op: "fc-days-op",
-    peak_h: "fc-peak-h", energy_h: "fc-energy-h", days_h: "fc-days-h",
-    drop_pct: "fc-drop-pct",
-  };
-  for (const [key, id] of Object.entries(fields)) {
-    const v = forecastFieldValue(id);
-    if (v !== "") params.set(key, v);
+  if (!forecastFilesInput.files.length) {
+    forecastStatus.innerHTML = `<span style="color:#d03b3b;">กรุณาแนบไฟล์ AMR อย่างน้อย 1 ไฟล์</span>`;
+    return;
   }
 
+  const formData = new FormData();
+  for (const f of forecastFilesInput.files) formData.append("files", f);
+  const dropPct = forecastDropPct.value.trim();
+  if (dropPct !== "") formData.append("drop_pct", dropPct);
+
   forecastBtn.disabled = true;
-  forecastStatus.textContent = "⏳ กำลังพยากรณ์...";
+  forecastStatus.textContent = "⏳ กำลังอ่านไฟล์และพยากรณ์...";
   forecastImg.style.display = "none";
 
   try {
-    const res = await fetch(`/api/forecast-shape?${params.toString()}`);
+    const res = await fetch("/api/admin/forecast-shape-from-files", { method: "POST", body: formData });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       forecastStatus.innerHTML = `<span style="color:#d03b3b;">${data.message || "เกิดข้อผิดพลาด"}</span>`;
       return;
     }
 
+    const statsHeader = res.headers.get("X-Forecast-Stats");
     const blob = await res.blob();
     if (forecastImgObjectUrl) URL.revokeObjectURL(forecastImgObjectUrl);
     forecastImgObjectUrl = URL.createObjectURL(blob);
     forecastImg.src = forecastImgObjectUrl;
     forecastImg.style.display = "block";
-    forecastStatus.textContent = "";
+    forecastStatus.textContent = statsHeader ? formatForecastStats(statsHeader) : "";
   } catch (err) {
     forecastStatus.innerHTML = `<span style="color:#d03b3b;">เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ</span>`;
     console.error(err);

@@ -14,7 +14,9 @@ from __future__ import annotations
 import dataclasses
 import hmac
 import io
+import json
 import os
+import shutil
 import sys
 import threading
 import uuid
@@ -592,6 +594,78 @@ def api_forecast_shape():
         return jsonify({"error": "invalid_request", "message": str(e)}), 400
 
     return app.response_class(png_bytes, mimetype="image/png")
+
+
+@app.route("/api/admin/forecast-shape-from-files", methods=["POST"])
+def api_forecast_shape_from_files():
+    """เหมือน /api/forecast-shape ด้านบนทุกประการ (พยากรณ์รูปทรงเส้นโค้งจาก Peak/หน่วยไฟ/จำนวนวัน
+    ของแต่ละช่วง P/OP/H) ต่างแค่ตรงที่ไม่ต้องให้แอดมินพิมพ์ Peak/หน่วยไฟ/จำนวนวันเองเลย — แนบไฟล์
+    AMR จริง (รายงาน 15 นาทีจาก PEA) มาแทน แล้วให้ระบบอ่าน/คำนวณตัวเลขเหล่านั้นให้อัตโนมัติ (ดู
+    amr_boxplot.compute_bill_stats_from_intervals) เหลือแค่ % ลดตอนพักเที่ยงที่ยังต้องกรอกเอง —
+    ไม่เกี่ยวกับ/ไม่ต้องมีประเภทธุรกิจ (TSIC) ใดๆ เหมือน /api/forecast-shape เดิม (ต่างจาก
+    /api/admin/amr-boxplot/upload ตรงที่ไฟล์ที่แนบมาที่นี่ใช้คำนวณครั้งเดียวแล้วทิ้ง ไม่ได้เก็บสะสม
+    ไว้เป็นข้อมูลอ้างอิงของ TSIC ไหนเลย)"""
+
+    from amr_mapping.amr_boxplot import compute_bill_stats_from_intervals, parse_amr_files
+    from amr_mapping.forecast_shape import forecast_shape_png
+
+    files = request.files.getlist("files")
+    if not files:
+        return jsonify({"error": "invalid_request", "message": "กรุณาแนบไฟล์ AMR อย่างน้อย 1 ไฟล์"}), 400
+
+    try:
+        drop_pct = _parse_optional_float(request.form.get("drop_pct"), "% ลดตอนพักเที่ยง")
+    except ValueError as e:
+        return jsonify({"error": "invalid_request", "message": str(e)}), 400
+
+    upload_id = uuid.uuid4().hex
+    upload_dir = DEFAULT_DATA_DIR / "_amr_boxplot_uploads" / upload_id
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        try:
+            file_paths = _save_uploaded_amr_boxplot_files(files, upload_dir)
+        except ValueError as e:
+            return jsonify({"error": "invalid_request", "message": str(e)}), 400
+
+        if not file_paths:
+            return jsonify(
+                {"error": "invalid_request", "message": "ไม่พบไฟล์ AMR ที่รองรับ (.xls/.xlsx/.html/.htm) ในไฟล์ที่แนบมาเลย"}
+            ), 400
+
+        intervals = parse_amr_files(file_paths)
+    finally:
+        # ต่างจาก /api/admin/amr-boxplot/upload ตรงที่ไฟล์ที่แนบมาที่นี่ใช้แค่ครั้งเดียวเพื่อคำนวณ
+        # ตัวเลขแล้วทิ้ง ไม่ได้เก็บสะสมไว้เป็นข้อมูลอ้างอิงของ TSIC ไหนเลย จึงลบไฟล์ชั่วคราวทิ้งทันที
+        shutil.rmtree(upload_dir, ignore_errors=True)
+
+    if not intervals:
+        return jsonify(
+            {"error": "invalid_request", "message": "อ่านไฟล์ที่แนบมาไม่ได้เลย (รูปแบบอาจไม่ตรงกับรายงาน AMR ของ PEA)"}
+        ), 400
+
+    stats = compute_bill_stats_from_intervals(intervals)
+    if not stats:
+        return jsonify({"error": "invalid_request", "message": "ไม่พบข้อมูล P/OP/H ที่ใช้ได้เลยในไฟล์ที่แนบมา"}), 400
+
+    try:
+        png_bytes = forecast_shape_png(
+            peak_p=stats.get("P", {}).get("peak"),
+            energy_p=stats.get("P", {}).get("energy_kwh"),
+            days_p=stats.get("P", {}).get("days"),
+            peak_op=stats.get("OP", {}).get("peak"),
+            energy_op=stats.get("OP", {}).get("energy_kwh"),
+            days_op=stats.get("OP", {}).get("days"),
+            peak_h=stats.get("H", {}).get("peak"),
+            energy_h=stats.get("H", {}).get("energy_kwh"),
+            days_h=stats.get("H", {}).get("days"),
+            drop_pct=drop_pct if drop_pct is not None else 43.0,
+        )
+    except ValueError as e:
+        return jsonify({"error": "invalid_request", "message": str(e)}), 400
+
+    resp = app.response_class(png_bytes, mimetype="image/png")
+    resp.headers["X-Forecast-Stats"] = json.dumps(stats)
+    return resp
 
 
 # ── Boxplot จากข้อมูล AMR จริงที่แอดมินอัปโหลด แยกเก็บตามประเภทธุรกิจ (TSIC) — ดู
