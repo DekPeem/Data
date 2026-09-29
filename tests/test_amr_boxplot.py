@@ -198,6 +198,56 @@ def _make_amr_monthly_kwh_xlsx(
     return path
 
 
+def _make_amr_monthly_kw_xlsx(
+    tmp_path, start_date: dt.datetime, n_days: int, account_no: str = "", company_name: str = ""
+) -> Path:
+    """สร้างไฟล์ .xlsx จริงจำลองรายงาน "กิโลวัตต์รายเดือน" ของ PEA (รูปแบบไฟล์ AMR จริงแบบที่ 4 ที่
+    เจอ — ชีตเดียวเหมือน _make_amr_monthly_kwh_xlsx แต่ชื่อรายงานไม่มีคำว่า "ชั่วโมง" และหน่วยข้อมูล
+    เป็น kW เฉลี่ยตรงๆ อยู่แล้ว ไม่ต้องแปลงหน่วย — คอลัมน์เป็นคู่ a1/a2,b1/b2,c1/c2 แบบเดียวกับรายงาน
+    "กิโลวัตต์แบบช่วงเวลา" แต่มีค่าจริงแค่คอลัมน์แรกของคู่ (ดู _read_one_monthly_kw)"""
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "kW0000000000000101202612000"
+
+    ws.append(["รายงานข้อมูลกิโลวัตต์รายเดือน", None, None, None, None, None, None])
+    ws.append(["[ประจำเดือน : มกราคม 2569]", None, None, None, None, None, None])
+    ws.append(["บัญชีผู้ใช้ไฟ :", f"{account_no}\xa0", "ชื่อผู้ใช้ไฟ :", company_name, None, None, None])
+    ws.append(["หมายเลขมิเตอร์ :", "METER123\xa0", "Tariff :", "TOU", None, None, None])
+    ws.append(["CT Ratio :", "400:5 A.\xa0", "VT Ratio :", "22000:110 V.", None, None, None])
+    ws.append([None, "RATE A", None, "RATE B", None, "RATE C", None])
+
+    d = start_date
+    for _ in range(n_days):
+        for interval_i in range(96):
+            minutes = interval_i * 15
+            t = d + dt.timedelta(minutes=minutes) + dt.timedelta(minutes=15)
+            hour = (minutes // 60) % 24
+            if d.weekday() >= 5:
+                col, kw = 5, 100.0  # RATE C (H)
+            elif 9 <= hour < 22:
+                col, kw = 1, 400.0  # RATE A (P)
+            else:
+                col, kw = 3, 150.0  # RATE B (OP)
+            row = [None] * 6
+            row[col - 1] = kw
+            ws.append([f"\xa0{t.strftime('%d/%m/%Y %H.%M')}", *row])
+        d += dt.timedelta(days=1)
+
+    ws.append(["กิโลวัตต์ต่ำสุด", 100.0, "01/01/2026 00.15", 150.0, "01/01/2026 00.15", 100.0, "01/01/2026 00.15"])
+    ws.append(["กิโลวัตต์เฉลี่ย", 400.0, None, 150.0, None, 100.0, None])
+    ws.append(["กิโลวัตต์สูงสุด", 400.0, "01/01/2026 09.15", 150.0, "01/01/2026 00.15", 100.0, "01/01/2026 00.15"])
+    ws.append(["***หมายเหตุ***", None, None, None, None, None, None])
+    ws.append([None, None, None, None, None, None, None])
+    ws.append([f"พิมพ์โดย : {account_no}", None, None, None, None, None, "วันที่พิมพ์ : 01/01/2026 00:00"])
+
+    path = tmp_path / "report_monthly_kw.xlsx"
+    wb.save(path)
+    return path
+
+
 def test_parse_amr_file_extracts_all_intervals(amr_report_file):
     intervals = parse_amr_file(amr_report_file)
     assert len(intervals) == 5 * 96  # 5 วัน x 96 จุดต่อวัน ไม่มีจุดไหนถูกทิ้ง
@@ -543,3 +593,27 @@ def test_extract_customer_info_supports_monthly_kwh_format(tmp_path):
     account_no, company_name = extract_customer_info(path)
     assert account_no == "0199000004"
     assert company_name == "บริษัท สี่ จำกัด"
+
+
+def test_parse_amr_file_supports_monthly_kw_format_without_unit_conversion(tmp_path):
+    """ไฟล์ .xlsx จริงรูปแบบที่ 4 "กิโลวัตต์รายเดือน" (ไม่มีคำว่า "ชั่วโมง" ต่างจากรูปแบบที่ 3) —
+    หน่วยเป็น kW เฉลี่ยตรงๆ อยู่แล้ว ต้องไม่ถูกแปลง ×4 ผิดเหมือนรูปแบบ kWh"""
+
+    path = _make_amr_monthly_kw_xlsx(tmp_path, dt.datetime(2026, 1, 1), n_days=5)
+    intervals = parse_amr_file(path)
+    assert len(intervals) == 5 * 96
+    assert {i.rate for i in intervals} == {"P", "OP", "H"}
+
+    by_rate = {i.rate: i.kw for i in intervals}
+    assert by_rate["P"] == pytest.approx(400.0)
+    assert by_rate["OP"] == pytest.approx(150.0)
+    assert by_rate["H"] == pytest.approx(100.0)
+
+
+def test_extract_customer_info_supports_monthly_kw_format(tmp_path):
+    path = _make_amr_monthly_kw_xlsx(
+        tmp_path, dt.datetime(2026, 1, 1), n_days=1, account_no="0199000005", company_name="บริษัท ห้า จำกัด"
+    )
+    account_no, company_name = extract_customer_info(path)
+    assert account_no == "0199000005"
+    assert company_name == "บริษัท ห้า จำกัด"

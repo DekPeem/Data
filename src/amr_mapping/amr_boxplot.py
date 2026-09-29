@@ -82,6 +82,36 @@ def _load_report_tables(path: Union[str, Path]) -> List[pd.DataFrame]:
     return pd.read_html(io.StringIO(html))
 
 
+def _sheet_contains_text(df: pd.DataFrame, text: str, max_rows: int = 15) -> bool:
+    """เช็คว่ามีเซลล์ไหนในชีต (แค่ max_rows แถวบนสุด — หัวรายงานอยู่ไม่กี่แถวบนสุดเสมอ ไม่ต้องไล่
+    ทั้งชีตซึ่งอาจยาวเป็นพันแถว) มีข้อความ text อยู่บ้าง ใช้แยกแยะว่าไฟล์ .xlsx ชีตเดียวที่โหลดมาเป็น
+    รายงานแบบไหน (ดู _read_one) จากชื่อรายงานที่พิมพ์ไว้ในไฟล์เอง แม่นยำกว่าเดาจากจำนวนคอลัมน์"""
+
+    for _, row in df.head(max_rows).iterrows():
+        for cell in row:
+            if pd.notna(cell) and text in str(cell):
+                return True
+    return False
+
+
+def _read_one_monthly_kw(sheet: pd.DataFrame) -> pd.DataFrame:
+    """แกะตารางข้อมูลจากไฟล์รายงาน "กิโลวัตต์รายเดือน" ของ PEA (.xlsx จริง ชีตเดียว รวม header/
+    ข้อมูล/ท้ายรายงานปนกัน เหมือน _read_one_monthly_kwh แต่คนละรายงาน — ไม่มีคำว่า "ชั่วโมง" ในชื่อ
+    รายงาน) หน่วยข้อมูลเป็น kW เฉลี่ยตรงๆ อยู่แล้ว ไม่ต้องแปลงหน่วยเหมือนรายงาน "กิโลวัตต์ชั่วโมง
+    รายเดือน" (ยืนยันจากแถวสรุป "กิโลวัตต์ต่ำสุด/เฉลี่ย/สูงสุด" ท้ายตารางที่คำนวณตรงจากค่าดิบในไฟล์
+    ตัวอย่างจริงพอดีเป๊ะ ไม่ใช่ผลรวมพลังงานแบบรายงานกิโลวัตต์ชั่วโมง) คอลัมน์เป็นคู่เหมือนรายงาน
+    "กิโลวัตต์แบบช่วงเวลา" (ts,a1,a2,b1,b2,c1,c2) แต่มีค่าจริงแค่คอลัมน์แรกของแต่ละคู่ (a1/b1/c1)
+    คอลัมน์คู่ (a2/b2/c2) ว่างเสมอ — ไม่กระทบผลลัพธ์เพราะ parse_amr_file อ่านแค่ a1/b1/c1 อยู่แล้ว"""
+
+    d = sheet.iloc[:, :7].copy()
+    d.columns = ["ts", "a1", "a2", "b1", "b2", "c1", "c2"]
+    d["ts"] = d["ts"].astype(str).str.replace("\xa0", "", regex=False).str.strip()
+    d = d[d["ts"].str.match(r"\d\d/\d\d/\d{4} \d\d\.\d\d")].copy()
+    for c in ("a1", "a2", "b1", "b2", "c1", "c2"):
+        d[c] = pd.to_numeric(d[c], errors="coerce")
+    return d
+
+
 def _read_one_monthly_kwh(sheet: pd.DataFrame) -> pd.DataFrame:
     """แกะตารางข้อมูลจากไฟล์รายงาน "กิโลวัตต์ชั่วโมงรายเดือน" ของ PEA (.xlsx จริง ชีตเดียว รวม
     header/ข้อมูล/ท้ายรายงานปนกันหมด ไม่แยก 3 ชีต/ตารางแบบรายงาน "กิโลวัตต์แบบช่วงเวลา" ที่รองรับอยู่
@@ -111,12 +141,15 @@ def _read_one(tables: List[pd.DataFrame]) -> pd.DataFrame:
     """แกะตารางข้อมูลจริงจากตารางทั้งหมดของไฟล์รายงาน 1 ไฟล์ (จาก _load_report_tables) คืน
     DataFrame คอลัมน์ ts,a1,a2,b1,b2,c1,c2 มาตรฐานเดียวกันเสมอ (kW เฉลี่ยของช่วง 15 นาที) ไม่ว่าไฟล์
     ต้นทางจะเป็นรายงานแบบไหน — ไฟล์ที่มีแค่ 1 ชีต/ตาราง (รวม header/ข้อมูล/ท้ายรายงานไว้ด้วยกันหมด)
-    คือรายงาน "กิโลวัตต์ชั่วโมงรายเดือน" (ดู _read_one_monthly_kwh) ส่วนที่เหลือ (HTML-in-.xls เดิม
-    หรือ .xlsx จริง 3 ชีตแยกกัน) คือรายงาน "กิโลวัตต์แบบช่วงเวลา" แบบเดิม — เหมือน load_boxplot.py
-    ต้นฉบับทุกประการ"""
+    คือรายงานรายเดือนแบบใดแบบหนึ่ง แยกอีกชั้นจากชื่อรายงานที่พิมพ์ไว้ในไฟล์เอง: "กิโลวัตต์ชั่วโมง
+    รายเดือน" (หน่วย kWh ต้องแปลง — ดู _read_one_monthly_kwh) หรือ "กิโลวัตต์รายเดือน" เฉยๆ (หน่วย
+    kW ตรงอยู่แล้ว — ดู _read_one_monthly_kw) ส่วนที่เหลือ (HTML-in-.xls เดิม หรือ .xlsx จริง 3 ชีต
+    แยกกัน) คือรายงาน "กิโลวัตต์แบบช่วงเวลา" แบบเดิม — เหมือน load_boxplot.py ต้นฉบับทุกประการ"""
 
     if len(tables) == 1:
-        return _read_one_monthly_kwh(tables[0])
+        if _sheet_contains_text(tables[0], "กิโลวัตต์ชั่วโมงรายเดือน"):
+            return _read_one_monthly_kwh(tables[0])
+        return _read_one_monthly_kw(tables[0])
 
     d = tables[1].iloc[1:].copy()  # table 0 = ข้อมูลหัวรายงาน, 1 = ข้อมูลจริง, 2 = ท้ายรายงาน
     d.columns = ["ts", "a1", "a2", "b1", "b2", "c1", "c2"]
