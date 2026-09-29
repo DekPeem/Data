@@ -836,6 +836,45 @@ def test_amr_boxplot_upload_with_account_no_and_company_name(client, monkeypatch
     assert by_account[0]["intervals"] == 96
 
 
+def test_amr_boxplot_delete_data_requires_business_type_code(client):
+    res = client.delete("/api/admin/amr-boxplot/data")
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+
+def test_amr_boxplot_delete_data_removes_only_matching_rows(client, monkeypatch, tmp_path):
+    import io
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+
+    client.post(
+        "/api/admin/amr-boxplot/upload",
+        data={
+            "business_type_code": "55101",
+            "files": (io.BytesIO(_make_amr_report_html(n_days=1).encode("utf-8")), "report.xls"),
+        },
+        content_type="multipart/form-data",
+    )
+    client.post(
+        "/api/admin/amr-boxplot/upload",
+        data={
+            "business_type_code": "55101",
+            "account_no": "A1",
+            "files": (io.BytesIO(_make_amr_report_html(n_days=1).encode("utf-8")), "report.xls"),
+        },
+        content_type="multipart/form-data",
+    )
+
+    # ลบเฉพาะกลุ่ม "ไม่ระบุบัญชี" (account_no ว่าง) — บัญชี A1 ต้องไม่โดนลบ
+    res = client.delete("/api/admin/amr-boxplot/data", query_string={"business_type_code": "55101"})
+    assert res.status_code == 200
+    assert res.get_json()["removed"] == 96
+
+    by_account = client.get("/api/admin/amr-boxplot/status-by-account").get_json()
+    assert len(by_account) == 1
+    assert by_account[0]["account_no"] == "A1"
+
+
 def test_amr_boxplot_upload_rejects_zip_with_path_traversal(client, monkeypatch, tmp_path):
     """ป้องกัน zip slip — ชื่อไฟล์ในซิปที่มี "../" ปนอยู่ต้องถูกตัด path ย่อยทิ้งก่อนเขียนไฟล์เสมอ
     ไม่ยอมให้เขียนออกไปนอก upload_dir เด็ดขาด (เหมือนเทสต์เดิมของโหมดนำเข้า AMR ก่อนถูกลบไป)"""

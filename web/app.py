@@ -800,6 +800,26 @@ def api_amr_boxplot_status_by_account():
     return jsonify(summarize_available_by_account(storage_path))
 
 
+@app.route("/api/admin/amr-boxplot/data", methods=["DELETE"])
+def api_amr_boxplot_delete_data():
+    """ลบข้อมูล AMR จริงของ (TSIC, เลขบัญชี) คู่หนึ่งทิ้งถาวร — ใช้ตอนอยากล้างข้อมูลเก่าที่ไม่มีเลข
+    บัญชีติดมา (จากก่อนเพิ่มฟีเจอร์ account tracking) หรือข้อมูลที่อัปโหลดผิด ไม่มีทาง undo ได้เลย
+    (เขียนทับไฟล์ตรงๆ) ฝั่งหน้าเว็บต้อง confirm() กับผู้ใช้ก่อนเรียก endpoint นี้เสมอ — account_no
+    ไม่ส่งมา/ส่งเป็นค่าว่างหมายถึงลบกลุ่ม "ไม่ระบุบัญชี" ของ TSIC นั้น ไม่ใช่ลบทุกบัญชีของ TSIC นั้น
+    ทั้งหมด (ต้องลบทีละบัญชีเอง ป้องกันลบเกินโดยไม่ตั้งใจ)"""
+
+    from amr_mapping.amr_boxplot import remove_interval_rows
+
+    business_type_code = (request.args.get("business_type_code") or "").strip()
+    account_no = request.args.get("account_no") or ""
+    if not business_type_code:
+        return jsonify({"error": "invalid_request", "message": "กรุณาระบุประเภทธุรกิจ (TSIC)"}), 400
+
+    storage_path = DEFAULT_DATA_DIR / "amr_boxplot_intervals_local.csv"
+    removed = remove_interval_rows(storage_path, business_type_code, account_no)
+    return jsonify({"removed": removed})
+
+
 @app.route("/api/forecast-boxplot")
 def api_forecast_boxplot():
     """คืนกราฟ Boxplot (PNG) จากข้อมูล AMR จริงที่สะสมไว้สำหรับประเภทธุรกิจ (TSIC) หนึ่งรายการ —

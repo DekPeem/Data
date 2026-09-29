@@ -13,6 +13,7 @@ from amr_mapping.amr_boxplot import (
     load_intervals_local,
     parse_amr_file,
     parse_amr_files,
+    remove_interval_rows,
     render_boxplot_png,
     summarize_available,
     summarize_available_by_account,
@@ -207,6 +208,50 @@ def test_summarize_available_by_account_groups_per_tsic_and_account(amr_report_f
 
 def test_summarize_available_by_account_missing_file_returns_empty_list(tmp_path):
     assert summarize_available_by_account(tmp_path / "nope.csv") == []
+
+
+def test_remove_interval_rows_deletes_only_matching_tsic_and_account(amr_report_file, tmp_path):
+    storage = tmp_path / "storage.csv"
+    intervals = parse_amr_file(amr_report_file)  # 5*96 = 480 intervals
+
+    append_intervals_local("55101", intervals[:100], storage, account_no="A1")
+    append_intervals_local("55101", intervals[100:200], storage, account_no="A2")
+    append_intervals_local("55101", intervals[200:250], storage)  # ไม่ระบุบัญชี
+    append_intervals_local("86101", intervals[250:300], storage, account_no="A1")  # คนละ TSIC เลขบัญชีชนกัน
+
+    removed = remove_interval_rows(storage, "55101", "A1")
+    assert removed == 100
+
+    rows = {(r["business_type_code"], r["account_no"]): r for r in summarize_available_by_account(storage)}
+    assert ("55101", "A1") not in rows  # ลบไปแล้ว
+    assert rows[("55101", "A2")]["intervals"] == 100  # บัญชีอื่นของ TSIC เดียวกันไม่โดนลบ
+    assert rows[("55101", "")]["intervals"] == 50  # กลุ่มไม่ระบุบัญชีไม่โดนลบ
+    assert rows[("86101", "A1")]["intervals"] == 50  # คนละ TSIC ไม่โดนลบแม้เลขบัญชีจะชนกัน
+
+
+def test_remove_interval_rows_empty_account_no_deletes_unspecified_group_only(amr_report_file, tmp_path):
+    storage = tmp_path / "storage.csv"
+    intervals = parse_amr_file(amr_report_file)
+
+    append_intervals_local("55101", intervals[:100], storage, account_no="A1")
+    append_intervals_local("55101", intervals[100:150], storage)  # ไม่ระบุบัญชี
+
+    removed = remove_interval_rows(storage, "55101", "")
+    assert removed == 50
+
+    rows = {(r["business_type_code"], r["account_no"]): r for r in summarize_available_by_account(storage)}
+    assert ("55101", "") not in rows
+    assert rows[("55101", "A1")]["intervals"] == 100
+
+
+def test_remove_interval_rows_no_match_returns_zero(amr_report_file, tmp_path):
+    storage = tmp_path / "storage.csv"
+    append_intervals_local("55101", parse_amr_file(amr_report_file), storage, account_no="A1")
+    assert remove_interval_rows(storage, "86101", "A1") == 0
+
+
+def test_remove_interval_rows_missing_file_returns_zero(tmp_path):
+    assert remove_interval_rows(tmp_path / "nope.csv", "55101", "") == 0
 
 
 def test_summarize_available_reports_per_business_type(amr_report_file, tmp_path):

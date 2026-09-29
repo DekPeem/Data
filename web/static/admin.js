@@ -581,10 +581,10 @@ async function loadAmrBoxplotLog() {
     amrBoxplotLogStatus.textContent = "";
     amrBoxplotLogTable.innerHTML = `
       <table class="amr-log-table">
-        <thead><tr><th>ประเภทธุรกิจ (TSIC)</th><th>บริษัท</th><th>เลขบัญชี</th><th>เลขนิติบุคคล</th><th class="num">จำนวนจุดข้อมูล</th><th class="num">จำนวนวัน</th><th></th></tr></thead>
+        <thead><tr><th>ประเภทธุรกิจ (TSIC)</th><th>บริษัท</th><th>เลขบัญชี</th><th>เลขนิติบุคคล</th><th class="num">จำนวนจุดข้อมูล</th><th class="num">จำนวนวัน</th><th></th><th></th></tr></thead>
         <tbody>
           ${sorted
-            .map((r) => {
+            .map((r, i) => {
               const name = nameByCode.get(r.business_type_code) || "";
               const tsicLabel = name
                 ? `${escapeHtml(name)} · ${escapeHtml(r.business_type_code)}`
@@ -600,11 +600,42 @@ async function loadAmrBoxplotLog() {
                 <td class="num">${r.intervals.toLocaleString("th-TH")}</td>
                 <td class="num">${r.days.toLocaleString("th-TH")}</td>
                 <td><a target="_blank" rel="noopener" href="/api/forecast-boxplot?business_type_code=${encodeURIComponent(r.business_type_code)}">ดู Boxplot →</a></td>
+                <td><button type="button" class="amr-boxplot-log-delete-btn" data-idx="${i}" style="border:none;background:none;color:#d03b3b;cursor:pointer;font-size:13px;">🗑️ ลบ</button></td>
               </tr>`;
             })
             .join("")}
         </tbody>
       </table>`;
+
+    // ปุ่มลบต่อแถว — ลบข้อมูลจริงถาวร (เขียนทับไฟล์ CSV ตรงๆ ไม่มีทาง undo) ต้อง confirm() กับ
+    // ผู้ใช้ก่อนเสมอ บอกให้ชัดว่ากำลังจะลบอะไร (TSIC + บัญชี + จำนวนจุดข้อมูล) กันกดพลาด
+    amrBoxplotLogTable.querySelectorAll(".amr-boxplot-log-delete-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const r = sorted[Number(btn.dataset.idx)];
+        const accountDesc = r.account_no ? `บัญชี ${r.account_no}` : "กลุ่ม \"ไม่ระบุบัญชี\"";
+        const confirmed = confirm(
+          `ลบข้อมูล AMR จริงของ TSIC ${r.business_type_code} (${accountDesc}) ทั้งหมด ${r.intervals.toLocaleString("th-TH")} จุด ถาวรเลยหรือไม่?\n\nกู้คืนไม่ได้`
+        );
+        if (!confirmed) return;
+
+        btn.disabled = true;
+        try {
+          const params = new URLSearchParams({ business_type_code: r.business_type_code, account_no: r.account_no || "" });
+          const res = await fetch(`/api/admin/amr-boxplot/data?${params.toString()}`, { method: "DELETE" });
+          if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            alert(data.message || "ลบไม่สำเร็จ");
+            btn.disabled = false;
+            return;
+          }
+          loadAmrBoxplotLog();
+        } catch (err) {
+          alert("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ");
+          console.error(err);
+          btn.disabled = false;
+        }
+      });
+    });
   } catch (err) {
     amrBoxplotLogStatus.innerHTML = `<span style="color:#d03b3b;">โหลดไม่สำเร็จ</span>`;
     console.error(err);

@@ -173,6 +173,39 @@ def append_intervals_local(
     return len(intervals)
 
 
+def remove_interval_rows(path: Path, business_type_code: str, account_no: str) -> int:
+    """ลบ interval ทั้งหมดของ (business_type_code, account_no) คู่หนึ่งทิ้งจากไฟล์ local ถาวร —
+    account_no="" หมายถึงลบเฉพาะกลุ่ม "ไม่ระบุบัญชี" ของ TSIC นั้น (ไม่ใช่ลบทุกบัญชีของ TSIC นั้น
+    ทั้งหมด) ใช้ตอนอยากล้างข้อมูลเก่าที่ไม่มีเลขบัญชีติดมา (ก่อนเพิ่มฟีเจอร์ account tracking) หรือ
+    ข้อมูลที่อัปโหลดผิด — ไม่มีทาง undo ได้เลย (เขียนทับไฟล์ตรงๆ) ฝั่งเรียกใช้ (web/app.py) ต้องให้
+    ผู้ใช้ยืนยันก่อนเสมอ คืนจำนวนแถวที่ลบจริง (0 ถ้าไม่มีไฟล์/ไม่มีแถวตรงเงื่อนไขเลย)"""
+
+    import csv
+
+    if not path.exists():
+        return 0
+    _migrate_intervals_file_header_if_needed(path)
+
+    with path.open("r", encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.DictReader(f))
+
+    keep = []
+    removed = 0
+    for row in rows:
+        if row.get("business_type_code") == business_type_code and (row.get("account_no") or "") == account_no:
+            removed += 1
+        else:
+            keep.append(row)
+
+    if removed:
+        with path.open("w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=_INTERVAL_FIELDNAMES, lineterminator="\n")
+            writer.writeheader()
+            for row in keep:
+                writer.writerow({name: row.get(name, "") for name in _INTERVAL_FIELDNAMES})
+    return removed
+
+
 def load_intervals_local(path: Path, business_type_code: Optional[str] = None) -> pd.DataFrame:
     """โหลดข้อมูล interval จริงทั้งหมด (หรือกรองเฉพาะ business_type_code เดียว) คืน DataFrame ว่าง
     ถ้ายังไม่มีไฟล์เลย/ไม่มีข้อมูลของ business_type_code นั้น"""
