@@ -23,3 +23,8 @@ src/amr_mapping/dbd_scraper/output/
 # ที่อัปโหลดเข้ามา (มีชื่อ/เลขบัญชีลูกค้าจริง — เก็บไว้ชั่วคราวระหว่างประมวลผลเท่านั้น)
 data/reference/amr_boxplot_intervals_local.csv
 data/reference/_amr_boxplot_uploads/
+
+# ไฟล์ AMR ดิบที่ดาวน์โหลดมาจากเว็บ PEA จริงผ่านโหมด "ดึงจากเว็บ PEA อัตโนมัติ" (มีชื่อบริษัท/
+# เลขบัญชีจริง) — เก็บไว้ใช้ซ้ำกันดาวน์โหลดเดือน/บัญชีเดิมซ้ำ (ดู amr_downloader._cache_key)
+# ไม่ใช่ temp dir ที่ลบทิ้งอัตโนมัติ ห้าม commit เด็ดขาด
+amr_downloads/

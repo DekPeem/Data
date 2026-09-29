@@ -530,10 +530,14 @@ async function loadAmrBoxplotBizOptions() {
     const res = await fetch("/api/business-types-full");
     const types = await res.json();
     amrBoxplotBizNameByCode = Object.fromEntries(types.map((t) => [t.code, t.name_th]));
-    amrBoxplotBizSelect.innerHTML = [...types]
+    const optionsHtml = [...types]
       .sort((a, b) => (a.name_th || "").localeCompare(b.name_th || "", "th"))
       .map((t) => `<option value="${t.code}">${t.name_th} · ${t.code}</option>`)
       .join("");
+    amrBoxplotBizSelect.innerHTML = optionsHtml;
+    // ช่องเดียวกันในโหมด "ดึงจากเว็บ PEA อัตโนมัติ" มีตัวเลือกแรกเป็น "ตรวจจับอัตโนมัติ" (value ว่าง)
+    // เสมอ ต้องคงไว้ ไม่ใช่เขียนทับด้วย optionsHtml ตรงๆ
+    amrFetchBizSelect.innerHTML = amrFetchBizSelect.options[0].outerHTML + optionsHtml;
   } catch (err) {
     console.error(err);
   }
@@ -587,6 +591,102 @@ amrBoxplotUploadBtn.addEventListener("click", async () => {
     console.error(err);
   } finally {
     amrBoxplotUploadBtn.disabled = false;
+  }
+});
+
+// ── สลับโหมด "แนบไฟล์เอง" / "ดึงจากเว็บ PEA อัตโนมัติ" ──
+
+const amrBoxplotModeUploadBtn = document.getElementById("amr-boxplot-mode-upload-btn");
+const amrBoxplotModeFetchBtn = document.getElementById("amr-boxplot-mode-fetch-btn");
+const amrBoxplotUploadPanel = document.getElementById("amr-boxplot-upload-panel");
+const amrBoxplotFetchPanel = document.getElementById("amr-boxplot-fetch-panel");
+
+amrBoxplotModeUploadBtn.addEventListener("click", () => {
+  amrBoxplotModeUploadBtn.classList.add("active");
+  amrBoxplotModeFetchBtn.classList.remove("active");
+  amrBoxplotUploadPanel.style.display = "flex";
+  amrBoxplotFetchPanel.style.display = "none";
+});
+amrBoxplotModeFetchBtn.addEventListener("click", () => {
+  amrBoxplotModeFetchBtn.classList.add("active");
+  amrBoxplotModeUploadBtn.classList.remove("active");
+  amrBoxplotFetchPanel.style.display = "flex";
+  amrBoxplotUploadPanel.style.display = "none";
+});
+
+// ── ดึง AMR จริงจากเว็บ PEA อัตโนมัติ (Selenium — ดู amr_downloader.py) ──
+
+const amrFetchUsername = document.getElementById("amr-fetch-username");
+const amrFetchPassword = document.getElementById("amr-fetch-password");
+const amrFetchBizSelect = document.getElementById("amr-fetch-biz-select");
+const amrFetchAccounts = document.getElementById("amr-fetch-accounts");
+const amrFetchStartDate = document.getElementById("amr-fetch-start-date");
+const amrFetchEndDate = document.getElementById("amr-fetch-end-date");
+const amrFetchBtn = document.getElementById("amr-fetch-btn");
+const amrFetchJobArea = document.getElementById("amr-fetch-job-area");
+const amrFetchLog = document.getElementById("amr-fetch-log");
+const amrFetchResult = document.getElementById("amr-fetch-result");
+
+async function pollAmrFetchJob(jobId) {
+  const res = await fetch(`/api/admin/amr-boxplot/fetch/${jobId}`);
+  const data = await res.json();
+
+  amrFetchLog.textContent = (data.logs || []).join("\n");
+  amrFetchLog.scrollTop = amrFetchLog.scrollHeight;
+
+  if (data.status === "running") {
+    setTimeout(() => pollAmrFetchJob(jobId), 1500);
+    return;
+  }
+
+  amrFetchBtn.disabled = false;
+
+  if (data.status === "success") {
+    const r = data.result || {};
+    amrFetchResult.innerHTML =
+      `<span style="color:#006300;">✅ เสร็จแล้ว — เพิ่ม ${(r.added_intervals || 0).toLocaleString("th-TH")} จุด ` +
+      `(${r.days || 0} วัน, ${r.files_downloaded || 0} ไฟล์) เข้าประเภทธุรกิจ ${r.business_type_code || ""}` +
+      (r.business_type_name ? ` — ${r.business_type_name}` : "") + `</span>`;
+    loadAmrBoxplotCoverage();
+  } else {
+    amrFetchResult.innerHTML = `<span style="color:#d03b3b;">${data.error || "เกิดข้อผิดพลาด"}</span>`;
+  }
+}
+
+amrFetchBtn.addEventListener("click", async () => {
+  const body = {
+    username: amrFetchUsername.value.trim(),
+    password: amrFetchPassword.value,
+    business_type_code: amrFetchBizSelect.value,
+    accounts: amrFetchAccounts.value.trim(),
+    start_date: amrFetchStartDate.value,
+    end_date: amrFetchEndDate.value,
+  };
+
+  amrFetchBtn.disabled = true;
+  amrFetchJobArea.style.display = "flex";
+  amrFetchLog.textContent = "";
+  amrFetchResult.textContent = "⏳ กำลังเริ่มงาน...";
+
+  try {
+    const res = await fetch("/api/admin/amr-boxplot/fetch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      amrFetchBtn.disabled = false;
+      amrFetchResult.innerHTML = `<span style="color:#d03b3b;">${data.message || "เกิดข้อผิดพลาด"}</span>`;
+      return;
+    }
+
+    pollAmrFetchJob(data.job_id);
+  } catch (err) {
+    amrFetchBtn.disabled = false;
+    amrFetchResult.innerHTML = `<span style="color:#d03b3b;">เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ</span>`;
+    console.error(err);
   }
 });
 

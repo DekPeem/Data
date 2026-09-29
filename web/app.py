@@ -730,6 +730,165 @@ def api_forecast_boxplot():
     return app.response_class(png_bytes, mimetype="image/png")
 
 
+# โฟลเดอร์เก็บไฟล์ AMR ดิบที่ดาวน์โหลดมาจากเว็บ PEA จริง (ไม่ใช่ temp dir — เก็บไว้ใช้ซ้ำ กัน
+# ดาวน์โหลดเดือน/บัญชีเดิมซ้ำถ้ารันงานเดิมอีกรอบ ดู amr_downloader._cache_key) อยู่ที่ root ของ
+# repo นี้ — มี .gitignore คุ้มครองแล้ว (amr_downloads/) ไม่มีทางหลุดเข้า repo public ได้
+DEFAULT_DOWNLOAD_DIR = Path(__file__).resolve().parents[1] / "amr_downloads"
+
+
+def _run_amr_boxplot_fetch_job(job_id: str, username: str, password: str, params: dict) -> None:
+    """ดาวน์โหลด AMR จริงจากเว็บ PEA (Selenium — ดู amr_downloader.py) แล้วป้อนเข้าฐานข้อมูล
+    Boxplot ตาม TSIC ตัวเดียวกับที่โหมดแนบไฟล์เองใช้ (ดู amr_boxplot.py) — ต่างจากโหมดนำเข้า AMR
+    เดิมก่อนถูกตัดออกตรงที่ไม่มีแนวคิดรหัสอัตรา/KVA/billing_method อีกต่อไปเลย มีแค่ "ประเภทธุรกิจ
+    (TSIC)" อย่างเดียวที่ต้องรู้ ถ้าไม่ระบุมา (business_type_code ว่าง) จะใช้โหมด "ตรวจจับอัตโนมัติ"
+    ได้เฉพาะตอนระบุบัญชีเดียว (username เว็บ PEA เป็นเลขบัญชีนั้นโดยตรง) เท่านั้น — ดึงประเภทธุรกิจ
+    จากหน้าข้อมูลผู้ใช้ไฟของ PEA เอง (CustProfile.aspx) แทนการกรอกเอง"""
+
+    from amr_mapping.amr_boxplot import append_intervals_local, parse_amr_files
+    from amr_mapping.amr_downloader import download_amr_kw_reports, download_amr_with_profile
+
+    def log(msg: str) -> None:
+        with _JOBS_LOCK:
+            _JOBS[job_id]["logs"].append(msg)
+
+    try:
+        download_dir = str(DEFAULT_DOWNLOAD_DIR)
+        os.makedirs(download_dir, exist_ok=True)
+        log(f"📂 โฟลเดอร์เก็บไฟล์ AMR (เก็บไว้ใช้ซ้ำ ไม่ลบอัตโนมัติ อยู่ใน .gitignore แล้ว): {download_dir}")
+
+        business_type_code = params["business_type_code"]
+        detected_name = ""
+
+        if business_type_code:
+            results = download_amr_kw_reports(
+                username=username, password=password, accounts=params["accounts"],
+                start_date=params["start_date"], end_date=params["end_date"],
+                download_dir=download_dir, log=log,
+            )
+        else:
+            # โหมดตรวจจับอัตโนมัติ — username คือเลขบัญชี PEA โดยตรง (1 login = 1 บัญชี ดู
+            # amr_downloader.download_amr_with_profile) รองรับแค่บัญชีเดียวต่อครั้งเท่านั้น
+            log("🤖 ไม่ได้ระบุประเภทธุรกิจ — ให้ระบบตรวจจับอัตโนมัติจากหน้าข้อมูลผู้ใช้ไฟของ PEA")
+            profile, results = download_amr_with_profile(
+                username=username, password=password,
+                start_date=params["start_date"], end_date=params["end_date"],
+                download_dir=download_dir, log=log,
+            )
+            raw_code = profile.get("business_type_code") or ""
+            detected_name = profile.get("business_type_name") or ""
+            if not raw_code:
+                raise RuntimeError(
+                    "ตรวจจับประเภทธุรกิจจากหน้า PEA ไม่ได้เลย (ช่องว่างเปล่า) — กรุณาเลือกประเภทธุรกิจเอง"
+                )
+            tsic_mapping = load_tsic_code_mapping(DEFAULT_DATA_DIR / "tsic_code_mapping.csv")
+            business_type_code, raw = normalize_tsic_code_with_audit(raw_code, tsic_mapping)
+            if raw and raw != business_type_code:
+                log(f"🔄 แปลงรหัส TSIC {raw} (ระบบเดิมของ PEA) -> {business_type_code} (มาตรฐานใหม่)")
+            log(f"✅ ตรวจพบประเภทธุรกิจ: {business_type_code} — {detected_name}")
+
+        downloaded_files = [r.file_path for r in results if r.success and r.file_path]
+        if not downloaded_files:
+            raise RuntimeError("ดาวน์โหลดไม่สำเร็จเลยแม้แต่ไฟล์เดียว — ตรวจสอบ log ด้านบน")
+
+        intervals = parse_amr_files(downloaded_files)
+        if not intervals:
+            raise RuntimeError("ดาวน์โหลดไฟล์ได้ แต่อ่านข้อมูลจากไฟล์เหล่านั้นไม่ได้เลย")
+
+        storage_path = DEFAULT_DATA_DIR / "amr_boxplot_intervals_local.csv"
+        added = append_intervals_local(business_type_code, intervals, storage_path)
+        log(f"💾 เพิ่มข้อมูลลง {storage_path} แล้ว {added} จุด (ประเภทธุรกิจ {business_type_code})")
+
+        with _JOBS_LOCK:
+            _JOBS[job_id]["status"] = "success"
+            _JOBS[job_id]["result"] = {
+                "business_type_code": business_type_code,
+                "business_type_name": detected_name,
+                "added_intervals": added,
+                "days": len({i.date for i in intervals}),
+                "files_downloaded": len(downloaded_files),
+            }
+    except Exception as e:  # noqa: BLE001 — ต้อง catch ทุก error เพื่อรายงานสถานะ job ให้ถูกต้อง
+        with _JOBS_LOCK:
+            _JOBS[job_id]["status"] = "error"
+            _JOBS[job_id]["error"] = str(e)
+
+
+@app.route("/api/admin/amr-boxplot/fetch", methods=["POST"])
+def api_amr_boxplot_fetch():
+    """เริ่ม job ดาวน์โหลด + นำเข้า AMR จริงจากเว็บ PEA อัตโนมัติ (background job — ดู
+    _run_amr_boxplot_fetch_job) username/password รับได้ 2 ทาง (ฟอร์มสำคัญกว่า): กรอกในฟอร์ม
+    โดยตรง หรือตัวแปรสภาพแวดล้อม PEA_AMR_USERNAME/PEA_AMR_PASSWORD (ดู .env.example)"""
+
+    body = request.get_json(force=True, silent=True) or {}
+
+    username = (body.get("username") or "").strip() or os.environ.get("PEA_AMR_USERNAME")
+    password = body.get("password") or os.environ.get("PEA_AMR_PASSWORD")
+    if not username or not password:
+        return jsonify(
+            {
+                "error": "missing_credentials",
+                "message": "ยังไม่ได้กรอก username/password ในฟอร์ม และยังไม่ได้ตั้งค่า "
+                "PEA_AMR_USERNAME / PEA_AMR_PASSWORD ในเครื่องนี้ด้วย",
+            }
+        ), 400
+
+    accounts_raw = body.get("accounts") or ""
+    accounts = [a.strip() for a in str(accounts_raw).split(",") if a.strip()]
+    business_type_code = (body.get("business_type_code") or "").strip()
+    start_date = (body.get("start_date") or "").strip()
+    end_date = (body.get("end_date") or "").strip()
+
+    missing = [name for name, val in [("start_date", start_date), ("end_date", end_date)] if not val]
+    # โหมดกรอกประเภทธุรกิจเอง (ไม่ใช่ตรวจจับอัตโนมัติ) ต้องระบุบัญชีมาด้วยเสมอ — โหมดตรวจจับอัตโนมัติ
+    # ใช้ username เป็นเลขบัญชีอยู่แล้ว ไม่ต้องกรอกซ้ำ
+    if business_type_code and not accounts:
+        missing.append("accounts")
+    if missing:
+        return jsonify({"error": "invalid_request", "message": f"กรอกข้อมูลไม่ครบ: {', '.join(missing)}"}), 400
+
+    try:
+        parsed_start = datetime.strptime(start_date, "%Y-%m-%d").date()
+        parsed_end = datetime.strptime(end_date, "%Y-%m-%d").date()
+    except ValueError:
+        return jsonify({"error": "invalid_request", "message": "รูปแบบวันที่ไม่ถูกต้อง (ต้องเป็น YYYY-MM-DD)"}), 400
+
+    _MIN_YEAR = 2015
+    max_year = datetime.now().year + 1
+    if not (_MIN_YEAR <= parsed_start.year <= max_year) or not (_MIN_YEAR <= parsed_end.year <= max_year):
+        return jsonify(
+            {
+                "error": "invalid_request",
+                "message": f"ปีในวันที่ดูผิดปกติ ({parsed_start.year}-{parsed_end.year}) — ตรวจสอบว่าพิมพ์ปีครบ 4 หลัก",
+            }
+        ), 400
+    if parsed_start > parsed_end:
+        return jsonify({"error": "invalid_request", "message": "วันที่เริ่มต้นต้องไม่มากกว่าวันที่สิ้นสุด"}), 400
+
+    job_id = uuid.uuid4().hex
+    with _JOBS_LOCK:
+        _JOBS[job_id] = {"status": "running", "logs": [], "result": None, "error": None}
+
+    params = {
+        "accounts": accounts,
+        "business_type_code": business_type_code,
+        "start_date": start_date,
+        "end_date": end_date,
+    }
+    thread = threading.Thread(target=_run_amr_boxplot_fetch_job, args=(job_id, username, password, params), daemon=True)
+    thread.start()
+
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/admin/amr-boxplot/fetch/<job_id>")
+def api_amr_boxplot_fetch_status(job_id: str):
+    with _JOBS_LOCK:
+        job = _JOBS.get(job_id)
+        if job is None:
+            return jsonify({"error": "not_found", "message": "ไม่พบ job นี้"}), 404
+        return jsonify(dict(job))
+
+
 @app.route("/admin")
 def admin_page():
     return app.send_static_file("admin.html")

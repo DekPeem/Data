@@ -741,3 +741,155 @@ def test_forecast_boxplot_returns_404_without_data(client, monkeypatch, tmp_path
     assert res.status_code == 404
     assert res.get_json()["error"] == "not_found"
 
+
+def test_amr_boxplot_fetch_missing_credentials_returns_400(client):
+    res = client.post("/api/admin/amr-boxplot/fetch", json={})
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "missing_credentials"
+
+
+def test_amr_boxplot_fetch_manual_mode_without_accounts_returns_400(client):
+    res = client.post(
+        "/api/admin/amr-boxplot/fetch",
+        json={
+            "username": "u", "password": "p", "business_type_code": "55101",
+            "start_date": "2026-01-01", "end_date": "2026-01-31",
+        },
+    )
+    assert res.status_code == 400
+    assert "accounts" in res.get_json()["message"]
+
+
+def test_amr_boxplot_fetch_invalid_date_format_returns_400(client):
+    res = client.post(
+        "/api/admin/amr-boxplot/fetch",
+        json={"username": "u", "password": "p", "start_date": "25-01-01", "end_date": "2026-01-31"},
+    )
+    assert res.status_code == 400
+
+
+def test_amr_boxplot_fetch_start_after_end_returns_400(client):
+    res = client.post(
+        "/api/admin/amr-boxplot/fetch",
+        json={"username": "u", "password": "p", "start_date": "2026-02-01", "end_date": "2026-01-01"},
+    )
+    assert res.status_code == 400
+
+
+def test_amr_boxplot_fetch_job_not_found_returns_404(client):
+    res = client.get("/api/admin/amr-boxplot/fetch/doesnotexist")
+    assert res.status_code == 404
+
+
+def test_amr_boxplot_fetch_manual_mode_success(client, monkeypatch, tmp_path):
+    """ระบุ business_type_code เอง — ต้องเรียก download_amr_kw_reports (หลายบัญชีได้) แล้วป้อนไฟล์
+    ที่ดาวน์โหลดสำเร็จเข้า amr_boxplot storage ตรงๆ (mock ตรงต้นทาง amr_mapping.amr_downloader
+    เพราะ web/app.py import แบบ lazy — เหมือนที่เทสต์ dbd_scraper ทำ)"""
+
+    import amr_mapping.amr_downloader as amr_downloader_module
+    from amr_mapping.amr_downloader import DownloadResult
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+
+    report_path = tmp_path / "downloaded_report.xls"
+    report_path.write_text(_make_amr_report_html(n_days=3), encoding="utf-8")
+
+    def fake_download(username, password, accounts, start_date, end_date, download_dir, log, headless=True):
+        assert accounts == ["0199000001"]
+        return [DownloadResult(account_no="0199000001", meter_text="m1", date_from=start_date, date_to=end_date, file_path=str(report_path), success=True)]
+
+    monkeypatch.setattr(amr_downloader_module, "download_amr_kw_reports", fake_download)
+
+    res = client.post(
+        "/api/admin/amr-boxplot/fetch",
+        json={
+            "username": "u", "password": "p", "business_type_code": "55101",
+            "accounts": "0199000001", "start_date": "2026-01-01", "end_date": "2026-01-31",
+        },
+    )
+    assert res.status_code == 200
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/amr-boxplot/fetch/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    assert status["result"]["added_intervals"] == 3 * 96
+    assert status["result"]["business_type_code"] == "55101"
+
+    coverage = client.get("/api/admin/amr-boxplot/status").get_json()
+    assert coverage["55101"]["intervals"] == 3 * 96
+
+
+def test_amr_boxplot_fetch_auto_detect_mode_success(client, monkeypatch, tmp_path):
+    """ไม่ระบุ business_type_code — ต้องเรียก download_amr_with_profile แทน (username เป็นเลขบัญชี
+    ตรงๆ) แล้วดึง business_type_code จาก profile มาใช้ (ผ่าน TSIC Code Normalization ตามปกติ)"""
+
+    import amr_mapping.amr_downloader as amr_downloader_module
+    from amr_mapping.amr_downloader import DownloadResult
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    (tmp_path / "tsic_code_mapping.csv").write_text("old_code,new_code,notes\n93311,86101,โรงพยาบาลทั่วไป\n", encoding="utf-8")
+
+    report_path = tmp_path / "downloaded_report.xls"
+    report_path.write_text(_make_amr_report_html(n_days=2), encoding="utf-8")
+
+    def fake_download_with_profile(username, password, start_date, end_date, download_dir, log, headless=True):
+        profile = {"business_type_code": "93311", "business_type_name": "กิจกรรมโรงพยาบาล (รหัสเก่า)"}
+        results = [DownloadResult(account_no=username, meter_text="m1", date_from=start_date, date_to=end_date, file_path=str(report_path), success=True)]
+        return profile, results
+
+    monkeypatch.setattr(amr_downloader_module, "download_amr_with_profile", fake_download_with_profile)
+
+    res = client.post(
+        "/api/admin/amr-boxplot/fetch",
+        json={"username": "0199000001", "password": "p", "start_date": "2026-01-01", "end_date": "2026-01-31"},
+    )
+    assert res.status_code == 200
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/amr-boxplot/fetch/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    assert status["result"]["business_type_code"] == "86101"  # แปลงจากรหัสเก่า 93311 แล้ว
+    assert status["result"]["added_intervals"] == 2 * 96
+
+
+def test_amr_boxplot_fetch_reports_download_failure(client, monkeypatch, tmp_path):
+    import amr_mapping.amr_downloader as amr_downloader_module
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+
+    def fake_download(username, password, accounts, start_date, end_date, download_dir, log, headless=True):
+        return []  # ดาวน์โหลดไม่สำเร็จเลยแม้แต่ไฟล์เดียว
+
+    monkeypatch.setattr(amr_downloader_module, "download_amr_kw_reports", fake_download)
+
+    res = client.post(
+        "/api/admin/amr-boxplot/fetch",
+        json={
+            "username": "u", "password": "p", "business_type_code": "55101",
+            "accounts": "0199000001", "start_date": "2026-01-01", "end_date": "2026-01-31",
+        },
+    )
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/amr-boxplot/fetch/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "error"
+    assert "ดาวน์โหลดไม่สำเร็จ" in status["error"]
+
