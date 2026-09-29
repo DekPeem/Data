@@ -662,6 +662,7 @@ function renderAmrBoxplotLogTable() {
   });
 
   const rowsHtml = [];
+  let amrBoxplotLogRowIndex = 0; // นับเฉพาะแถวข้อมูลจริง (ไม่รวมแถวหัว section/TSIC) ไว้ทำแถบสีสลับ
   for (const key of sectionKeys) {
     const group = [...bySection.get(key)].sort((a, b) => {
       if (a.business_type_code !== b.business_type_code) return a.business_type_code.localeCompare(b.business_type_code);
@@ -695,22 +696,56 @@ function renderAmrBoxplotLogTable() {
         </div>
       </td></tr>`);
 
-      for (const r of rows) {
-        const companyLabel = r.company_name ? escapeHtml(r.company_name) : `<span style="color:#8996ab;">—</span>`;
-        const accountLabel = r.account_no ? escapeHtml(r.account_no) : `<span style="color:#8996ab;">ไม่ระบุบัญชี</span>`;
-        const regLabel = r.registration_no ? escapeHtml(r.registration_no) : `<span style="color:#8996ab;">—</span>`;
-        rowsHtml.push(`<tr>
-          <td>${companyLabel}</td>
-          <td>${accountLabel}</td>
-          <td>${regLabel}</td>
-          <td class="num">${r.intervals.toLocaleString("th-TH")}</td>
-          <td class="num">${r.days.toLocaleString("th-TH")}</td>
-          <td class="amr-log-action-cell">
-            <a target="_blank" rel="noopener" href="/api/forecast-boxplot?business_type_code=${encodeURIComponent(r.business_type_code)}&account_no=${encodeURIComponent(r.account_no || "")}">ดู Boxplot →</a>
-            &nbsp;·&nbsp;
-            <button type="button" class="amr-boxplot-log-delete-btn" data-code="${escapeHtml(r.business_type_code)}" data-account="${escapeHtml(r.account_no || "")}" data-intervals="${r.intervals}" style="border:none;background:none;color:#d03b3b;cursor:pointer;font-size:13px;padding:0;">🗑️ ลบ</button>
-          </td>
-        </tr>`);
+      // เรียงให้บัญชีของบริษัทเดียวกัน (เจอบ่อยมาก — ลูกค้ารายเดียวมีหลายเลขบัญชี PEA) อยู่ติดกัน
+      // เสมอ (เดิมเรียงแค่ตามจุดข้อมูลมากไปน้อย บางทีบัญชีของบริษัทเดียวกันเลยไม่ติดกัน) แล้ว rowspan
+      // เซลล์ "บริษัท"/"เลขนิติบุคคล" รวมเป็นแถวเดียวแทนที่จะพิมพ์ชื่อบริษัทซ้ำทุกบัญชี — ลดความรก
+      // ลงมาก (ผู้ใช้ขอ "อ่านง่ายกว่านี้") บริษัทที่ไม่มีชื่อ (ว่าง) ไม่ merge กันเองเด็ดขาด กันเข้าใจ
+      // ผิดว่าเป็นบริษัทเดียวกันทั้งที่จริงๆ แค่ไม่มีใครกรอกชื่อไว้
+      const sortedRows = [...rows].sort((a, b) => {
+        const an = a.company_name || "";
+        const bn = b.company_name || "";
+        if (an !== bn) {
+          if (!an) return 1;
+          if (!bn) return -1;
+          return an.localeCompare(bn, "th");
+        }
+        return b.intervals - a.intervals;
+      });
+
+      let idx = 0;
+      while (idx < sortedRows.length) {
+        const r = sortedRows[idx];
+        const companyName = r.company_name;
+        let span = 1;
+        if (companyName) {
+          while (idx + span < sortedRows.length && sortedRows[idx + span].company_name === companyName) span++;
+        }
+        const spanRows = sortedRows.slice(idx, idx + span);
+        const companyLabel = companyName ? escapeHtml(companyName) : `<span style="color:#8996ab;">—</span>`;
+        const regValue = spanRows.map((x) => x.registration_no).find(Boolean) || "";
+        const regLabel = regValue ? escapeHtml(regValue) : `<span style="color:#8996ab;">—</span>`;
+        const rowspanAttr = span > 1 ? ` rowspan="${span}"` : "";
+
+        spanRows.forEach((row, i) => {
+          amrBoxplotLogRowIndex += 1;
+          const zebraClass = amrBoxplotLogRowIndex % 2 === 0 ? "amr-log-row-even" : "";
+          const accountLabel = row.account_no ? escapeHtml(row.account_no) : `<span style="color:#8996ab;">ไม่ระบุบัญชี</span>`;
+          const companyCellHtml = i === 0 ? `<td${rowspanAttr}>${companyLabel}</td>` : "";
+          const regCellHtml = i === 0 ? `<td${rowspanAttr}>${regLabel}</td>` : "";
+          rowsHtml.push(`<tr class="${zebraClass}">
+            ${companyCellHtml}
+            <td>${accountLabel}</td>
+            ${regCellHtml}
+            <td class="num">${row.intervals.toLocaleString("th-TH")}</td>
+            <td class="num">${row.days.toLocaleString("th-TH")}</td>
+            <td class="amr-log-action-cell">
+              <a target="_blank" rel="noopener" href="/api/forecast-boxplot?business_type_code=${encodeURIComponent(row.business_type_code)}&account_no=${encodeURIComponent(row.account_no || "")}">ดู Boxplot →</a>
+              &nbsp;·&nbsp;
+              <button type="button" class="amr-boxplot-log-delete-btn" data-code="${escapeHtml(row.business_type_code)}" data-account="${escapeHtml(row.account_no || "")}" data-intervals="${row.intervals}" style="border:none;background:none;color:#d03b3b;cursor:pointer;font-size:13px;padding:0;">🗑️ ลบ</button>
+            </td>
+          </tr>`);
+        });
+        idx += span;
       }
     }
   }
