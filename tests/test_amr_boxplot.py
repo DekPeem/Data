@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import pytest
 
 from amr_mapping.amr_boxplot import (
+    ParsedInterval,
     append_intervals_local,
     compute_bill_stats_from_intervals,
     load_intervals_local,
@@ -14,6 +15,7 @@ from amr_mapping.amr_boxplot import (
     parse_amr_files,
     render_boxplot_png,
     summarize_available,
+    summarize_available_by_account,
 )
 
 
@@ -124,6 +126,82 @@ def test_compute_bill_stats_from_intervals_empty_input_returns_empty_dict():
 def test_load_intervals_local_missing_file_returns_empty(tmp_path):
     df = load_intervals_local(tmp_path / "nope.csv")
     assert df.empty
+
+
+def test_append_intervals_local_stores_account_and_company_name(amr_report_file, tmp_path):
+    storage = tmp_path / "storage.csv"
+    intervals = parse_amr_file(amr_report_file)
+    append_intervals_local("55101", intervals, storage, account_no="0199000001", company_name="บริษัท ทดสอบ จำกัด")
+
+    df = load_intervals_local(storage, "55101")
+    assert (df["account_no"] == "0199000001").all()
+    assert (df["company_name"] == "บริษัท ทดสอบ จำกัด").all()
+
+
+def test_append_intervals_local_defaults_account_fields_to_blank(amr_report_file, tmp_path):
+    """ไม่ระบุ account_no/company_name เลย (เหมือนโหมดแนบไฟล์เองแบบเดิม) ต้องยังใช้งานได้ปกติ
+    ไม่ error เว้นว่างไว้เฉยๆ"""
+
+    storage = tmp_path / "storage.csv"
+    intervals = parse_amr_file(amr_report_file)
+    append_intervals_local("55101", intervals, storage)
+
+    df = load_intervals_local(storage, "55101")
+    assert (df["account_no"] == "").all()
+    assert (df["company_name"] == "").all()
+
+
+def test_append_intervals_local_migrates_old_header_format(tmp_path):
+    """ไฟล์เก่าก่อนเพิ่มคอลัมน์ account_no/company_name (header มีแค่ 5 คอลัมน์เดิม) ต้อง migrate
+    อัตโนมัติตอน append แถวใหม่ — แถวเก่ายังอยู่ครบ (account_no/company_name เว้นว่างไว้เพราะย้อน
+    กลับไปหาไม่ได้) แถวใหม่มีค่าที่ใส่มาถูกต้อง"""
+
+    storage = tmp_path / "storage.csv"
+    storage.write_text(
+        "business_type_code,date,hour,rate,kw\n55101,2026-01-01,9,P,123.4\n", encoding="utf-8"
+    )
+
+    new_intervals = [ParsedInterval(date="2026-01-02", hour=10, minute=0, rate="P", kw=200.0)]
+    append_intervals_local("55101", new_intervals, storage, account_no="0199000002", company_name="บริษัท ใหม่ จำกัด")
+
+    df = load_intervals_local(storage, "55101")
+    assert len(df) == 2
+    old_row = df[df["date"] == "2026-01-01"].iloc[0]
+    assert old_row["account_no"] == ""
+    assert old_row["company_name"] == ""
+    new_row = df[df["date"] == "2026-01-02"].iloc[0]
+    assert new_row["account_no"] == "0199000002"
+    assert new_row["company_name"] == "บริษัท ใหม่ จำกัด"
+
+
+def test_summarize_available_by_account_groups_per_tsic_and_account(amr_report_file, tmp_path):
+    storage = tmp_path / "storage.csv"
+    intervals = parse_amr_file(amr_report_file)  # 5*96 = 480 intervals
+
+    # บัญชีเดียวกัน อัปโหลด 2 รอบ (คนละไฟล์/คนละเดือน) ต้องรวมเป็นกลุ่มเดียวกัน
+    append_intervals_local("55101", intervals[:100], storage, account_no="A1", company_name="บริษัท เอ")
+    append_intervals_local("55101", intervals[100:], storage, account_no="A1", company_name="บริษัท เอ")
+    # อีกบัญชีของ TSIC เดียวกัน
+    append_intervals_local("55101", intervals[:50], storage, account_no="A2", company_name="บริษัท บี")
+    # ไม่ระบุบัญชีเลย (โหมดแนบไฟล์เองแบบเก่า) — ต้องรวมเป็น 1 กลุ่ม "ไม่ระบุบัญชี" แยกจาก A1/A2
+    append_intervals_local("55101", intervals[:20], storage)
+
+    rows = summarize_available_by_account(storage)
+    by_account = {(r["business_type_code"], r["account_no"]): r for r in rows}
+
+    assert by_account[("55101", "A1")]["intervals"] == 480
+    assert by_account[("55101", "A1")]["company_name"] == "บริษัท เอ"
+    assert by_account[("55101", "A2")]["intervals"] == 50
+    assert by_account[("55101", "A2")]["company_name"] == "บริษัท บี"
+    assert by_account[("55101", "")]["intervals"] == 20
+    assert by_account[("55101", "")]["company_name"] == ""
+
+    # เรียงจากจุดข้อมูลเยอะไปน้อย
+    assert [r["intervals"] for r in rows] == sorted((r["intervals"] for r in rows), reverse=True)
+
+
+def test_summarize_available_by_account_missing_file_returns_empty_list(tmp_path):
+    assert summarize_available_by_account(tmp_path / "nope.csv") == []
 
 
 def test_summarize_available_reports_per_business_type(amr_report_file, tmp_path):

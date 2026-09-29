@@ -23,7 +23,7 @@ import uuid
 import zipfile
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
@@ -733,13 +733,16 @@ def _save_uploaded_amr_boxplot_files(files, upload_dir: Path) -> List[str]:
 @app.route("/api/admin/amr-boxplot/upload", methods=["POST"])
 def api_amr_boxplot_upload():
     """อัปโหลดไฟล์ AMR จริง (รายงาน 15 นาทีจาก PEA) ผูกกับประเภทธุรกิจ (TSIC) หนึ่งรายการ — อ่าน
-    แล้วเก็บเฉพาะตัวเลขกำลังไฟฟ้ารายชั่วโมง (ไม่เก็บชื่อ/เลขบัญชีลูกค้าเลย) ลงไฟล์ local-only
-    (amr_boxplot_intervals_local.csv) สะสมไปเรื่อยๆ ทุกครั้งที่อัปโหลดเพิ่ม (ดู
-    src/amr_mapping/amr_boxplot.py)"""
+    แล้วเก็บเฉพาะตัวเลขกำลังไฟฟ้ารายชั่วโมง ลงไฟล์ local-only (amr_boxplot_intervals_local.csv)
+    สะสมไปเรื่อยๆ ทุกครั้งที่อัปโหลดเพิ่ม (ดู src/amr_mapping/amr_boxplot.py) — account_no/
+    company_name ไม่บังคับ (ผู้ใช้ยืนยันอยากระบุได้ถ้ารู้ เพื่อแยกดูภายหลังว่าอัปโหลดบัญชีไหนไปแล้ว
+    บ้าง ดู GET /api/admin/amr-boxplot/status-by-account)"""
 
     from amr_mapping.amr_boxplot import append_intervals_local, parse_amr_files
 
     business_type_code = (request.form.get("business_type_code") or "").strip()
+    account_no = (request.form.get("account_no") or "").strip()
+    company_name = (request.form.get("company_name") or "").strip()
     files = request.files.getlist("files")
     if not business_type_code:
         return jsonify({"error": "invalid_request", "message": "กรุณาเลือกประเภทธุรกิจ (TSIC)"}), 400
@@ -766,19 +769,31 @@ def api_amr_boxplot_upload():
         ), 400
 
     storage_path = DEFAULT_DATA_DIR / "amr_boxplot_intervals_local.csv"
-    added = append_intervals_local(business_type_code, intervals, storage_path)
+    added = append_intervals_local(business_type_code, intervals, storage_path, account_no=account_no, company_name=company_name)
 
     return jsonify({"added_intervals": added, "days": len({i.date for i in intervals})})
 
 
 @app.route("/api/admin/amr-boxplot/status")
 def api_amr_boxplot_status():
-    """สรุปว่าแต่ละประเภทธุรกิจ (TSIC) มีข้อมูล AMR จริงสะสมไว้เท่าไหร่แล้ว — ใช้แสดงในหน้า Admin"""
+    """สรุปว่าแต่ละประเภทธุรกิจ (TSIC) มีข้อมูล AMR จริงสะสมไว้เท่าไหร่แล้ว (รวมทุกบัญชีเข้าด้วยกัน) —
+    ใช้แสดงในหน้า Admin ดู /status-by-account ถ้าอยากได้แยกทีละบัญชี"""
 
     from amr_mapping.amr_boxplot import summarize_available
 
     storage_path = DEFAULT_DATA_DIR / "amr_boxplot_intervals_local.csv"
     return jsonify(summarize_available(storage_path))
+
+
+@app.route("/api/admin/amr-boxplot/status-by-account")
+def api_amr_boxplot_status_by_account():
+    """เหมือน /api/admin/amr-boxplot/status แต่แยกรายละเอียดเป็นราย (TSIC, เลขบัญชี) แทนยอดรวม —
+    ใช้แสดงในหน้า Admin ให้เห็นว่าอัปโหลด/ดึงบัญชีไหนไปแล้วบ้าง (ผู้ใช้ยืนยันอยากได้แบบแยกทีละบัญชี)"""
+
+    from amr_mapping.amr_boxplot import summarize_available_by_account
+
+    storage_path = DEFAULT_DATA_DIR / "amr_boxplot_intervals_local.csv"
+    return jsonify(summarize_available_by_account(storage_path))
 
 
 @app.route("/api/forecast-boxplot")
@@ -824,7 +839,12 @@ def _run_amr_boxplot_fetch_job(job_id: str, username: str, password: str, params
     เดิมก่อนถูกตัดออกตรงที่ไม่มีแนวคิดรหัสอัตรา/KVA/billing_method อีกต่อไปเลย มีแค่ "ประเภทธุรกิจ
     (TSIC)" อย่างเดียวที่ต้องรู้ ถ้าไม่ระบุมา (business_type_code ว่าง) จะใช้โหมด "ตรวจจับอัตโนมัติ"
     ได้เฉพาะตอนระบุบัญชีเดียว (username เว็บ PEA เป็นเลขบัญชีนั้นโดยตรง) เท่านั้น — ดึงประเภทธุรกิจ
-    จากหน้าข้อมูลผู้ใช้ไฟของ PEA เอง (CustProfile.aspx) แทนการกรอกเอง"""
+    จากหน้าข้อมูลผู้ใช้ไฟของ PEA เอง (CustProfile.aspx) แทนการกรอกเอง
+
+    ผู้ใช้ยืนยันอยากแยก/ระบุบัญชีที่มาของแต่ละก้อนข้อมูลได้ (ดู amr_boxplot.py หัวไฟล์) — โหมดตรวจจับ
+    อัตโนมัติได้ account_no/company_name มาฟรีจากหน้าโปรไฟล์ PEA อยู่แล้ว ส่วนโหมดกรอกประเภทธุรกิจเอง
+    อาจมีหลายบัญชีพร้อมกันภายใต้ login เดียว (accounts) ต้องแยก append ทีละบัญชีตาม
+    DownloadResult.account_no จริง ไม่รวมทุกบัญชีเข้าด้วยกันเป็นก้อนเดียวแบบเดิมอีกต่อไป"""
 
     from amr_mapping.amr_boxplot import append_intervals_local, parse_amr_files
     from amr_mapping.amr_downloader import download_amr_kw_reports, download_amr_with_profile
@@ -840,6 +860,8 @@ def _run_amr_boxplot_fetch_job(job_id: str, username: str, password: str, params
 
         business_type_code = params["business_type_code"]
         detected_name = ""
+        account_no = ""
+        company_name = ""
 
         if business_type_code:
             results = download_amr_kw_reports(
@@ -858,6 +880,8 @@ def _run_amr_boxplot_fetch_job(job_id: str, username: str, password: str, params
             )
             raw_code = profile.get("business_type_code") or ""
             detected_name = profile.get("business_type_name") or ""
+            account_no = profile.get("account_no") or username
+            company_name = profile.get("name") or ""
             if not raw_code:
                 raise RuntimeError(
                     "ตรวจจับประเภทธุรกิจจากหน้า PEA ไม่ได้เลย (ช่องว่างเปล่า) — กรุณาเลือกประเภทธุรกิจเอง"
@@ -868,6 +892,43 @@ def _run_amr_boxplot_fetch_job(job_id: str, username: str, password: str, params
                 log(f"🔄 แปลงรหัส TSIC {raw} (ระบบเดิมของ PEA) -> {business_type_code} (มาตรฐานใหม่)")
             log(f"✅ ตรวจพบประเภทธุรกิจ: {business_type_code} — {detected_name}")
 
+        storage_path = DEFAULT_DATA_DIR / "amr_boxplot_intervals_local.csv"
+
+        if not account_no:
+            # โหมดกรอกประเภทธุรกิจเอง — accounts อาจมีมากกว่า 1 บัญชีพร้อมกัน แยก append ทีละบัญชี
+            by_account: Dict[str, List[str]] = {}
+            for r in results:
+                if r.success and r.file_path:
+                    by_account.setdefault(r.account_no, []).append(r.file_path)
+            if not by_account:
+                raise RuntimeError("ดาวน์โหลดไม่สำเร็จเลยแม้แต่ไฟล์เดียว — ตรวจสอบ log ด้านบน")
+
+            total_added = 0
+            all_dates: set = set()
+            for acct, files in by_account.items():
+                intervals = parse_amr_files(files)
+                if not intervals:
+                    log(f"⚠️ บัญชี {acct}: อ่านข้อมูลจากไฟล์ที่ดาวน์โหลดมาไม่ได้เลย ข้ามไป")
+                    continue
+                added = append_intervals_local(business_type_code, intervals, storage_path, account_no=acct)
+                total_added += added
+                all_dates |= {i.date for i in intervals}
+                log(f"💾 บัญชี {acct}: เพิ่ม {added} จุด")
+
+            if total_added == 0:
+                raise RuntimeError("ดาวน์โหลดไฟล์ได้ แต่อ่านข้อมูลจากไฟล์เหล่านั้นไม่ได้เลยทุกบัญชี")
+
+            with _JOBS_LOCK:
+                _JOBS[job_id]["status"] = "success"
+                _JOBS[job_id]["result"] = {
+                    "business_type_code": business_type_code,
+                    "business_type_name": detected_name,
+                    "added_intervals": total_added,
+                    "days": len(all_dates),
+                    "files_downloaded": sum(len(f) for f in by_account.values()),
+                }
+            return
+
         downloaded_files = [r.file_path for r in results if r.success and r.file_path]
         if not downloaded_files:
             raise RuntimeError("ดาวน์โหลดไม่สำเร็จเลยแม้แต่ไฟล์เดียว — ตรวจสอบ log ด้านบน")
@@ -876,8 +937,7 @@ def _run_amr_boxplot_fetch_job(job_id: str, username: str, password: str, params
         if not intervals:
             raise RuntimeError("ดาวน์โหลดไฟล์ได้ แต่อ่านข้อมูลจากไฟล์เหล่านั้นไม่ได้เลย")
 
-        storage_path = DEFAULT_DATA_DIR / "amr_boxplot_intervals_local.csv"
-        added = append_intervals_local(business_type_code, intervals, storage_path)
+        added = append_intervals_local(business_type_code, intervals, storage_path, account_no=account_no, company_name=company_name)
         log(f"💾 เพิ่มข้อมูลลง {storage_path} แล้ว {added} จุด (ประเภทธุรกิจ {business_type_code})")
 
         with _JOBS_LOCK:
@@ -1039,7 +1099,11 @@ def _run_amr_boxplot_fetch_bulk_job(job_id: str, credentials: List[dict], start_
                 if not intervals:
                     raise RuntimeError("ดาวน์โหลดไฟล์ได้ แต่อ่านข้อมูลจากไฟล์เหล่านั้นไม่ได้เลย")
 
-                added = append_intervals_local(business_type_code, intervals, storage_path)
+                account_no = profile.get("account_no") or username
+                company_name = profile.get("name") or ""
+                added = append_intervals_local(
+                    business_type_code, intervals, storage_path, account_no=account_no, company_name=company_name
+                )
                 log(f"✅ {username}: เพิ่ม {added} จุด (ประเภทธุรกิจ {business_type_code} — {detected_name})")
                 results.append(
                     {

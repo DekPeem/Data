@@ -807,6 +807,33 @@ def test_amr_boxplot_upload_success_then_status_and_boxplot(client, monkeypatch,
     assert boxplot_res.data[:8] == b"\x89PNG\r\n\x1a\n"
 
 
+def test_amr_boxplot_upload_with_account_no_and_company_name(client, monkeypatch, tmp_path):
+    """account_no/company_name ไม่บังคับ — ถ้ากรอกมาต้องถูกบันทึกไว้แยกทีละบัญชีได้ (ดู
+    GET /api/admin/amr-boxplot/status-by-account)"""
+
+    import io
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+
+    res = client.post(
+        "/api/admin/amr-boxplot/upload",
+        data={
+            "business_type_code": "55101",
+            "account_no": "0199000099",
+            "company_name": "บริษัท อัปโหลดเอง จำกัด",
+            "files": (io.BytesIO(_make_amr_report_html(n_days=1).encode("utf-8")), "report.xls"),
+        },
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 200
+
+    by_account = client.get("/api/admin/amr-boxplot/status-by-account").get_json()
+    assert len(by_account) == 1
+    assert by_account[0]["account_no"] == "0199000099"
+    assert by_account[0]["company_name"] == "บริษัท อัปโหลดเอง จำกัด"
+    assert by_account[0]["intervals"] == 96
+
+
 def test_amr_boxplot_upload_rejects_zip_with_path_traversal(client, monkeypatch, tmp_path):
     """ป้องกัน zip slip — ชื่อไฟล์ในซิปที่มี "../" ปนอยู่ต้องถูกตัด path ย่อยทิ้งก่อนเขียนไฟล์เสมอ
     ไม่ยอมให้เขียนออกไปนอก upload_dir เด็ดขาด (เหมือนเทสต์เดิมของโหมดนำเข้า AMR ก่อนถูกลบไป)"""
@@ -926,6 +953,52 @@ def test_amr_boxplot_fetch_manual_mode_success(client, monkeypatch, tmp_path):
     assert coverage["55101"]["intervals"] == 3 * 96
 
 
+def test_amr_boxplot_fetch_manual_mode_tags_each_account_separately(client, monkeypatch, tmp_path):
+    """โหมดกรอกประเภทธุรกิจเอง มีหลายบัญชีพร้อมกันภายใต้ login เดียว (accounts) — ต้องแยก append
+    ทีละบัญชีตาม DownloadResult.account_no จริง ไม่รวมเป็นก้อนเดียวไม่ระบุบัญชี"""
+
+    import amr_mapping.amr_downloader as amr_downloader_module
+    from amr_mapping.amr_downloader import DownloadResult
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+
+    report_a = tmp_path / "a.xls"
+    report_a.write_text(_make_amr_report_html(n_days=2), encoding="utf-8")
+    report_b = tmp_path / "b.xls"
+    report_b.write_text(_make_amr_report_html(n_days=3), encoding="utf-8")
+
+    def fake_download(username, password, accounts, start_date, end_date, download_dir, log, headless=True):
+        return [
+            DownloadResult(account_no="ACC-A", meter_text="m1", date_from=start_date, date_to=end_date, file_path=str(report_a), success=True),
+            DownloadResult(account_no="ACC-B", meter_text="m2", date_from=start_date, date_to=end_date, file_path=str(report_b), success=True),
+        ]
+
+    monkeypatch.setattr(amr_downloader_module, "download_amr_kw_reports", fake_download)
+
+    res = client.post(
+        "/api/admin/amr-boxplot/fetch",
+        json={
+            "username": "u", "password": "p", "business_type_code": "55101",
+            "accounts": "ACC-A, ACC-B", "start_date": "2026-01-01", "end_date": "2026-01-31",
+        },
+    )
+    job_id = res.get_json()["job_id"]
+
+    status = None
+    for _ in range(50):
+        status = client.get(f"/api/admin/amr-boxplot/fetch/{job_id}").get_json()
+        if status["status"] != "running":
+            break
+        time.sleep(0.05)
+
+    assert status["status"] == "success"
+    assert status["result"]["added_intervals"] == 2 * 96 + 3 * 96
+
+    by_account = {r["account_no"]: r for r in client.get("/api/admin/amr-boxplot/status-by-account").get_json()}
+    assert by_account["ACC-A"]["intervals"] == 2 * 96
+    assert by_account["ACC-B"]["intervals"] == 3 * 96
+
+
 def test_amr_boxplot_fetch_auto_detect_mode_success(client, monkeypatch, tmp_path):
     """ไม่ระบุ business_type_code — ต้องเรียก download_amr_with_profile แทน (username เป็นเลขบัญชี
     ตรงๆ) แล้วดึง business_type_code จาก profile มาใช้ (ผ่าน TSIC Code Normalization ตามปกติ)"""
@@ -940,7 +1013,10 @@ def test_amr_boxplot_fetch_auto_detect_mode_success(client, monkeypatch, tmp_pat
     report_path.write_text(_make_amr_report_html(n_days=2), encoding="utf-8")
 
     def fake_download_with_profile(username, password, start_date, end_date, download_dir, log, headless=True):
-        profile = {"business_type_code": "93311", "business_type_name": "กิจกรรมโรงพยาบาล (รหัสเก่า)"}
+        profile = {
+            "business_type_code": "93311", "business_type_name": "กิจกรรมโรงพยาบาล (รหัสเก่า)",
+            "account_no": username, "name": "บริษัท ทดสอบโรงพยาบาล จำกัด",
+        }
         results = [DownloadResult(account_no=username, meter_text="m1", date_from=start_date, date_to=end_date, file_path=str(report_path), success=True)]
         return profile, results
 
@@ -963,6 +1039,11 @@ def test_amr_boxplot_fetch_auto_detect_mode_success(client, monkeypatch, tmp_pat
     assert status["status"] == "success"
     assert status["result"]["business_type_code"] == "86101"  # แปลงจากรหัสเก่า 93311 แล้ว
     assert status["result"]["added_intervals"] == 2 * 96
+
+    by_account = client.get("/api/admin/amr-boxplot/status-by-account").get_json()
+    assert len(by_account) == 1
+    assert by_account[0]["account_no"] == "0199000001"
+    assert by_account[0]["company_name"] == "บริษัท ทดสอบโรงพยาบาล จำกัด"
 
 
 def test_amr_boxplot_fetch_reports_download_failure(client, monkeypatch, tmp_path):
@@ -1040,7 +1121,10 @@ def test_amr_boxplot_fetch_bulk_success_with_mixed_results(client, monkeypatch, 
     def fake_download_with_profile(username, password, start_date, end_date, download_dir, log, headless=True):
         if username == "0199000002":
             return {"business_type_code": "", "business_type_name": ""}, []
-        profile = {"business_type_code": "93311", "business_type_name": "กิจกรรมโรงพยาบาล (รหัสเก่า)"}
+        profile = {
+            "business_type_code": "93311", "business_type_name": "กิจกรรมโรงพยาบาล (รหัสเก่า)",
+            "account_no": username, "name": "บริษัท ทดสอบ 1 จำกัด",
+        }
         results = [DownloadResult(account_no=username, meter_text="m1", date_from=start_date, date_to=end_date, file_path=str(report_path), success=True)]
         return profile, results
 
@@ -1081,4 +1165,8 @@ def test_amr_boxplot_fetch_bulk_success_with_mixed_results(client, monkeypatch, 
 
     coverage = client.get("/api/admin/amr-boxplot/status").get_json()
     assert coverage["86101"]["intervals"] == 2 * 96
+
+    by_account = {r["account_no"]: r for r in client.get("/api/admin/amr-boxplot/status-by-account").get_json()}
+    assert by_account["0199000001"]["company_name"] == "บริษัท ทดสอบ 1 จำกัด"
+    assert by_account["0199000001"]["intervals"] == 2 * 96
 

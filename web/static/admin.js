@@ -519,6 +519,8 @@ loadBusinessTypesTable();
 
 const amrBoxplotBizSelect = document.getElementById("amr-boxplot-biz-select");
 const amrBoxplotFiles = document.getElementById("amr-boxplot-files");
+const amrBoxplotAccountNo = document.getElementById("amr-boxplot-account-no");
+const amrBoxplotCompanyName = document.getElementById("amr-boxplot-company-name");
 const amrBoxplotUploadBtn = document.getElementById("amr-boxplot-upload-btn");
 const amrBoxplotUploadStatus = document.getElementById("amr-boxplot-upload-status");
 
@@ -539,10 +541,11 @@ async function loadAmrBoxplotBizOptions() {
   }
 }
 
-// ── log ข้อมูล AMR จริงที่มีอยู่แล้วในระบบ แยกตาม TSIC (ดู GET /api/admin/amr-boxplot/status —
-// amr_boxplot.summarize_available) ให้เห็นชัดๆ ว่าประเภทธุรกิจไหนมีข้อมูลสะสมไว้แล้วบ้าง กี่จุด/
-// กี่วัน แทนที่จะต้องเดา/ลองอัปโหลดซ้ำ หรือกดดู Boxplot ทีละ TSIC เอง — รีเฟรชอัตโนมัติทุกครั้งที่
-// อัปโหลด/ดึงข้อมูลสำเร็จ (ดู amrBoxplotUploadBtn/pollAmrFetchJob) และกดรีเฟรชเองได้ด้วย
+// ── log ข้อมูล AMR จริงที่มีอยู่แล้วในระบบ แยกตาม TSIC + เลขบัญชี (ดู
+// GET /api/admin/amr-boxplot/status-by-account — amr_boxplot.summarize_available_by_account)
+// ให้เห็นชัดๆ ว่าอัปโหลด/ดึงบัญชีไหนไปแล้วบ้าง กี่จุด/กี่วัน (ผู้ใช้ยืนยันอยากได้แบบแยกทีละบัญชี
+// ไม่อยากเห็นแค่ยอดรวมต่อ TSIC) แทนที่จะต้องเดา/ลองอัปโหลดซ้ำ — รีเฟรชอัตโนมัติทุกครั้งที่อัปโหลด/
+// ดึงข้อมูลสำเร็จ (ดู amrBoxplotUploadBtn/pollAmrFetchJob/pollAmrFetchBulkJob) และกดรีเฟรชเองได้ด้วย
 const amrBoxplotLogStatus = document.getElementById("amr-boxplot-log-status");
 const amrBoxplotLogTable = document.getElementById("amr-boxplot-log-table");
 const amrBoxplotLogRefreshBtn = document.getElementById("amr-boxplot-log-refresh-btn");
@@ -551,34 +554,49 @@ async function loadAmrBoxplotLog() {
   amrBoxplotLogStatus.textContent = "⏳ กำลังโหลด...";
   amrBoxplotLogTable.innerHTML = "";
   try {
-    const [statusRes, typesRes] = await Promise.all([
-      fetch("/api/admin/amr-boxplot/status"),
+    const [rowsRes, typesRes] = await Promise.all([
+      fetch("/api/admin/amr-boxplot/status-by-account"),
       fetch("/api/business-types-full"),
     ]);
-    const status = await statusRes.json();
+    const rows = await rowsRes.json();
     const types = await typesRes.json();
     const nameByCode = new Map(types.map((t) => [t.code, t.name_th]));
 
-    const rows = Object.entries(status).sort((a, b) => b[1].intervals - a[1].intervals);
     if (!rows.length) {
       amrBoxplotLogStatus.textContent = "";
       amrBoxplotLogTable.innerHTML = `<div class="hint">ยังไม่มีข้อมูล AMR จริงในระบบเลย — อัปโหลด/ดึงจากเว็บ PEA ได้จากด้านบน</div>`;
       return;
     }
 
+    // จัดกลุ่มตาม TSIC ก่อน (เรียงตามรหัส) แล้วค่อยเรียงตามจุดข้อมูลมากไปน้อยภายในกลุ่มเดียวกัน —
+    // ให้บัญชีของ TSIC เดียวกันอยู่ติดกันเสมอ อ่านง่ายกว่าเรียงจุดข้อมูลล้วนๆ แบบปนกันทุก TSIC
+    const sorted = [...rows].sort((a, b) => {
+      if (a.business_type_code !== b.business_type_code) {
+        return a.business_type_code.localeCompare(b.business_type_code);
+      }
+      return b.intervals - a.intervals;
+    });
+
     amrBoxplotLogStatus.textContent = "";
     amrBoxplotLogTable.innerHTML = `
       <table class="amr-log-table">
-        <thead><tr><th>ประเภทธุรกิจ (TSIC)</th><th class="num">จำนวนจุดข้อมูล</th><th class="num">จำนวนวัน</th><th></th></tr></thead>
+        <thead><tr><th>ประเภทธุรกิจ (TSIC)</th><th>บริษัท</th><th>เลขบัญชี</th><th class="num">จำนวนจุดข้อมูล</th><th class="num">จำนวนวัน</th><th></th></tr></thead>
         <tbody>
-          ${rows
-            .map(([code, s]) => {
-              const name = nameByCode.get(code) || "";
+          ${sorted
+            .map((r) => {
+              const name = nameByCode.get(r.business_type_code) || "";
+              const tsicLabel = name
+                ? `${escapeHtml(name)} · ${escapeHtml(r.business_type_code)}`
+                : `${escapeHtml(r.business_type_code)} <span style="color:#d03b3b;">(ไม่พบชื่อในระบบ)</span>`;
+              const companyLabel = r.company_name ? escapeHtml(r.company_name) : `<span style="color:#8996ab;">—</span>`;
+              const accountLabel = r.account_no ? escapeHtml(r.account_no) : `<span style="color:#8996ab;">ไม่ระบุบัญชี</span>`;
               return `<tr>
-                <td>${name ? `${escapeHtml(name)} · ` : ""}${escapeHtml(code)}${name ? "" : ` <span style="color:#d03b3b;">(ไม่พบชื่อในระบบ — อาจถูกลบ/ยังไม่ได้เพิ่มประเภทธุรกิจนี้)</span>`}</td>
-                <td class="num">${s.intervals.toLocaleString("th-TH")}</td>
-                <td class="num">${s.days.toLocaleString("th-TH")}</td>
-                <td><a target="_blank" rel="noopener" href="/api/forecast-boxplot?business_type_code=${encodeURIComponent(code)}">ดู Boxplot →</a></td>
+                <td>${tsicLabel}</td>
+                <td>${companyLabel}</td>
+                <td>${accountLabel}</td>
+                <td class="num">${r.intervals.toLocaleString("th-TH")}</td>
+                <td class="num">${r.days.toLocaleString("th-TH")}</td>
+                <td><a target="_blank" rel="noopener" href="/api/forecast-boxplot?business_type_code=${encodeURIComponent(r.business_type_code)}">ดู Boxplot →</a></td>
               </tr>`;
             })
             .join("")}
@@ -608,6 +626,8 @@ amrBoxplotUploadBtn.addEventListener("click", async () => {
   const formData = new FormData();
   formData.append("business_type_code", bizCode);
   for (const f of files) formData.append("files", f);
+  if (amrBoxplotAccountNo.value.trim()) formData.append("account_no", amrBoxplotAccountNo.value.trim());
+  if (amrBoxplotCompanyName.value.trim()) formData.append("company_name", amrBoxplotCompanyName.value.trim());
 
   amrBoxplotUploadBtn.disabled = true;
   amrBoxplotUploadStatus.textContent = "⏳ กำลังอัปโหลด...";

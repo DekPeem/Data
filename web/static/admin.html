@@ -130,9 +130,10 @@
         <div>
           <div style="font-size: 15px; font-weight: 700;">อัปโหลดข้อมูล AMR จริง (สร้างฐานข้อมูล Boxplot ตาม TSIC)</div>
           <div class="hint">
-            อัปโหลดไฟล์ AMR จริง (รายงาน 15 นาทีจาก PEA — .xls/.zip) ของธุรกิจประเภทหนึ่ง ระบบจะเก็บเฉพาะตัวเลขกำลังไฟฟ้ารายชั่วโมง
-            (ไม่มีชื่อ/เลขบัญชีลูกค้าติดไปด้วยเลย) สะสมไว้ในเครื่องนี้ทุกครั้งที่อัปโหลดเพิ่ม — ใช้วาดกราฟ Boxplot ให้ผู้ใช้ไฟที่ยังไม่มี
-            AMR ของธุรกิจประเภทเดียวกันดูเป็นข้อมูลอ้างอิง (ดูจากหน้าแรกได้หลังจับคู่ประเภทธุรกิจแล้ว)
+            อัปโหลดไฟล์ AMR จริง (รายงาน 15 นาทีจาก PEA — .xls/.zip) ของธุรกิจประเภทหนึ่ง ระบบจะเก็บตัวเลขกำลังไฟฟ้ารายชั่วโมง
+            สะสมไว้ในเครื่องนี้ทุกครั้งที่อัปโหลดเพิ่ม — ใช้วาดกราฟ Boxplot ให้ผู้ใช้ไฟที่ยังไม่มี AMR ของธุรกิจประเภทเดียวกันดูเป็น
+            ข้อมูลอ้างอิง (ดูจากหน้าแรกได้หลังจับคู่ประเภทธุรกิจแล้ว) ระบุเลขบัญชี/ชื่อบริษัทได้ (ไม่บังคับ) เพื่อแยกดูภายหลังว่า
+            อัปโหลดบัญชีไหนไปแล้วบ้าง (ดูตาราง log ด้านล่าง)
           </div>
         </div>
         <div class="mode-tab-bar">
@@ -150,6 +151,14 @@
             <div class="form-field">
               <label for="amr-boxplot-files">ไฟล์ AMR (.xls/.zip, เลือกได้หลายไฟล์)</label>
               <input id="amr-boxplot-files" type="file" multiple accept=".xls,.xlsx,.html,.htm,.zip">
+            </div>
+            <div class="form-field">
+              <label for="amr-boxplot-account-no">เลขบัญชี — ไม่บังคับ</label>
+              <input id="amr-boxplot-account-no" type="text" autocomplete="off" placeholder="เช่น 0199000001">
+            </div>
+            <div class="form-field">
+              <label for="amr-boxplot-company-name">ชื่อบริษัท — ไม่บังคับ</label>
+              <input id="amr-boxplot-company-name" type="text" autocomplete="off" placeholder="เช่น บริษัท ตัวอย่าง จำกัด">
             </div>
           </div>
           <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
@@ -235,8 +244,12 @@
       <div class="card" style="padding: 28px; display: flex; flex-direction: column; gap: 16px;">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
           <div>
-            <div style="font-size: 15px; font-weight: 700;">ข้อมูล AMR จริงที่มีอยู่แล้วในระบบ (แยกตาม TSIC)</div>
-            <div class="hint">รายการประเภทธุรกิจที่เคยอัปโหลด/ดึงข้อมูล AMR จริงเข้ามาแล้ว (สะสมไว้ในเครื่องนี้) จำนวนจุดข้อมูล/จำนวนวัน มากพอสมควรถึงจะวาด Boxplot ได้น่าเชื่อถือ</div>
+            <div style="font-size: 15px; font-weight: 700;">ข้อมูล AMR จริงที่มีอยู่แล้วในระบบ (แยกตาม TSIC + บัญชี)</div>
+            <div class="hint">
+              รายการประเภทธุรกิจ/บัญชีที่เคยอัปโหลด/ดึงข้อมูล AMR จริงเข้ามาแล้ว (สะสมไว้ในเครื่องนี้) แยกทีละบัญชีให้เห็นชัดๆ
+              (บัญชีที่ไม่เคยระบุตอนอัปโหลดจะรวมเป็นแถว "ไม่ระบุบัญชี") จำนวนจุดข้อมูล/จำนวนวัน มากพอสมควรถึงจะวาด Boxplot ของ
+              TSIC นั้นได้น่าเชื่อถือ (Boxplot รวมทุกบัญชีของ TSIC เดียวกันเข้าด้วยกันเสมอ)
+            </div>
           </div>
           <button type="button" id="amr-boxplot-log-refresh-btn" class="day-type-btn">🔄 รีเฟรช</button>
         </div>

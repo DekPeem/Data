@@ -8,9 +8,14 @@
 ออก เพราะฟีเจอร์นั้นถูกตัดออกจากทั้งระบบไปแล้ว เหลือแค่การอ่านไฟล์ + คำนวณ box stats + วาดกราฟ
 
 ⚠️ ไฟล์ AMR ดิบที่อัปโหลดเข้ามามีข้อมูลระบุตัวตนลูกค้า (ชื่อบริษัท/เลขบัญชี/เลขมิเตอร์) — โมดูลนี้
-อ่านเฉพาะตัวเลขกำลังไฟฟ้า (kW) รายช่วงเวลา 15 นาที ไม่เก็บชื่อ/เลขบัญชีใดๆ ไว้เลย เก็บแค่
-(business_type_code, date, hour, rate, kw) ลงไฟล์ local-only (amr_boxplot_intervals_local.csv —
-อยู่ใน .gitignore ห้าม commit เด็ดขาด เหมือนหลักการเดียวกับ customers_local.csv)
+อ่านเฉพาะตัวเลขกำลังไฟฟ้า (kW) รายช่วงเวลา 15 นาที เก็บลงไฟล์ local-only เท่านั้น
+(amr_boxplot_intervals_local.csv — อยู่ใน .gitignore ห้าม commit เด็ดขาด เหมือนหลักการเดียวกับ
+customers_local.csv) เดิมไม่เก็บชื่อ/เลขบัญชีลูกค้าเลยเพื่อความเป็นส่วนตัว แต่ผู้ใช้ยืนยันชัดเจน
+ว่าอยากให้แยก/ระบุบัญชีที่มาของแต่ละแถวได้ (เพื่อดูว่าอัปโหลดบัญชีไหนไปแล้วบ้าง ไม่ต้องเดา) จึงเพิ่ม
+คอลัมน์ account_no/company_name เป็น "ไม่บังคับ" (ไม่ใส่ก็ยังใช้งานได้ปกติ เว้นว่างไว้เฉยๆ) — ไฟล์
+นี้เป็น local-only อยู่แล้วไม่เคย commit เข้า git เลย จึงยังไม่กระทบความเป็นส่วนตัวของใครนอกเครื่อง
+ที่รันอยู่ (ดู web/app.py จุดที่เรียก append_intervals_local ว่าใส่ account_no/company_name มาจาก
+ไหนบ้าง — โหมดตรวจจับอัตโนมัติจาก PEA ได้มาฟรีจากหน้าโปรไฟล์อยู่แล้ว โหมดแนบไฟล์เองต้องกรอกเอง)
 """
 
 from __future__ import annotations
@@ -31,7 +36,7 @@ import pandas as pd
 COLORS = {"P": "#eb6834", "OP": "#1baf7a", "H": "#6250d6"}
 THAI_FONTS = ["Noto Sans Thai", "Sarabun", "TH Sarabun New", "Tahoma", "Leelawadee UI", "Thonburi"]
 
-_INTERVAL_FIELDNAMES = ["business_type_code", "date", "hour", "rate", "kw"]
+_INTERVAL_FIELDNAMES = ["business_type_code", "account_no", "company_name", "date", "hour", "rate", "kw"]
 
 DEFAULT_SHUTDOWN_KW = 150.0
 
@@ -104,11 +109,44 @@ def parse_amr_files(paths: List[Union[str, Path]]) -> List[ParsedInterval]:
     return out
 
 
-def append_intervals_local(business_type_code: str, intervals: List[ParsedInterval], path: Path) -> int:
-    """เพิ่มข้อมูล interval ที่อ่านมาแล้วต่อท้ายไฟล์ local (ไม่มีชื่อ/เลขบัญชีลูกค้าติดไปด้วยเลย)
-    คืนจำนวนแถวที่เพิ่มจริง"""
+def _migrate_intervals_file_header_if_needed(path: Path) -> None:
+    """ไฟล์ local ที่มีอยู่แล้วจากก่อนเพิ่มคอลัมน์ account_no/company_name (header เก่ามีแค่
+    business_type_code, date, hour, rate, kw) ต้อง migrate header ก่อนจะ append แถวใหม่ที่มี
+    คอลัมน์มากกว่าเดิม ไม่งั้นคอลัมน์จะเลื่อนไม่ตรงกันทั้งไฟล์ — อ่านทั้งไฟล์เดิมมาเติมคอลัมน์ใหม่ว่าง
+    ("" ไม่ทราบบัญชี/บริษัท — แถวเก่าไม่มีทางย้อนไปรู้ได้) แล้วเขียนทับด้วย header ใหม่ ทำครั้งเดียว
+    ตอน append ครั้งแรกหลังอัปเดตโค้ด (ถ้า header ตรงกับปัจจุบันอยู่แล้วไม่ทำอะไรเลย)"""
 
     import csv
+
+    if not path.exists():
+        return
+    with path.open("r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        if reader.fieldnames == _INTERVAL_FIELDNAMES:
+            return  # header ตรงกับปัจจุบันอยู่แล้ว ไม่ต้อง migrate
+        rows = list(reader)
+
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=_INTERVAL_FIELDNAMES, lineterminator="\n")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({name: row.get(name, "") for name in _INTERVAL_FIELDNAMES})
+
+
+def append_intervals_local(
+    business_type_code: str,
+    intervals: List[ParsedInterval],
+    path: Path,
+    account_no: str = "",
+    company_name: str = "",
+) -> int:
+    """เพิ่มข้อมูล interval ที่อ่านมาแล้วต่อท้ายไฟล์ local — account_no/company_name ไม่บังคับ (เว้น
+    ว่างไว้ได้ถ้าไม่รู้/ไม่อยากระบุ) ใส่มาเพื่อให้แยกดูได้ภายหลังว่าข้อมูลแต่ละก้อนมาจากบัญชี/บริษัท
+    ไหนบ้าง (ดู summarize_available_by_account) คืนจำนวนแถวที่เพิ่มจริง"""
+
+    import csv
+
+    _migrate_intervals_file_header_if_needed(path)
 
     file_exists = path.exists()
     with path.open("a", encoding="utf-8", newline="") as f:
@@ -119,6 +157,8 @@ def append_intervals_local(business_type_code: str, intervals: List[ParsedInterv
             writer.writerow(
                 {
                     "business_type_code": business_type_code,
+                    "account_no": account_no,
+                    "company_name": company_name,
                     "date": interval.date,
                     "hour": interval.hour,
                     "rate": interval.rate,
@@ -134,9 +174,16 @@ def load_intervals_local(path: Path, business_type_code: Optional[str] = None) -
 
     if not path.exists():
         return pd.DataFrame(columns=_INTERVAL_FIELDNAMES)
-    # business_type_code ต้องอ่านเป็น string เสมอ (ไม่งั้น pandas เดาว่าเป็น int ถ้ารหัสเป็นตัวเลข
-    # ล้วน เช่น "55101" ทำให้เทียบกับ business_type_code ที่ส่งเข้ามา (string) ไม่ตรงกันเงียบๆ)
-    df = pd.read_csv(path, encoding="utf-8-sig", dtype={"business_type_code": str})
+    # business_type_code/account_no ต้องอ่านเป็น string เสมอ (ไม่งั้น pandas เดาว่าเป็น int ถ้ารหัส/
+    # เลขบัญชีเป็นตัวเลขล้วน เช่น "55101" ทำให้เทียบกับค่าที่ส่งเข้ามา (string) ไม่ตรงกันเงียบๆ)
+    df = pd.read_csv(path, encoding="utf-8-sig", dtype={"business_type_code": str, "account_no": str})
+    # ไฟล์เก่าก่อนเพิ่มคอลัมน์ account_no/company_name (ยังไม่เคย append ใหม่เลยหลังอัปเดตโค้ด — ดู
+    # _migrate_intervals_file_header_if_needed) จะไม่มี 2 คอลัมน์นี้เลย เติมว่างไว้กันโค้ดฝั่งเรียกใช้
+    # (เช่น summarize_available_by_account) KeyError
+    for col in ("account_no", "company_name"):
+        if col not in df.columns:
+            df[col] = ""
+        df[col] = df[col].fillna("")
     if business_type_code:
         df = df[df["business_type_code"] == business_type_code]
     return df
@@ -177,6 +224,40 @@ def summarize_available(path: Path) -> Dict[str, dict]:
     out: Dict[str, dict] = {}
     for code, sub in df.groupby("business_type_code"):
         out[str(code)] = {"intervals": len(sub), "days": sub["date"].nunique()}
+    return out
+
+
+def summarize_available_by_account(path: Path) -> List[dict]:
+    """เหมือน summarize_available แต่แยกรายละเอียดเป็นราย (TSIC, เลขบัญชี) แทนที่จะรวมทุกบัญชีของ
+    TSIC เดียวกันเข้าด้วยกันเป็นตัวเลขเดียว — ใช้แสดงในหน้า Admin ให้เห็นชัดๆ ว่าแต่ละบัญชี/บริษัท
+    มีข้อมูลสะสมไว้เท่าไหร่แยกกัน (ผู้ใช้ยืนยันอยากได้แบบนี้ ไม่อยากเห็นแค่ยอดรวมต่อ TSIC) แถวที่ไม่
+    เคยระบุเลขบัญชีไว้เลย (account_no ว่าง — เช่นอัปโหลดจากโหมดแนบไฟล์เองแบบเดิมก่อนมีฟีเจอร์นี้ หรือ
+    ไม่ได้กรอกเลขบัญชีตอนอัปโหลด) จะถูกรวมเป็น 1 แถว "ไม่ระบุบัญชี" ต่อ TSIC แทน ไม่ใช่แยกทีละแถว
+    เปล่าๆ (บอกไม่ได้อยู่ดีว่าเป็นคนละบัญชีกันจริงไหม) คืน list เรียงจากจุดข้อมูลเยอะไปน้อย"""
+
+    if not path.exists():
+        return []
+    df = pd.read_csv(path, encoding="utf-8-sig", dtype={"business_type_code": str, "account_no": str})
+    if df.empty:
+        return []
+    for col in ("account_no", "company_name"):
+        if col not in df.columns:
+            df[col] = ""
+        df[col] = df[col].fillna("")
+
+    out: List[dict] = []
+    for (code, account_no), sub in df.groupby(["business_type_code", "account_no"], dropna=False):
+        company_name = next((n for n in sub["company_name"] if n), "")
+        out.append(
+            {
+                "business_type_code": str(code),
+                "account_no": str(account_no),
+                "company_name": company_name,
+                "intervals": len(sub),
+                "days": int(sub["date"].nunique()),
+            }
+        )
+    out.sort(key=lambda r: r["intervals"], reverse=True)
     return out
 
 
