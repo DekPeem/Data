@@ -54,11 +54,38 @@ class ParsedInterval:
     kw: float
 
 
-def _read_one(html: str) -> pd.DataFrame:
-    """แกะตาราง HTML 1 ไฟล์ (รายงานข้อมูลกิโลวัตต์ชั่วโมงแบบช่วงเวลาของ PEA — นามสกุลไฟล์ .xls
-    แต่เนื้อหาจริงเป็น HTML table) — เหมือน load_boxplot.py ต้นฉบับทุกประการ"""
+def _strip_leading_index_row(df: pd.DataFrame) -> pd.DataFrame:
+    """ไฟล์ .xlsx จริง (Excel 2007+ binary ไม่ใช่ HTML table ที่ตั้งนามสกุลเป็น .xls/.xlsx เฉยๆ แบบ
+    เดิม) ที่ดาวน์โหลดจาก amr.pea.co.th มี 1 แถวขยะบนสุดของทุกชีตเป็นตัวเลข index คอลัมน์ล้วนๆ
+    (0,1,2,...) ปนมาด้วยเสมอ (ไม่รู้สาเหตุ น่าจะเป็น artifact จากเครื่องมือ export ของ PEA เอง) ต้อง
+    ตัดทิ้งก่อนเทียบโครงสร้างกับไฟล์ HTML-in-.xls แบบเดิม — เช็คว่าแถวแรกเท่ากับ index คอลัมน์ตัวเอง
+    เป๊ะก่อนตัด กันพลาดตัดแถวข้อมูลจริงทิ้งถ้าไฟล์บางรูปแบบในอนาคตไม่มีแถวขยะนี้"""
 
-    tables = pd.read_html(io.StringIO(html))
+    if len(df) and list(df.iloc[0]) == list(df.columns):
+        return df.iloc[1:].reset_index(drop=True)
+    return df
+
+
+def _load_report_tables(path: Union[str, Path]) -> List[pd.DataFrame]:
+    """โหลดตาราง 3 ตัวจากไฟล์รายงาน AMR ดิบ 1 ไฟล์ (header/ข้อมูลจริง/ท้ายรายงาน) รองรับทั้ง 2
+    รูปแบบไฟล์ที่ปล่อยให้โหลดจาก amr.pea.co.th: (1) ไฟล์ HTML table ที่ตั้งนามสกุลเป็น .xls/.xlsx
+    เฉยๆ (รูปแบบเดิม แกะด้วย pd.read_html) และ (2) ไฟล์ .xlsx จริง (Excel 2007+ binary — เจอจากไฟล์
+    ตัวอย่างจริงของผู้ใช้ที่อัปโหลดไม่ได้ด้วยโค้ดเดิม มี 3 ชีตเรียงลำดับตรงกับ 3 ตารางเดียวกันเป๊ะ:
+    Sheet1=header, Sheet2=ข้อมูลจริง, Sheet3=ท้ายรายงาน) เช็คจาก magic bytes "PK" ของไฟล์ zip/xlsx
+    จริงก่อนเสมอ ไม่เดาจากนามสกุลไฟล์ (นามสกุล .xlsx เจอได้ทั้ง 2 รูปแบบ)"""
+
+    raw = Path(path).read_bytes()
+    if raw[:2] == b"PK":  # ไฟล์ .xlsx จริง (Excel 2007+ เป็นไฟล์ zip ข้างใน)
+        sheets = pd.read_excel(io.BytesIO(raw), sheet_name=None, header=None)
+        return [_strip_leading_index_row(df) for df in sheets.values()]
+    html = raw.decode("utf-8", errors="ignore")
+    return pd.read_html(io.StringIO(html))
+
+
+def _read_one(tables: List[pd.DataFrame]) -> pd.DataFrame:
+    """แกะตารางข้อมูลจริง (tables[1]) จากตารางทั้ง 3 ของไฟล์รายงาน 1 ไฟล์ (จาก _load_report_tables)
+    — เหมือน load_boxplot.py ต้นฉบับทุกประการ"""
+
     d = tables[1].iloc[1:].copy()  # table 0 = ข้อมูลหัวรายงาน, 1 = ข้อมูลจริง, 2 = ท้ายรายงาน
     d.columns = ["ts", "a1", "a2", "b1", "b2", "c1", "c2"]
     d = d[d["ts"].astype(str).str.match(r"\d\d/\d\d/\d{4} \d\d\.\d\d")]
@@ -68,13 +95,11 @@ def _read_one(html: str) -> pd.DataFrame:
 
 
 def parse_amr_file(path: Union[str, Path]) -> List[ParsedInterval]:
-    """อ่านไฟล์ AMR ดิบ 1 ไฟล์ (encoding utf-8 หรือใกล้เคียง) คืนรายการ interval ที่แกะแล้ว
-    (rate=P/OP/H, kw, date, hour) — คืน list ว่างถ้าอ่าน/แปลงไม่สำเร็จ (ไม่ raise ทำให้ไฟล์อื่นที่
-    อัปโหลดมาพร้อมกันยังประมวลผลต่อได้)"""
+    """อ่านไฟล์ AMR ดิบ 1 ไฟล์ คืนรายการ interval ที่แกะแล้ว (rate=P/OP/H, kw, date, hour) — คืน
+    list ว่างถ้าอ่าน/แปลงไม่สำเร็จ (ไม่ raise ทำให้ไฟล์อื่นที่อัปโหลดมาพร้อมกันยังประมวลผลต่อได้)"""
 
     try:
-        html = Path(path).read_text(encoding="utf-8", errors="ignore")
-        df = _read_one(html)
+        df = _read_one(_load_report_tables(path))
     except Exception:  # noqa: BLE001 — ไฟล์เสีย/รูปแบบไม่ตรง ข้ามไปเฉยๆ
         return []
 
@@ -122,8 +147,7 @@ def extract_customer_info(path: Union[str, Path]) -> Tuple[str, str]:
     ให้เรียบร้อยแล้วในตัว ไม่ต้อง strip เพิ่ม แต่ strip ไว้กันเหนียวเผื่อโครงสร้างเปลี่ยนเล็กน้อย)"""
 
     try:
-        html = Path(path).read_text(encoding="utf-8", errors="ignore")
-        header = pd.read_html(io.StringIO(html))[0]
+        header = _load_report_tables(path)[0]
     except Exception:  # noqa: BLE001 — ไฟล์เสีย/รูปแบบไม่ตรง/ไม่มี tables[0] เลย ถือว่าหาไม่เจอ
         return "", ""
 

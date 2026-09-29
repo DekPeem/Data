@@ -96,6 +96,53 @@ def amr_report_file(tmp_path):
     return path
 
 
+def _make_amr_xlsx(tmp_path, start_date: dt.datetime, n_days: int, account_no: str = "", company_name: str = "") -> Path:
+    """สร้างไฟล์ .xlsx จริง (Excel 2007+ binary) จำลองรูปแบบไฟล์ AMR จริงแบบที่ 2 ที่ผู้ใช้เจอ
+    (นอกจาก HTML-in-.xls แบบเดิม) — 3 ชีต (header/ข้อมูลจริง/ท้ายรายงาน) พร้อมแถวขยะ "0,1,2,...,6"
+    บนสุดของทุกชีตที่เจอในไฟล์ตัวอย่างจริง (ดู _strip_leading_index_row ใน amr_boxplot.py)"""
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    junk_row = list(range(7))
+
+    header_ws = wb.active
+    header_ws.title = "Sheet1"
+    header_ws.append(junk_row)
+    header_ws.append(["รายงานข้อมูลกิโลวัตต์แบบช่วงเวลา"] * 7)
+    header_ws.append(["[ระหว่างวันที่ : 01/01/2026 - 03/01/2026]"] * 7)
+    header_ws.append(["บัญชีผู้ใช้ไฟ :", account_no, "ชื่อผู้ใช้ไฟ :", company_name, None, None, None])
+    header_ws.append(["หมายเลขมิเตอร์ :", "METER123", "Tariff :", "TOU", None, None, None])
+    header_ws.append(["CT Ratio :", "100:5 A.", "VT Ratio :", "115000:115 V.", None, None, None])
+
+    data_ws = wb.create_sheet("Sheet2")
+    data_ws.append(junk_row)
+    data_ws.append([None, "RATE A", "RATE A", "RATE B", "RATE B", "RATE C", "RATE C"])
+    d = start_date
+    for _ in range(n_days):
+        for interval_i in range(96):
+            minutes = interval_i * 15
+            t = d + dt.timedelta(minutes=minutes) + dt.timedelta(minutes=15)
+            hour = (minutes // 60) % 24
+            row = [t.strftime("%d/%m/%Y %H.%M"), None, None, None, None, None, None]
+            if d.weekday() >= 5:
+                row[5] = row[6] = "100.000"
+            elif 9 <= hour < 22:
+                row[1] = row[2] = "400.000"
+            else:
+                row[3] = row[4] = "150.000"
+            data_ws.append(row)
+        d += dt.timedelta(days=1)
+
+    footer_ws = wb.create_sheet("Sheet3")
+    footer_ws.append(junk_row)
+    footer_ws.append(["***หมายเหตุ***"] * 7)
+
+    path = tmp_path / "report.xlsx"
+    wb.save(path)
+    return path
+
+
 def test_parse_amr_file_extracts_all_intervals(amr_report_file):
     intervals = parse_amr_file(amr_report_file)
     assert len(intervals) == 5 * 96  # 5 วัน x 96 จุดต่อวัน ไม่มีจุดไหนถูกทิ้ง
@@ -353,3 +400,22 @@ def test_extract_customer_info_from_files_all_empty_returns_empty(amr_report_fil
     account_no, company_name = extract_customer_info_from_files([amr_report_file])
     assert account_no == ""
     assert company_name == ""
+
+
+def test_parse_amr_file_supports_real_xlsx_binary_format(tmp_path):
+    """ไฟล์ .xlsx จริง (Excel 2007+ binary) รูปแบบที่ 2 นอกจาก HTML-in-.xls เดิม — เจอจากไฟล์
+    ตัวอย่างจริงของผู้ใช้ที่อัปโหลดไม่ได้ก่อนหน้านี้"""
+
+    path = _make_amr_xlsx(tmp_path, dt.datetime(2026, 1, 1), n_days=5)
+    intervals = parse_amr_file(path)
+    assert len(intervals) == 5 * 96
+    assert {i.rate for i in intervals} == {"P", "OP", "H"}
+
+
+def test_extract_customer_info_supports_real_xlsx_binary_format(tmp_path):
+    path = _make_amr_xlsx(
+        tmp_path, dt.datetime(2026, 1, 1), n_days=1, account_no="0199000003", company_name="บริษัท สาม จำกัด"
+    )
+    account_no, company_name = extract_customer_info(path)
+    assert account_no == "0199000003"
+    assert company_name == "บริษัท สาม จำกัด"
