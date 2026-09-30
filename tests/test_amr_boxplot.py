@@ -248,6 +248,41 @@ def _make_amr_monthly_kw_xlsx(
     return path
 
 
+def _make_amr_custom_kw_xlsx(tmp_path, start_date: dt.datetime, n_days: int, account_no: str = "") -> Path:
+    """สร้างไฟล์ .xlsx จริงจำลองรายงาน "Custom kW Report" ของ PEA (รูปแบบไฟล์ AMR จริงแบบที่ 5 ที่
+    เจอ — ภาษาอังกฤษล้วน ชีตเดียว มีแค่คอลัมน์ "Time"/"kW" ไม่มีคอลัมน์ rate แยกเลย และไม่มีชื่อบริษัท
+    ให้เลย — ต้องเดา rate จากวัน/เวลาเอง ดู _classify_tou_rate) เลขบัญชีในไฟล์จริงเป็น text ล้วนไม่มี
+    ตัวอักษรอื่นปนเลยสักแถว (ต่างจากรูปแบบอื่นที่มี \\xa0 ต่อท้ายเสมอ) เพื่อจำลองบั๊กจริงที่เจอ (pandas
+    เดา dtype คอลัมน์เป็น float ทำเลข 0 นำหน้าหาย) จึงตั้งใจไม่ใส่ \\xa0 ต่อท้ายในเทสนี้"""
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "kW0000000000000101202612000"
+
+    ws.append([None, "Provincial Electricity Authority Advanced Metering Infrastructure (AMI) ", None])
+    ws.append([None, "200 Ngam Wong Wan Road", None])
+    ws.append([None, "Custom kW Report", None])
+    ws.append([None, "Between 01 January 2026 - 31 January 2026", None])
+    ws.append([None, "Contact Account : ", account_no])
+    ws.append([None, "Meter No. : ", "6500651587"])
+    ws.append([None, None, None])
+    ws.append(["Time", "kW", None])
+
+    d = start_date
+    for _ in range(n_days):
+        for interval_i in range(96):
+            minutes = interval_i * 15
+            t = d + dt.timedelta(minutes=minutes) + dt.timedelta(minutes=15)
+            ws.append([t.strftime("%d/%m/%Y %H.%M"), 123, None])
+        d += dt.timedelta(days=1)
+
+    path = tmp_path / "report_custom_kw.xlsx"
+    wb.save(path)
+    return path
+
+
 def test_parse_amr_file_extracts_all_intervals(amr_report_file):
     intervals = parse_amr_file(amr_report_file)
     assert len(intervals) == 5 * 96  # 5 วัน x 96 จุดต่อวัน ไม่มีจุดไหนถูกทิ้ง
@@ -636,3 +671,31 @@ def test_extract_customer_info_supports_monthly_kw_format(tmp_path):
     account_no, company_name = extract_customer_info(path)
     assert account_no == "0199000005"
     assert company_name == "บริษัท ห้า จำกัด"
+
+
+def test_parse_amr_file_supports_custom_kw_format_and_classifies_by_tou(tmp_path):
+    """ไฟล์ .xlsx จริงรูปแบบที่ 5 "Custom kW Report" (ภาษาอังกฤษล้วน) ไม่มีคอลัมน์ rate แยกให้เลย
+    ต้องเดา P/OP/H จากวัน/เวลาเอง — 1 ม.ค. 2569 เป็นวันพฤหัส (วันทำการ) เป็นวันแรก 5 วัน ครอบคลุมทั้ง
+    วันทำการและวันหยุดสุดสัปดาห์ (เสาร์-อาทิตย์)"""
+
+    path = _make_amr_custom_kw_xlsx(tmp_path, dt.datetime(2026, 1, 1), n_days=5)
+    intervals = parse_amr_file(path)
+    assert len(intervals) == 5 * 96
+    assert {i.rate for i in intervals} == {"P", "OP", "H"}
+
+    by_key = {(i.date, i.hour): i.rate for i in intervals}
+    assert by_key[("2026-01-01", 10)] == "P"  # พฤหัส 10:00 -> วันทำการ ช่วง Peak (9-22)
+    assert by_key[("2026-01-01", 2)] == "OP"  # พฤหัส 02:00 -> วันทำการ นอกช่วง Peak
+    assert by_key[("2026-01-03", 10)] == "H"  # เสาร์ -> วันหยุด ไม่ว่าจะกี่โมง
+    assert by_key[("2026-01-04", 10)] == "H"  # อาทิตย์ -> วันหยุด
+
+
+def test_extract_customer_info_supports_custom_kw_format_without_leading_zero_loss(tmp_path):
+    """เลขบัญชีในไฟล์รูปแบบนี้เป็น text ล้วนไม่มีอักขระอื่นปนเลยสักแถว (ต่างจากรูปแบบอื่นที่มี \\xa0
+    ต่อท้ายเสมอ) — เคยเป็นบั๊กจริง: pandas.read_excel เดา dtype คอลัมน์เป็น float เพราะค่าดูเหมือน
+    ตัวเลขล้วน ทำให้เลข 0 นำหน้าหาย (เช่น "020027862234" กลายเป็น "20027862234.0")"""
+
+    path = _make_amr_custom_kw_xlsx(tmp_path, dt.datetime(2026, 1, 1), n_days=1, account_no="020027862234")
+    account_no, company_name = extract_customer_info(path)
+    assert account_no == "020027862234"
+    assert company_name == ""

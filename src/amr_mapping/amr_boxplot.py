@@ -59,9 +59,11 @@ def _strip_leading_index_row(df: pd.DataFrame) -> pd.DataFrame:
     เดิม) ที่ดาวน์โหลดจาก amr.pea.co.th มี 1 แถวขยะบนสุดของทุกชีตเป็นตัวเลข index คอลัมน์ล้วนๆ
     (0,1,2,...) ปนมาด้วยเสมอ (ไม่รู้สาเหตุ น่าจะเป็น artifact จากเครื่องมือ export ของ PEA เอง) ต้อง
     ตัดทิ้งก่อนเทียบโครงสร้างกับไฟล์ HTML-in-.xls แบบเดิม — เช็คว่าแถวแรกเท่ากับ index คอลัมน์ตัวเอง
-    เป๊ะก่อนตัด กันพลาดตัดแถวข้อมูลจริงทิ้งถ้าไฟล์บางรูปแบบในอนาคตไม่มีแถวขยะนี้"""
+    เป๊ะก่อนตัด กันพลาดตัดแถวข้อมูลจริงทิ้งถ้าไฟล์บางรูปแบบในอนาคตไม่มีแถวขยะนี้ (เทียบด้วย str()
+    ทั้งสองฝั่งเสมอ เพราะ df อ่านมาด้วย dtype=str แต่ df.columns ยังเป็น int ธรรมดา — เทียบตรงๆ แบบ
+    ไม่แปลงชนิดข้อมูลก่อนจะไม่ match กันเลยสักแถว)"""
 
-    if len(df) and list(df.iloc[0]) == list(df.columns):
+    if len(df) and [str(x) for x in df.iloc[0]] == [str(x) for x in df.columns]:
         return df.iloc[1:].reset_index(drop=True)
     return df
 
@@ -76,7 +78,13 @@ def _load_report_tables(path: Union[str, Path]) -> List[pd.DataFrame]:
 
     raw = Path(path).read_bytes()
     if raw[:2] == b"PK":  # ไฟล์ .xlsx จริง (Excel 2007+ เป็นไฟล์ zip ข้างใน)
-        sheets = pd.read_excel(io.BytesIO(raw), sheet_name=None, header=None)
+        # dtype=str บังคับให้อ่านทุกคอลัมน์เป็นข้อความดิบเสมอ — ไม่งั้น pandas เดา dtype ของคอลัมน์
+        # เอง แล้วคอลัมน์ที่ค่าดูเหมือนตัวเลขล้วน (เช่น เลขบัญชี/เลขมิเตอร์ที่ไม่มีเลข 0 นำหน้าปนอยู่
+        # เลยสักแถว) จะถูกแปลงเป็น float ทั้งคอลัมน์ ทำให้เลขบัญชีที่มี 0 นำหน้าหายไป (เช่น
+        # "020027862234" กลายเป็น "20027862234.0") เจอบั๊กนี้จริงจากไฟล์ตัวอย่างจริงของผู้ใช้ที่เลข
+        # บัญชีในคอลัมน์นั้นไม่มีอักขระอื่นปนเลยสักแถว (ไฟล์แบบอื่นรอดเพราะมี "\xa0" ต่อท้ายอยู่แล้ว
+        # ทำให้ pandas เดาว่าเป็นคอลัมน์ข้อความไปเอง ไม่ได้แก้บั๊กนี้จริง แค่บังเอิญไม่โดน)
+        sheets = pd.read_excel(io.BytesIO(raw), sheet_name=None, header=None, dtype=str)
         return [_strip_leading_index_row(df) for df in sheets.values()]
     html = raw.decode("utf-8", errors="ignore")
     return pd.read_html(io.StringIO(html))
@@ -92,6 +100,37 @@ def _sheet_contains_text(df: pd.DataFrame, text: str, max_rows: int = 15) -> boo
             if pd.notna(cell) and text in str(cell):
                 return True
     return False
+
+
+def _classify_tou_rate(start: pd.Series) -> np.ndarray:
+    """เดา rate (P/OP/H) จากวัน/เวลาเริ่มต้นของแต่ละช่วง 15 นาทีเอง ตามกฎ TOU มาตรฐานทั่วไป (จันทร์-
+    ศุกร์ 9:00-22:00 = Peak, จันทร์-ศุกร์ช่วงเวลาอื่น = Off-Peak, เสาร์-อาทิตย์ = Holiday) — ใช้เฉพาะ
+    ไฟล์รายงาน "Custom kW Report" ที่ไม่มีคอลัมน์ rate แยกให้เลย (รายงานแบบอื่นทุกแบบอ่าน rate จาก
+    ตำแหน่งคอลัมน์ในไฟล์ตรงๆ แม่นกว่านี้เสมอ ไม่ต้องเดา ฟังก์ชันนี้ไม่ถูกเรียกเลย) เป็นการประมาณการ
+    ทั่วไปตามธรรมเนียมที่ระบบนี้ใช้อยู่แล้ว (ดู helper สร้างไฟล์ทดสอบใน tests/) ไม่ได้ตรวจสอบว่าบัญชี
+    นี้ถือสัญญาอัตรา TOU จริงหรือไม่ และไม่รวมวันหยุดนักขัตฤกษ์ (ผู้ใช้ยืนยันให้ใช้วิธีนี้แทนที่จะ
+    ปฏิเสธไฟล์รูปแบบนี้ไปเลย เพราะไม่มีข้อมูล rate จริงให้ใช้)"""
+
+    weekday = start.dt.weekday  # 0=จันทร์ ... 5=เสาร์ 6=อาทิตย์
+    is_weekday = weekday < 5
+    is_peak_hour = (start.dt.hour >= 9) & (start.dt.hour < 22)
+    return np.select([is_weekday & is_peak_hour, is_weekday & ~is_peak_hour], ["P", "OP"], "H")
+
+
+def _read_one_custom_kw(sheet: pd.DataFrame) -> pd.DataFrame:
+    """แกะตารางข้อมูลจากไฟล์รายงาน "Custom kW Report" ของ PEA (.xlsx จริง ชีตเดียว ภาษาอังกฤษล้วน
+    ไม่มีคอลัมน์ RATE A/B/C หรือช่วงเวลาใดๆ เลย — มีแค่คอลัมน์ "Time"/"kW" คอลัมน์เดียว) หน่วยเป็น
+    kW เฉลี่ยตรงๆ อยู่แล้ว (ชื่อรายงานบอกตรงๆ ว่า "kW Report" ไม่ใช่ kWh) แต่ไฟล์ไม่มีข้อมูลบอกเลยว่า
+    แต่ละจุดเป็นช่วง Peak/Off-Peak/Holiday — คืน DataFrame คอลัมน์ ts,kw ตรงๆ (โครงสร้างต่างจาก
+    รายงานแบบอื่นที่คืน a1/a2/b1/b2/c1/c2 เสมอ) ให้ parse_amr_file รู้ว่าต้องคำนวณ rate จากวัน/เวลา
+    เอง (ดู _classify_tou_rate) แทนการอ่านจากตำแหน่งคอลัมน์"""
+
+    d = sheet.iloc[:, :2].copy()
+    d.columns = ["ts", "kw"]
+    d["ts"] = d["ts"].astype(str).str.replace("\xa0", "", regex=False).str.strip()
+    d = d[d["ts"].str.match(r"\d\d/\d\d/\d{4} \d\d\.\d\d")].copy()
+    d["kw"] = pd.to_numeric(d["kw"], errors="coerce")
+    return d
 
 
 def _read_one_monthly_kw(sheet: pd.DataFrame) -> pd.DataFrame:
@@ -140,13 +179,18 @@ def _read_one_monthly_kwh(sheet: pd.DataFrame) -> pd.DataFrame:
 def _read_one(tables: List[pd.DataFrame]) -> pd.DataFrame:
     """แกะตารางข้อมูลจริงจากตารางทั้งหมดของไฟล์รายงาน 1 ไฟล์ (จาก _load_report_tables) คืน
     DataFrame คอลัมน์ ts,a1,a2,b1,b2,c1,c2 มาตรฐานเดียวกันเสมอ (kW เฉลี่ยของช่วง 15 นาที) ไม่ว่าไฟล์
-    ต้นทางจะเป็นรายงานแบบไหน — ไฟล์ที่มีแค่ 1 ชีต/ตาราง (รวม header/ข้อมูล/ท้ายรายงานไว้ด้วยกันหมด)
-    คือรายงานรายเดือนแบบใดแบบหนึ่ง แยกอีกชั้นจากชื่อรายงานที่พิมพ์ไว้ในไฟล์เอง: "กิโลวัตต์ชั่วโมง
-    รายเดือน" (หน่วย kWh ต้องแปลง — ดู _read_one_monthly_kwh) หรือ "กิโลวัตต์รายเดือน" เฉยๆ (หน่วย
-    kW ตรงอยู่แล้ว — ดู _read_one_monthly_kw) ส่วนที่เหลือ (HTML-in-.xls เดิม หรือ .xlsx จริง 3 ชีต
-    แยกกัน) คือรายงาน "กิโลวัตต์แบบช่วงเวลา" แบบเดิม — เหมือน load_boxplot.py ต้นฉบับทุกประการ"""
+    ต้นทางจะเป็นรายงานแบบไหน ยกเว้นรายงาน "Custom kW Report" (ดู _read_one_custom_kw) ที่คืนแค่
+    คอลัมน์ ts,kw เพราะไฟล์ไม่มีข้อมูล rate ให้เลย (parse_amr_file ต้องเช็คคอลัมน์ให้ดีก่อนใช้งาน) —
+    ไฟล์ที่มีแค่ 1 ชีต/ตาราง (รวม header/ข้อมูล/ท้ายรายงานไว้ด้วยกันหมด) คือรายงานรายเดือน/รายงาน
+    กำหนดเองแบบใดแบบหนึ่ง แยกอีกชั้นจากชื่อรายงานที่พิมพ์ไว้ในไฟล์เอง: "Custom kW Report" (ไม่มี
+    rate เลย ต้องเดาจากวัน/เวลาเอง), "กิโลวัตต์ชั่วโมงรายเดือน" (หน่วย kWh ต้องแปลง — ดู
+    _read_one_monthly_kwh), หรือ "กิโลวัตต์รายเดือน" เฉยๆ (หน่วย kW ตรงอยู่แล้ว — ดู
+    _read_one_monthly_kw) ส่วนที่เหลือ (HTML-in-.xls เดิม หรือ .xlsx จริง 3 ชีตแยกกัน) คือรายงาน
+    "กิโลวัตต์แบบช่วงเวลา" แบบเดิม — เหมือน load_boxplot.py ต้นฉบับทุกประการ"""
 
     if len(tables) == 1:
+        if _sheet_contains_text(tables[0], "Custom kW Report"):
+            return _read_one_custom_kw(tables[0])
         if _sheet_contains_text(tables[0], "กิโลวัตต์ชั่วโมงรายเดือน"):
             return _read_one_monthly_kwh(tables[0])
         return _read_one_monthly_kw(tables[0])
@@ -186,8 +230,14 @@ def parse_amr_file(path: Union[str, Path]) -> List[ParsedInterval]:
     end = day + pd.to_timedelta(mins, unit="m")
     start = end - pd.Timedelta(minutes=15)
 
-    rate = np.select([df.a1.notna(), df.b1.notna(), df.c1.notna()], ["P", "OP", "H"], "?")
-    kw = df[["a1", "b1", "c1"]].bfill(axis=1).iloc[:, 0]
+    if "kw" in df.columns:
+        # รายงาน "Custom kW Report" (ดู _read_one_custom_kw) ไม่มีคอลัมน์ rate แยกให้เลย ต้องเดาจาก
+        # วัน/เวลาเอง (ผู้ใช้ยืนยันให้ใช้วิธีนี้แทนที่จะปฏิเสธไฟล์รูปแบบนี้ไปเลย — ดู _classify_tou_rate)
+        rate = _classify_tou_rate(start)
+        kw = df["kw"]
+    else:
+        rate = np.select([df.a1.notna(), df.b1.notna(), df.c1.notna()], ["P", "OP", "H"], "?")
+        kw = df[["a1", "b1", "c1"]].bfill(axis=1).iloc[:, 0]
 
     out: List[ParsedInterval] = []
     for s, r, k in zip(start, rate, kw):
@@ -229,12 +279,14 @@ def extract_customer_info(path: Union[str, Path]) -> Tuple[str, str]:
     except Exception:  # noqa: BLE001 — ไฟล์เสีย/รูปแบบไม่ตรง/ไม่มี tables[0] เลย ถือว่าหาไม่เจอ
         return "", ""
 
+    # รายงาน "Custom kW Report" เป็นภาษาอังกฤษล้วน ใช้ป้ายกำกับ "Contact Account :" แทน "บัญชีผู้ใช้ไฟ
+    # :" (และไม่มีชื่อบริษัทให้เลย — company_name จะว่างเสมอสำหรับรายงานแบบนี้ ต้องกรอกเองในฟอร์ม)
     account_no = ""
     company_name = ""
     for _, row in header.iterrows():
         cells = [str(c).strip() if pd.notna(c) else "" for c in row]
         for i, cell in enumerate(cells):
-            if "บัญชีผู้ใช้ไฟ" in cell and i + 1 < len(cells):
+            if ("บัญชีผู้ใช้ไฟ" in cell or "Contact Account" in cell) and i + 1 < len(cells):
                 account_no = cells[i + 1]
             if "ชื่อผู้ใช้ไฟ" in cell and i + 1 < len(cells):
                 company_name = cells[i + 1]
