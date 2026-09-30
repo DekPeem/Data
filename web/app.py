@@ -302,12 +302,41 @@ def api_update_business_type_hierarchy(code: str):
     return jsonify({"code": code, "section_code": section_code, "division_code": division_code})
 
 
+# ช่วง division_code (เลข TSIC 2 หลักแรก) ของแต่ละ section (ตัวอักษร) ตามมาตรฐาน TSIC 2009 /
+# ISIC Rev.4 — ใช้เดา section_code จาก division_code เวลาที่ business_types.csv เอง "ไม่เคยมี"
+# แถวไหนอยู่ division นั้นมาก่อนเลย เลยไม่มี section_code ให้เทียบตรงๆ (ดู _section_code_for_division)
+_TSIC_SECTION_DIVISION_RANGES: List[tuple] = [
+    ("A", 1, 3), ("B", 5, 9), ("C", 10, 33), ("D", 35, 35), ("E", 36, 39),
+    ("F", 41, 43), ("G", 45, 47), ("H", 49, 53), ("I", 55, 56), ("J", 58, 63),
+    ("K", 64, 66), ("L", 68, 68), ("M", 69, 75), ("N", 77, 82), ("O", 84, 84),
+    ("P", 85, 85), ("Q", 86, 88), ("R", 90, 93), ("S", 94, 96), ("T", 97, 98),
+    ("U", 99, 99),
+]
+
+
+def _section_code_for_division(division_code: Optional[str]) -> Optional[str]:
+    """เดา section_code (ตัวอักษร A-U) จาก division_code (เลข TSIC 2 หลักแรก) ตามช่วงมาตรฐาน
+    TSIC 2009/ISIC Rev.4 — ใช้เป็นชั้นสำรองสุดท้ายตอนหา business_type ใกล้เคียง เมื่อไม่มี TSIC
+    ตรงเป๊ะและไม่มี business_type ไหนอยู่ division เดียวกันเลยด้วย คืน None ถ้า division_code
+    parse ไม่ได้หรือไม่อยู่ในช่วงมาตรฐานเลย"""
+
+    if not division_code or not division_code.isdigit():
+        return None
+    division_num = int(division_code)
+    for section_code, lo, hi in _TSIC_SECTION_DIVISION_RANGES:
+        if lo <= division_num <= hi:
+            return section_code
+    return None
+
+
 def _suggest_business_type_for_division(
     tsic_code: Optional[str], division_code: Optional[str], reference
 ) -> tuple:
-    """คืน (suggested_code, suggested_name, is_approximate, explanation) — ลองรหัส TSIC ตรงเป๊ะ
-    ก่อนเสมอ (ถ้ามีอยู่ในระบบ business_types.csv แล้ว) ก่อนจะลดชั้นไปใช้ business_type อื่นที่อยู่
-    TSIC division เดียวกันแทน (ประมาณการ) ถ้ายังไม่มีเลยทั้งสองชั้น คืน (None, None, False, None)
+    """คืน (suggested_code, suggested_name, is_approximate, explanation) — ไล่ลดชั้นความแม่นยำ
+    3 ชั้น: (1) รหัส TSIC ตรงเป๊ะ (ถ้ามีอยู่ในระบบ business_types.csv แล้ว) (2) business_type อื่น
+    ที่อยู่ TSIC division เดียวกัน (เลข 2 หลักแรกตรงกัน — ประมาณการ) (3) business_type อื่นที่อยู่
+    TSIC section เดียวกัน (หมวดตัวอักษร กว้างกว่า division อีกชั้นตามมาตรฐาน TSIC 2009/ISIC Rev.4
+    — ประมาณการเช่นกัน แต่หยาบกว่าชั้น 2) ถ้ายังไม่มีเลยทั้งสามชั้น คืน (None, None, False, None)
     ให้ผู้ใช้เลือกเอง/เพิ่มประเภทธุรกิจใหม่เอง (ดู POST /api/business-types)
 
     ใช้ร่วมกันทั้งผลจาก DBD DataWarehouse โดยตรง และคำเดาจาก Wikipedia (ทั้งสองมี division_code
@@ -327,17 +356,37 @@ def _suggest_business_type_for_division(
                 )
                 return (bt.code, bt.name_th, True, explanation)
 
+    section_code = _section_code_for_division(division_code)
+    if section_code:
+        for bt in reference.business_types.values():
+            if bt.section_code == section_code:
+                explanation = (
+                    f"ไม่มีรหัส TSIC {tsic_code or division_code} ตรงๆ ในระบบ และไม่มี business_type "
+                    f"ไหนอยู่ TSIC division {division_code} เดียวกันเลย ใช้ '{bt.name_th}' ({bt.code}) "
+                    f"ที่อยู่ TSIC section {section_code} เดียวกัน (หมวดกว้างกว่า) แทน — ควรตรวจสอบซ้ำ"
+                )
+                return (bt.code, bt.name_th, True, explanation)
+
     return (None, None, False, None)
 
 
 def _rank_businesses_by_division(division_code: Optional[str], reference, limit: int = 3) -> List[BusinessType]:
     """คืน business_type ที่อยู่ TSIC division เดียวกันสูงสุด limit รายการ — ใช้ตอนเดา TSIC จาก
     Wikipedia ได้ไม่มั่นใจพอ (ดู _run_business_type_lookup_job) ให้ผู้ใช้เลือกเองจากตัวเลือก
-    ใกล้เคียงแทนที่จะเดาให้อัตโนมัติ"""
+    ใกล้เคียงแทนที่จะเดาให้อัตโนมัติ ถ้าไม่มี business_type ไหนอยู่ division เดียวกันเลย ลดชั้นไปหา
+    ที่อยู่ TSIC section เดียวกันแทน (หมวดกว้างกว่า — เหมือนชั้นสำรองสุดท้ายของ
+    _suggest_business_type_for_division) กันไม่ให้ผู้ใช้เจอลิสต์ว่างเปล่าไปเลย"""
 
     if not division_code:
         return []
-    return [bt for bt in reference.business_types.values() if bt.division_code == division_code][:limit]
+    by_division = [bt for bt in reference.business_types.values() if bt.division_code == division_code][:limit]
+    if by_division:
+        return by_division
+
+    section_code = _section_code_for_division(division_code)
+    if not section_code:
+        return []
+    return [bt for bt in reference.business_types.values() if bt.section_code == section_code][:limit]
 
 
 def _run_business_type_lookup_job(
@@ -482,12 +531,18 @@ def _run_business_type_lookup_job(
                         # แสดงรายการอันดับ 1/2/3 ที่ใกล้เคียงที่สุดแทน ให้ผู้ใช้เลือกเอง
                         suggested_code = None
                         ranked = _rank_businesses_by_division(guessed_division_code, reference, limit=3)
+                        ranked_is_same_division = any(bt.division_code == guessed_division_code for bt in ranked)
                         wikipedia_result["ranked_candidates"] = [
                             {
                                 "business_type_code": bt.code,
                                 "business_type_name": bt.name_th,
-                                "match_basis": "same_division",
-                                "explanation": f"อยู่ TSIC division {guessed_division_code} เดียวกับที่เดาไว้",
+                                "match_basis": "same_division" if ranked_is_same_division else "same_section",
+                                "explanation": (
+                                    f"อยู่ TSIC division {guessed_division_code} เดียวกับที่เดาไว้"
+                                    if ranked_is_same_division
+                                    else f"ไม่มี business_type ไหนอยู่ TSIC division {guessed_division_code} "
+                                    f"เลย อยู่ TSIC section {bt.section_code} เดียวกัน (หมวดกว้างกว่า) แทน"
+                                ),
                             }
                             for bt in ranked
                         ]

@@ -387,6 +387,85 @@ def test_business_type_lookup_suggests_approximate_match_when_no_exact_division(
     assert candidate["suggested_explanation"]
 
 
+class _FakeReference:
+    """reference ปลอมสำหรับทดสอบ _suggest_business_type_for_division/_rank_businesses_by_division
+    ตรงๆ แบบ unit test โดยไม่ต้องพึ่ง business_types.csv จริง (ควบคุม division/section ได้เต็มที่)"""
+
+    def __init__(self, business_types):
+        self.business_types = business_types
+
+
+def test_suggest_business_type_falls_back_to_section_when_no_division_match():
+    """TSIC 17020 (division "17" — การผลิตกระดาษ, section "C" — การผลิต) ไม่มีธุรกิจไหนในระบบตรง
+    division 17 เป๊ะเลย แต่มีธุรกิจอื่นอยู่ section C เดียวกัน (division "22" พลาสติก) — ต้อง
+    fallback ไปแนะนำตัวนั้นแทนที่จะปล่อยว่าง (ชั้นสำรองที่ 3 กว้างกว่า division อีกชั้น)"""
+
+    from amr_mapping.models import BusinessType
+
+    reference = _FakeReference(
+        {
+            "22230": BusinessType(
+                code="22230", name_th="การผลิตผลิตภัณฑ์พลาสติกสำหรับยานยนต์", category="manufacturing",
+                section_code="C", division_code="22",
+            ),
+        }
+    )
+
+    code, name, is_approximate, explanation = app_module._suggest_business_type_for_division(
+        "17020", "17", reference
+    )
+
+    assert code == "22230"
+    assert name == "การผลิตผลิตภัณฑ์พลาสติกสำหรับยานยนต์"
+    assert is_approximate is True
+    assert "section" in explanation
+
+
+def test_suggest_business_type_returns_none_when_no_division_or_section_match():
+    """ไม่มีธุรกิจไหนในระบบอยู่ division หรือ section เดียวกันเลยแม้แต่ตัวเดียว — ต้องปล่อยว่าง
+    (None) ให้ผู้ใช้เลือกเอง ไม่ควรเดาส่งเดชข้ามหมวดที่ไม่เกี่ยวข้องกันเลย"""
+
+    from amr_mapping.models import BusinessType
+
+    reference = _FakeReference(
+        {
+            "85101": BusinessType(
+                code="85101", name_th="การศึกษา", category="education",
+                section_code="P", division_code="85",
+            ),
+        }
+    )
+
+    code, name, is_approximate, explanation = app_module._suggest_business_type_for_division(
+        "17020", "17", reference
+    )
+
+    assert code is None
+    assert name is None
+    assert is_approximate is False
+    assert explanation is None
+
+
+def test_rank_businesses_by_division_falls_back_to_section():
+    """เหมือน _suggest_business_type_for_division — ถ้าไม่มีธุรกิจไหนอยู่ division เดียวกันเลย
+    ต้องลดชั้นไปแสดงธุรกิจที่อยู่ section เดียวกันแทน ไม่ใช่คืน list ว่างเปล่าไปเลย"""
+
+    from amr_mapping.models import BusinessType
+
+    reference = _FakeReference(
+        {
+            "22230": BusinessType(
+                code="22230", name_th="การผลิตผลิตภัณฑ์พลาสติกสำหรับยานยนต์", category="manufacturing",
+                section_code="C", division_code="22",
+            ),
+        }
+    )
+
+    ranked = app_module._rank_businesses_by_division("17", reference, limit=3)
+
+    assert [bt.code for bt in ranked] == ["22230"]
+
+
 def test_business_type_lookup_handles_selenium_error_gracefully(client, monkeypatch):
     def fake_lookup(company_name, log=lambda m: None, headless=True):
         raise RuntimeError("เปิด Chrome ไม่สำเร็จ (จำลอง error)")
