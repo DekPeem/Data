@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="th">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>เลือกเมนู — SCG</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .menu-body { max-width: 880px; margin: 0 auto; padding: 56px 24px 64px; display: flex; flex-direction: column; gap: 28px; }
+    .menu-intro { font-size: 14px; color: #55647a; line-height: 1.6; }
+    .menu-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
+    .menu-card {
+      display: flex; flex-direction: column; gap: 14px; padding: 28px;
+      text-decoration: none; color: inherit; transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+    }
+    .menu-card:hover { border-color: #2a78d6; box-shadow: 0 10px 24px rgba(15,23,42,0.08); transform: translateY(-2px); }
+    .menu-card-icon {
+      width: 48px; height: 48px; border-radius: 12px; background: #eef3fa;
+      display: flex; align-items: center; justify-content: center; font-size: 24px;
+    }
+    .menu-card-title { font-size: 16.5px; font-weight: 700; color: #0f1b2d; }
+    .menu-card-desc { font-size: 13.5px; color: #55647a; line-height: 1.6; }
+    .menu-card-cta { font-size: 13px; font-weight: 600; color: #2a78d6; margin-top: auto; }
+    .menu-note {
+      background: #eef3fa; border: 1px solid rgba(42, 120, 214, 0.25); border-radius: 10px;
+      padding: 12px 16px; font-size: 12.5px; color: #184f95; line-height: 1.6;
+    }
+  </style>
+</head>
+<body>
+  <div class="root">
+
+    <header class="header">
+      <div class="header-brand">
+        <div class="logo-mark">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h6l-1 8 9-12h-6z"/></svg>
+        </div>
+        <div class="header-titles">
+          <div class="header-title">เมนูหลัก</div>
+          <div class="header-subtitle">เลือกเครื่องมือที่ต้องการใช้งาน</div>
+        </div>
+      </div>
+    </header>
+
+    <main class="menu-body">
+      <div class="menu-intro">เลือกเมนูด้านล่างเพื่อเข้าใช้งานเครื่องมือแต่ละตัว</div>
+
+      <div class="menu-grid">
+        <a class="card menu-card" href="/tsic">
+          <div class="menu-card-icon">🔎</div>
+          <div class="menu-card-title">จับคู่ประเภทธุรกิจ (TSIC)</div>
+          <div class="menu-card-desc">ค้นหาประเภทธุรกิจของผู้ใช้ไฟจากชื่อบริษัทหรือเลขทะเบียนนิติบุคคล จับคู่กับหมวด TSIC ในระบบ</div>
+          <div class="menu-card-cta">เปิดใช้งาน →</div>
+        </a>
+
+        <a class="card menu-card" href="http://localhost:8501" target="_blank" rel="noopener">
+          <div class="menu-card-icon">☀️</div>
+          <div class="menu-card-title">พยากรณ์พลังงานแสงอาทิตย์ (Solar Predict)</div>
+          <div class="menu-card-desc">แดชบอร์ดพยากรณ์/ติดตามผลผลิตพลังงานโซลาร์ (Solar Performance Center) — รันแยกเป็นอีกแอป (Streamlit)</div>
+          <div class="menu-card-cta">เปิดใช้งาน (แท็บใหม่) →</div>
+        </a>
+      </div>
+
+      <div class="menu-note">
+        ℹ️ "พยากรณ์พลังงานแสงอาทิตย์" เป็นแอปแยกต่างหาก (Streamlit) ต้องรันคู่กันเองก่อนด้วยคำสั่ง
+        <code>streamlit run app.py</code> จากโปรเจค Solar Predict — ค่าเริ่มต้นเปิดที่
+        <code>http://localhost:8501</code> (ถ้ารันคนละพอร์ต แก้ลิงก์ในไฟล์นี้ได้ที่
+        <code>web/static/menu.html</code>)
+      </div>
+    </main>
+
+  </div>
+</body>
+</html>

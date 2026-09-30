@@ -72,6 +72,14 @@ def _customer_to_dict(customer) -> dict:
 
 
 @app.route("/")
+def menu():
+    """หน้าเมนูหลัก — เลือกว่าจะเข้าเครื่องมือไหน (ตอนนี้มี 2 อัน: TSIC matching ในเว็บนี้ กับ
+    Solar Predict ที่เป็นแอปแยกต่างหาก รันคนละ process/port — ดู web/static/menu.html)"""
+
+    return app.send_static_file("menu.html")
+
+
+@app.route("/tsic")
 def index():
     return app.send_static_file("index.html")
 

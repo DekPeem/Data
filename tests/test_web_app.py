@@ -18,8 +18,14 @@ def client():
         yield client
 
 
-def test_index_serves_html(client):
+def test_menu_serves_html(client):
     res = client.get("/")
+    assert res.status_code == 200
+    assert b"<html" in res.data
+
+
+def test_tsic_page_serves_html(client):
+    res = client.get("/tsic")
     assert res.status_code == 200
     assert b"<html" in res.data
 
