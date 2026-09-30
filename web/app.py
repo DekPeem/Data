@@ -733,7 +733,7 @@ def api_forecast_shape_from_files():
 
         if not file_paths:
             return jsonify(
-                {"error": "invalid_request", "message": "ไม่พบไฟล์ AMR ที่รองรับ (.xls/.xlsx/.html/.htm) ในไฟล์ที่แนบมาเลย"}
+                {"error": "invalid_request", "message": "ไม่พบไฟล์ AMR ที่รองรับ (.xls/.xlsx/.html/.htm/.csv) ในไฟล์ที่แนบมาเลย"}
             ), 400
 
         intervals = parse_amr_files(file_paths)
@@ -776,7 +776,7 @@ def api_forecast_shape_from_files():
 #    src/amr_mapping/amr_boxplot.py ต่างจาก /api/forecast-shape ด้านบนตรงที่นี่คือข้อมูล "วัดจริง"
 #    ของธุรกิจประเภทเดียวกัน ไม่ใช่เส้นโค้งสมมติจากตัวเลขบิล ──
 
-_AMR_BOXPLOT_FILE_EXTENSIONS = (".xls", ".xlsx", ".html", ".htm")
+_AMR_BOXPLOT_FILE_EXTENSIONS = (".xls", ".xlsx", ".html", ".htm", ".csv")
 _MAX_AMR_ZIP_EXTRACTED_BYTES = 300 * 1024 * 1024  # 300 MB
 _MAX_AMR_ZIP_MEMBERS = 1000
 
@@ -866,7 +866,7 @@ def api_amr_boxplot_upload():
 
     if not file_paths:
         return jsonify(
-            {"error": "invalid_request", "message": "ไม่พบไฟล์ AMR ที่รองรับ (.xls/.xlsx/.html/.htm) ในไฟล์ที่แนบมาเลย"}
+            {"error": "invalid_request", "message": "ไม่พบไฟล์ AMR ที่รองรับ (.xls/.xlsx/.html/.htm/.csv) ในไฟล์ที่แนบมาเลย"}
         ), 400
 
     intervals = parse_amr_files(file_paths)

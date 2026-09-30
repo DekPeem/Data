@@ -284,6 +284,33 @@ def _make_amr_custom_kw_xlsx(tmp_path, start_date: dt.datetime, n_days: int, acc
     return path
 
 
+def _make_amr_mea_csv(tmp_path, start_date: dt.datetime, n_days: int, mea_no: str = "140001877") -> Path:
+    """สร้างไฟล์ CSV จำลองรูปแบบเดียวกับรายงาน AMR ของ กฟน. (MEA) จริง (รูปแบบไฟล์ AMR จริงแบบที่ 6
+    ที่เจอ — คนละหน่วยงานกับ PEA ทั้งหมดที่รองรับอยู่ก่อนหน้านี้) คอลัมน์: MEA No., UI ID.,
+    Rate Category, Measuring Compoenent, TOU/TOD, Date Time, Value — ปนข้อมูล kW (E-MAX-KW-IMP)
+    กับ kVAR (E-MAX-KVAR-IMP) เข้าด้วยกันเหมือนไฟล์จริง (ต้องกรองเอาเฉพาะ kW) timestamp บอกเวลา
+    "สิ้นสุด" ของช่วง 15 นาทีนั้น (เหมือนรายงานของ PEA ทุกแบบ) รูปแบบวันที่ M/D/YYYY H:MM (เดือนขึ้น
+    ก่อนวัน ไม่เติมเลข 0 นำหน้า — ตามไฟล์ตัวอย่างจริง) TOU/TOD คำนวณจากกฎเดียวกับที่ไฟล์จริงใช้จริง
+    (วันทำการ ช่วง 9:00-22:00 ของเวลา "เริ่มต้น" ของช่วง = ON นอกนั้น = OFF)"""
+
+    lines = ["MEA No.,UI ID.,Rate Category,Measuring Compoenent,TOU/TOD,Date Time,Value"]
+    d = start_date
+    for _ in range(n_days):
+        for interval_i in range(96):
+            end = d + dt.timedelta(minutes=(interval_i + 1) * 15)
+            start = end - dt.timedelta(minutes=15)
+            is_peak = start.weekday() < 5 and 9 <= start.hour < 22
+            tou = "ON" if is_peak else "OFF"
+            ts = f"{end.month}/{end.day}/{end.year} {end.hour}:{end.minute:02d}"
+            lines.append(f"{mea_no},96131109,3.2,E-MAX-KW-IMP,{tou},{ts},123")
+            lines.append(f"{mea_no},96131109,3.2,E-MAX-KVAR-IMP,{tou},{ts},5")
+        d += dt.timedelta(days=1)
+
+    path = tmp_path / "mea_report.csv"
+    path.write_text("\n".join(lines), encoding="utf-8-sig")
+    return path
+
+
 def test_parse_amr_file_extracts_all_intervals(amr_report_file):
     intervals = parse_amr_file(amr_report_file)
     assert len(intervals) == 5 * 96  # 5 วัน x 96 จุดต่อวัน ไม่มีจุดไหนถูกทิ้ง
@@ -740,4 +767,38 @@ def test_extract_customer_info_supports_custom_kw_format_without_leading_zero_lo
     path = _make_amr_custom_kw_xlsx(tmp_path, dt.datetime(2026, 1, 1), n_days=1, account_no="020027862234")
     account_no, company_name = extract_customer_info(path)
     assert account_no == "020027862234"
+    assert company_name == ""
+
+
+def test_parse_amr_file_supports_mea_csv_format_and_filters_kw_only(tmp_path):
+    """ไฟล์ CSV ของ กฟน. (MEA) ปนข้อมูล kW กับ kVAR เข้าด้วยกัน — ต้องอ่านเฉพาะแถว kW
+    (E-MAX-KW-IMP) เท่านั้น ไม่นับแถว kVAR (E-MAX-KVAR-IMP) เลย"""
+
+    path = _make_amr_mea_csv(tmp_path, dt.datetime(2026, 4, 1), n_days=5)
+    intervals = parse_amr_file(path)
+    assert len(intervals) == 5 * 96  # ไม่ใช่ 5*96*2 (ไม่รวม kVAR)
+    assert all(i.kw == 123.0 for i in intervals)
+
+
+def test_parse_amr_file_classifies_mea_rate_from_tou_and_weekday(tmp_path):
+    """1 เม.ย. 2026 เป็นวันพุธ (วันทำการ) — ทดสอบว่าจับคู่คอลัมน์ TOU/TOD (ON/OFF) ร่วมกับวันใน
+    สัปดาห์เป็น P/OP/H ถูกต้อง ครอบคลุมทั้งวันทำการและวันหยุดสุดสัปดาห์ (เสาร์-อาทิตย์)"""
+
+    path = _make_amr_mea_csv(tmp_path, dt.datetime(2026, 4, 1), n_days=6)
+    intervals = parse_amr_file(path)
+    assert {i.rate for i in intervals} == {"P", "OP", "H"}
+
+    by_key = {(i.date, i.hour): i.rate for i in intervals}
+    assert by_key[("2026-04-01", 10)] == "P"  # พุธ 10:00 -> วันทำการ ช่วง Peak (9-22)
+    assert by_key[("2026-04-01", 2)] == "OP"  # พุธ 02:00 -> วันทำการ นอกช่วง Peak
+    assert by_key[("2026-04-04", 10)] == "H"  # เสาร์ -> วันหยุด ไม่ว่าจะกี่โมง
+    assert by_key[("2026-04-05", 10)] == "H"  # อาทิตย์ -> วันหยุด
+
+
+def test_extract_customer_info_supports_mea_csv_reads_mea_no_no_company_name(tmp_path):
+    """ไฟล์รูปแบบนี้มีแค่เลขบัญชี (คอลัมน์ MEA No.) ไม่มีชื่อบริษัทให้เลย — company_name ต้องว่างเสมอ"""
+
+    path = _make_amr_mea_csv(tmp_path, dt.datetime(2026, 4, 1), n_days=1, mea_no="140001877")
+    account_no, company_name = extract_customer_info(path)
+    assert account_no == "140001877"
     assert company_name == ""

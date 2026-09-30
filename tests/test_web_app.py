@@ -949,6 +949,55 @@ def test_amr_boxplot_upload_success_then_status_and_boxplot(client, monkeypatch,
     assert boxplot_res.data[:8] == b"\x89PNG\r\n\x1a\n"
 
 
+def _make_mea_csv(mea_no: str = "140001877") -> str:
+    """สร้าง CSV จำลองรูปแบบรายงาน AMR ของ กฟน. (MEA) ขนาดเล็ก 1 วัน (2026-04-01 เป็นวันพุธ —
+    วันทำการ) ปนแถว kW (E-MAX-KW-IMP) กับ kVAR (E-MAX-KVAR-IMP) เข้าด้วยกันเหมือนไฟล์จริง — ใช้
+    ทดสอบทั้ง endpoint /api/admin/amr-boxplot/upload ว่ารับไฟล์ .csv ได้ (เดิมรับแค่
+    .xls/.xlsx/.html/.htm) และอ่าน MEA No. เป็น account_no ให้อัตโนมัติ"""
+
+    import datetime as _dt
+
+    lines = ["MEA No.,UI ID.,Rate Category,Measuring Compoenent,TOU/TOD,Date Time,Value"]
+    d = _dt.datetime(2026, 4, 1)
+    for interval_i in range(96):
+        end = d + _dt.timedelta(minutes=(interval_i + 1) * 15)
+        start = end - _dt.timedelta(minutes=15)
+        is_peak = start.weekday() < 5 and 9 <= start.hour < 22
+        tou = "ON" if is_peak else "OFF"
+        ts = f"{end.month}/{end.day}/{end.year} {end.hour}:{end.minute:02d}"
+        lines.append(f"{mea_no},96131109,3.2,E-MAX-KW-IMP,{tou},{ts},123")
+        lines.append(f"{mea_no},96131109,3.2,E-MAX-KVAR-IMP,{tou},{ts},5")
+    return "\n".join(lines)
+
+
+def test_amr_boxplot_upload_accepts_mea_csv_and_detects_account_no(client, monkeypatch, tmp_path):
+    """ไฟล์ CSV ของ กฟน. (MEA) ต้องอัปโหลดผ่าน endpoint เดียวกันกับไฟล์ .xls ของ PEA ได้เลย — ไม่ถูก
+    กรองทิ้งจาก whitelist นามสกุลไฟล์ (ดู _AMR_BOXPLOT_FILE_EXTENSIONS) และต้องกรองเอาเฉพาะแถว kW
+    (ไม่นับ kVAR) พร้อมอ่านคอลัมน์ "MEA No." เป็น account_no ให้อัตโนมัติเหมือนไฟล์ PEA ที่อ่าน
+    "บัญชีผู้ใช้ไฟ" ให้อัตโนมัติ"""
+
+    import io
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+
+    res = client.post(
+        "/api/admin/amr-boxplot/upload",
+        data={
+            "business_type_code": "55101",
+            "files": (io.BytesIO(_make_mea_csv().encode("utf-8-sig")), "mea_report.csv"),
+        },
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 200
+    data = res.get_json()
+    assert data["added_intervals"] == 96  # ไม่ใช่ 192 (กรอง kVAR ทิ้งแล้ว)
+    assert data["days"] == 1
+
+    by_account = client.get("/api/admin/amr-boxplot/status-by-account").get_json()
+    assert len(by_account) == 1
+    assert by_account[0]["account_no"] == "140001877"
+
+
 def test_amr_boxplot_upload_with_account_no_and_company_name(client, monkeypatch, tmp_path):
     """account_no/company_name ไม่บังคับ — ถ้ากรอกมาต้องถูกบันทึกไว้แยกทีละบัญชีได้ (ดู
     GET /api/admin/amr-boxplot/status-by-account)"""

@@ -1,4 +1,4 @@
-"""รวบรวมข้อมูล AMR จริง (รายงาน 15 นาทีจาก PEA) ที่แอดมินอัปโหลดเข้ามา จัดเก็บแยกตามประเภทธุรกิจ
+"""รวบรวมข้อมูล AMR จริง (รายงาน 15 นาทีจาก PEA/กฟภ. หรือ MEA/กฟน. — ดู _is_mea_csv) ที่แอดมินอัปโหลดเข้ามา จัดเก็บแยกตามประเภทธุรกิจ
 (TSIC) แล้ววาดกราฟ Boxplot แสดงการกระจายตัวจริงของการใช้ไฟรายชั่วโมง — ใช้เป็นข้อมูลอ้างอิงให้
 ผู้ใช้ไฟรายที่ "ยังไม่มี AMR ของตัวเอง" ดูว่าธุรกิจประเภทเดียวกันในระบบใช้ไฟเป็นรูปแบบไหนบ้างจริงๆ
 (ต่างจาก forecast_shape.py ที่สร้างเส้นโค้งสมมติจากแค่ตัวเลขบิล — อันนี้คือข้อมูลวัดจริง)
@@ -203,11 +203,79 @@ def _read_one(tables: List[pd.DataFrame]) -> pd.DataFrame:
     return d
 
 
-def parse_amr_file(path: Union[str, Path]) -> List[ParsedInterval]:
-    """อ่านไฟล์ AMR ดิบ 1 ไฟล์ คืนรายการ interval ที่แกะแล้ว (rate=P/OP/H, kw, date, hour) — คืน
-    list ว่างถ้าอ่าน/แปลงไม่สำเร็จ (ไม่ raise ทำให้ไฟล์อื่นที่อัปโหลดมาพร้อมกันยังประมวลผลต่อได้)"""
+def _is_mea_csv(path: Union[str, Path]) -> bool:
+    """เช็คว่าไฟล์เป็นรายงาน AMR ของ กฟน. (MEA) รูปแบบ CSV ธรรมดา — ต่างจากรายงานของ กฟภ./PEA ทุก
+    แบบที่รองรับอยู่ก่อนหน้านี้โดยสิ้นเชิง (มาเป็น HTML-in-.xls หรือ .xlsx จริงเสมอ ไม่เคยเป็น
+    plain CSV เลย) เช็คจากบรรทัดหัวตาราง (header) ตรงๆ — "MEA No.,UI ID.,Rate Category,
+    Measuring Compoenent,TOU/TOD,Date Time,Value" (สะกด "Compoenent" ผิดตามไฟล์จริงจาก กฟน. เอง
+    ไม่ใช่ตัวพิมพ์ผิดของเราเอง) อ่านแค่บรรทัดแรกพอ ไม่ต้องโหลดทั้งไฟล์"""
 
     try:
+        with open(path, "r", encoding="utf-8-sig", errors="ignore") as f:
+            first_line = f.readline()
+    except OSError:
+        return False
+    return "MEA No." in first_line and "Measuring Compoenent" in first_line
+
+
+def _parse_mea_csv(path: Union[str, Path]) -> List[ParsedInterval]:
+    """แกะรายงาน AMR ของ กฟน. (MEA) รูปแบบ CSV ธรรมดา — 1 ไฟล์มี 2 ชนิดข้อมูลปนกัน (Measuring
+    Compoenent = "E-MAX-KW-IMP" กำลังไฟฟ้าจริง กับ "E-MAX-KVAR-IMP" กำลังไฟฟ้ารีแอกทีฟ) ต้องกรอง
+    เอาเฉพาะ kW เท่านั้น (เหมือนรายงานของ PEA ทุกแบบที่เก็บแค่ kW ไม่สนใจ kVAR) วันที่เป็นรูปแบบ
+    สากล M/D/YYYY H:MM (เดือนขึ้นก่อนวัน ต่างจากรายงานของ PEA ที่เป็น DD/MM/YYYY เสมอ — ยืนยันจาก
+    ไฟล์ตัวอย่างจริงที่ค่าคอลัมน์แรกไม่เคยเกิน 12 เลย)
+
+    คอลัมน์ TOU/TOD ของ กฟน. มีแค่ 2 ค่า (ON/OFF) ต่างจาก P/OP/H 3 ระดับที่ระบบนี้ใช้ — ยืนยันจากไฟล์
+    ตัวอย่างจริงแล้วว่า ON ปรากฏเฉพาะวันทำการ (จันทร์-ศุกร์) ช่วง 9:00-22:00 เท่านั้น ใช้ ON บอกช่วง
+    Peak (P) ได้ตรงๆ ส่วน OFF ต้องแยกต่ออีกชั้นว่าเป็นวันทำการ (Off-Peak — OP) หรือวันหยุดสุดสัปดาห์
+    (Holiday — H) จากวันในสัปดาห์ของ timestamp เอง (เสาร์-อาทิตย์เสมอในไฟล์ตัวอย่าง — ไม่รองรับ
+    วันหยุดนักขัตฤกษ์ระหว่างสัปดาห์ ข้อจำกัดเดียวกับ _classify_tou_rate ที่ใช้เดาให้รายงาน
+    "Custom kW Report" ของ PEA) — timestamp ในไฟล์บอกเวลา "สิ้นสุด" ของช่วง 15 นาทีนั้น เหมือน
+    รายงานของ PEA ทุกแบบ ต้องลบ 15 นาทีก่อนหาว่าอยู่วัน/ชั่วโมงไหน (ยืนยันจากไฟล์ตัวอย่างจริง:
+    timestamp ลงท้าย 9:00 ยังเป็น OFF แต่ 9:15 เป็น ON แล้ว แปลว่าช่วง [9:00-9:15) ที่ลงท้ายด้วย 9:15
+    คือช่วง Peak แรกของวัน ไม่ใช่ช่วงที่ลงท้ายด้วย 9:00 เอง)"""
+
+    df = pd.read_csv(path, encoding="utf-8-sig", dtype=str)
+    df = df[df["Measuring Compoenent"].str.strip() == "E-MAX-KW-IMP"].copy()
+    if df.empty:
+        return []
+
+    end = pd.to_datetime(df["Date Time"], format="%m/%d/%Y %H:%M", errors="coerce")
+    start = end - pd.Timedelta(minutes=15)
+    kw = pd.to_numeric(df["Value"], errors="coerce")
+    tou = df["TOU/TOD"].str.strip().str.upper()
+    is_weekday = start.dt.weekday < 5
+    rate = np.select([tou == "ON", is_weekday], ["P", "OP"], "H")
+
+    out: List[ParsedInterval] = []
+    for s, r, k in zip(start, rate, kw):
+        if pd.isna(s) or pd.isna(k):
+            continue
+        out.append(ParsedInterval(date=s.strftime("%Y-%m-%d"), hour=int(s.hour), minute=int(s.minute), rate=str(r), kw=float(k)))
+    return out
+
+
+def _extract_mea_csv_customer_info(path: Union[str, Path]) -> Tuple[str, str]:
+    """หาเลขบัญชี (คอลัมน์ "MEA No.") จากรายงาน CSV ของ กฟน. — ไม่มีชื่อบริษัทให้เลยในไฟล์รูปแบบนี้
+    (ต่างจากรายงานส่วนใหญ่ของ PEA) company_name จะว่างเสมอ ต้องกรอกเองในฟอร์ม"""
+
+    try:
+        df = pd.read_csv(path, encoding="utf-8-sig", dtype=str, nrows=1)
+    except Exception:  # noqa: BLE001 — ไฟล์เสีย/รูปแบบไม่ตรง ถือว่าหาไม่เจอ
+        return "", ""
+    if df.empty or "MEA No." not in df.columns:
+        return "", ""
+    return str(df["MEA No."].iloc[0]).strip(), ""
+
+
+def parse_amr_file(path: Union[str, Path]) -> List[ParsedInterval]:
+    """อ่านไฟล์ AMR ดิบ 1 ไฟล์ (จาก PEA หรือ MEA) คืนรายการ interval ที่แกะแล้ว (rate=P/OP/H, kw,
+    date, hour) — คืน list ว่างถ้าอ่าน/แปลงไม่สำเร็จ (ไม่ raise ทำให้ไฟล์อื่นที่อัปโหลดมาพร้อมกันยัง
+    ประมวลผลต่อได้)"""
+
+    try:
+        if _is_mea_csv(path):
+            return _parse_mea_csv(path)
         df = _read_one(_load_report_tables(path))
     except Exception:  # noqa: BLE001 — ไฟล์เสีย/รูปแบบไม่ตรง ข้ามไปเฉยๆ
         return []
@@ -267,12 +335,17 @@ def parse_amr_files(paths: List[Union[str, Path]]) -> List[ParsedInterval]:
 
 def extract_customer_info(path: Union[str, Path]) -> Tuple[str, str]:
     """หาเลขบัญชีผู้ใช้ไฟ + ชื่อผู้ใช้ไฟ จากตารางหัวรายงาน (tables[0] — ตัวที่ parse_amr_file ข้าม
-    ไปเฉยๆ) ของไฟล์ AMR จริง 1 ไฟล์ — คืน ("", "") ถ้าอ่าน/หาไม่เจอ (ไม่ raise เหมือน parse_amr_file
-    ปล่อยให้ผู้ใช้กรอกเองแทนตอนหาไม่เจอ) โครงสร้างยืนยันจากไฟล์ตัวอย่างจริงของผู้ใช้แล้ว (รายงาน
-    "ข้อมูลกิโลวัตต์แบบช่วงเวลา" จากเว็บ amr.pea.co.th): tables[0] มีแถวหนึ่งที่คอลัมน์หนึ่งเป็น
-    ข้อความ "บัญชีผู้ใช้ไฟ :" ตามด้วยเลขบัญชีในคอลัมน์ถัดไปทันที และอีกคู่คอลัมน์ในแถวเดียวกันเป็น
-    "ชื่อผู้ใช้ไฟ :" ตามด้วยชื่อบริษัทในคอลัมน์ถัดไป (pandas.read_html แกะ &nbsp;/ช่องว่างหัวท้าย
-    ให้เรียบร้อยแล้วในตัว ไม่ต้อง strip เพิ่ม แต่ strip ไว้กันเหนียวเผื่อโครงสร้างเปลี่ยนเล็กน้อย)"""
+    ไปเฉยๆ) ของไฟล์ AMR จริง 1 ไฟล์ (PEA) หรือคอลัมน์ "MEA No." (กฟน. — ดู
+    _extract_mea_csv_customer_info) — คืน ("", "") ถ้าอ่าน/หาไม่เจอ (ไม่ raise เหมือน
+    parse_amr_file ปล่อยให้ผู้ใช้กรอกเองแทนตอนหาไม่เจอ) โครงสร้างของ PEA ยืนยันจากไฟล์ตัวอย่างจริง
+    ของผู้ใช้แล้ว (รายงาน "ข้อมูลกิโลวัตต์แบบช่วงเวลา" จากเว็บ amr.pea.co.th): tables[0] มีแถวหนึ่งที่
+    คอลัมน์หนึ่งเป็นข้อความ "บัญชีผู้ใช้ไฟ :" ตามด้วยเลขบัญชีในคอลัมน์ถัดไปทันที และอีกคู่คอลัมน์ใน
+    แถวเดียวกันเป็น "ชื่อผู้ใช้ไฟ :" ตามด้วยชื่อบริษัทในคอลัมน์ถัดไป (pandas.read_html แกะ &nbsp;/
+    ช่องว่างหัวท้ายให้เรียบร้อยแล้วในตัว ไม่ต้อง strip เพิ่ม แต่ strip ไว้กันเหนียวเผื่อโครงสร้างเปลี่ยน
+    เล็กน้อย)"""
+
+    if _is_mea_csv(path):
+        return _extract_mea_csv_customer_info(path)
 
     try:
         header = _load_report_tables(path)[0]
