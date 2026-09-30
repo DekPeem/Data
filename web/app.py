@@ -329,8 +329,35 @@ def _section_code_for_division(division_code: Optional[str]) -> Optional[str]:
     return None
 
 
+def _business_type_codes_with_real_amr_data() -> set:
+    """คืนเซ็ตของ business_type_code ที่มีข้อมูล AMR จริงสะสมไว้แล้ว (อัปโหลดผ่านหน้า Admin —
+    ดู amr_boxplot.summarize_available) ใช้เป็นตัวช่วยตัดสินใจตอนมี business_type หลายตัวอยู่
+    division/section เดียวกัน (ดู _suggest_business_type_for_division, _rank_businesses_by_division)
+    — เลือกตัวที่มีข้อมูลจริงให้ดูได้เลยก่อน ดีกว่าเลือกตัวแรกที่เจอแบบสุ่มๆ ตามลำดับในไฟล์ CSV
+    ซึ่งอาจจะดันไปเจอตัวที่ไม่มีข้อมูล AMR จริงเก็บไว้เลยก็ได้ ทั้งที่ business_type อื่นใน
+    division/section เดียวกันมีข้อมูลจริงให้ดู Boxplot ได้ทันที"""
+
+    from amr_mapping.amr_boxplot import summarize_available
+
+    storage_path = DEFAULT_DATA_DIR / "amr_boxplot_intervals_local.csv"
+    return set(summarize_available(storage_path).keys())
+
+
+def _sort_candidates_data_first(candidates: List[BusinessType], codes_with_real_data: Optional[set]) -> List[BusinessType]:
+    """เรียง candidates ใหม่ให้ตัวที่มีข้อมูล AMR จริง (อยู่ใน codes_with_real_data) ขึ้นก่อนเสมอ
+    แต่ยังคงลำดับเดิมภายในกลุ่มเดียวกันไว้ (stable sort) — ถ้าไม่ส่ง codes_with_real_data มา
+    (None) คืนลำดับเดิมโดยไม่แตะต้องอะไรเลย"""
+
+    if not codes_with_real_data:
+        return candidates
+    return sorted(candidates, key=lambda bt: bt.code not in codes_with_real_data)
+
+
 def _suggest_business_type_for_division(
-    tsic_code: Optional[str], division_code: Optional[str], reference
+    tsic_code: Optional[str],
+    division_code: Optional[str],
+    reference,
+    codes_with_real_data: Optional[set] = None,
 ) -> tuple:
     """คืน (suggested_code, suggested_name, is_approximate, explanation) — ไล่ลดชั้นความแม่นยำ
     3 ชั้น: (1) รหัส TSIC ตรงเป๊ะ (ถ้ามีอยู่ในระบบ business_types.csv แล้ว) (2) business_type อื่น
@@ -338,6 +365,11 @@ def _suggest_business_type_for_division(
     TSIC section เดียวกัน (หมวดตัวอักษร กว้างกว่า division อีกชั้นตามมาตรฐาน TSIC 2009/ISIC Rev.4
     — ประมาณการเช่นกัน แต่หยาบกว่าชั้น 2) ถ้ายังไม่มีเลยทั้งสามชั้น คืน (None, None, False, None)
     ให้ผู้ใช้เลือกเอง/เพิ่มประเภทธุรกิจใหม่เอง (ดู POST /api/business-types)
+
+    ชั้น 2/3 ถ้ามี business_type ที่เข้าเกณฑ์มากกว่า 1 ตัว จะเลือกตัวที่มีข้อมูล AMR จริงสะสมไว้แล้ว
+    ก่อนเสมอ (ถ้าส่ง codes_with_real_data มา — ดู _business_type_codes_with_real_amr_data) กันเคส
+    ที่เลือกตัวแรกแบบสุ่มๆ ตามลำดับไฟล์ CSV แล้วดันไม่มีข้อมูลจริงให้ดู Boxplot เลย ทั้งที่มีตัวอื่นใน
+    division/section เดียวกันที่มีข้อมูลจริงพร้อมอยู่แล้ว
 
     ใช้ร่วมกันทั้งผลจาก DBD DataWarehouse โดยตรง และคำเดาจาก Wikipedia (ทั้งสองมี division_code
     ติดมาด้วยเหมือนกัน แต่ Wikipedia มักไม่มี tsic_code ที่แน่นอนให้ลองจับคู่แบบตรงเป๊ะ ส่งแค่
@@ -348,45 +380,51 @@ def _suggest_business_type_for_division(
         return (bt.code, bt.name_th, False, None)
 
     if division_code:
-        for bt in reference.business_types.values():
-            if bt.division_code == division_code:
-                explanation = (
-                    f"ไม่มีรหัส TSIC {tsic_code or division_code} ตรงๆ ในระบบ ใช้ '{bt.name_th}' "
-                    f"({bt.code}) ที่อยู่ TSIC division {division_code} เดียวกันแทน"
-                )
-                return (bt.code, bt.name_th, True, explanation)
+        same_division = [bt for bt in reference.business_types.values() if bt.division_code == division_code]
+        if same_division:
+            bt = _sort_candidates_data_first(same_division, codes_with_real_data)[0]
+            explanation = (
+                f"ไม่มีรหัส TSIC {tsic_code or division_code} ตรงๆ ในระบบ ใช้ '{bt.name_th}' "
+                f"({bt.code}) ที่อยู่ TSIC division {division_code} เดียวกันแทน"
+            )
+            return (bt.code, bt.name_th, True, explanation)
 
     section_code = _section_code_for_division(division_code)
     if section_code:
-        for bt in reference.business_types.values():
-            if bt.section_code == section_code:
-                explanation = (
-                    f"ไม่มีรหัส TSIC {tsic_code or division_code} ตรงๆ ในระบบ และไม่มี business_type "
-                    f"ไหนอยู่ TSIC division {division_code} เดียวกันเลย ใช้ '{bt.name_th}' ({bt.code}) "
-                    f"ที่อยู่ TSIC section {section_code} เดียวกัน (หมวดกว้างกว่า) แทน — ควรตรวจสอบซ้ำ"
-                )
-                return (bt.code, bt.name_th, True, explanation)
+        same_section = [bt for bt in reference.business_types.values() if bt.section_code == section_code]
+        if same_section:
+            bt = _sort_candidates_data_first(same_section, codes_with_real_data)[0]
+            explanation = (
+                f"ไม่มีรหัส TSIC {tsic_code or division_code} ตรงๆ ในระบบ และไม่มี business_type "
+                f"ไหนอยู่ TSIC division {division_code} เดียวกันเลย ใช้ '{bt.name_th}' ({bt.code}) "
+                f"ที่อยู่ TSIC section {section_code} เดียวกัน (หมวดกว้างกว่า) แทน — ควรตรวจสอบซ้ำ"
+            )
+            return (bt.code, bt.name_th, True, explanation)
 
     return (None, None, False, None)
 
 
-def _rank_businesses_by_division(division_code: Optional[str], reference, limit: int = 3) -> List[BusinessType]:
+def _rank_businesses_by_division(
+    division_code: Optional[str], reference, limit: int = 3, codes_with_real_data: Optional[set] = None
+) -> List[BusinessType]:
     """คืน business_type ที่อยู่ TSIC division เดียวกันสูงสุด limit รายการ — ใช้ตอนเดา TSIC จาก
     Wikipedia ได้ไม่มั่นใจพอ (ดู _run_business_type_lookup_job) ให้ผู้ใช้เลือกเองจากตัวเลือก
     ใกล้เคียงแทนที่จะเดาให้อัตโนมัติ ถ้าไม่มี business_type ไหนอยู่ division เดียวกันเลย ลดชั้นไปหา
     ที่อยู่ TSIC section เดียวกันแทน (หมวดกว้างกว่า — เหมือนชั้นสำรองสุดท้ายของ
-    _suggest_business_type_for_division) กันไม่ให้ผู้ใช้เจอลิสต์ว่างเปล่าไปเลย"""
+    _suggest_business_type_for_division) กันไม่ให้ผู้ใช้เจอลิสต์ว่างเปล่าไปเลย — ตัวที่มีข้อมูล AMR
+    จริงสะสมไว้แล้วจะถูกเรียงขึ้นก่อนเสมอ (เหมือน _suggest_business_type_for_division)"""
 
     if not division_code:
         return []
-    by_division = [bt for bt in reference.business_types.values() if bt.division_code == division_code][:limit]
+    by_division = [bt for bt in reference.business_types.values() if bt.division_code == division_code]
     if by_division:
-        return by_division
+        return _sort_candidates_data_first(by_division, codes_with_real_data)[:limit]
 
     section_code = _section_code_for_division(division_code)
     if not section_code:
         return []
-    return [bt for bt in reference.business_types.values() if bt.section_code == section_code][:limit]
+    by_section = [bt for bt in reference.business_types.values() if bt.section_code == section_code]
+    return _sort_candidates_data_first(by_section, codes_with_real_data)[:limit]
 
 
 def _run_business_type_lookup_job(
@@ -413,6 +451,7 @@ def _run_business_type_lookup_job(
             _JOBS[job_id]["logs"].append(msg)
 
     reference = get_reference()
+    codes_with_real_data = _business_type_codes_with_real_amr_data()
 
     try:
         # มีเลขทะเบียนนิติบุคคล — ใช้ dbd_scraper (Playwright, ขับกล่องค้นหาบนหน้าเว็บจริง) แทน
@@ -440,7 +479,7 @@ def _run_business_type_lookup_job(
         candidates = []
         for r in results:
             suggested_code, suggested_name, is_approximate, explanation = _suggest_business_type_for_division(
-                r.tsic_code, r.tsic_division_code, reference
+                r.tsic_code, r.tsic_division_code, reference, codes_with_real_data
             )
             candidates.append(
                 {
@@ -518,7 +557,7 @@ def _run_business_type_lookup_job(
                     guessed_division_code, guessed_keyword = guess
                     log(f"🔤 เดาประเภทธุรกิจจากคำว่า '{guessed_keyword}' ในข้อความ Wikipedia")
                     suggested_code, suggested_name, is_approximate, explanation = _suggest_business_type_for_division(
-                        None, guessed_division_code, reference
+                        None, guessed_division_code, reference, codes_with_real_data
                     )
                     wikipedia_result["guessed_keyword"] = guessed_keyword
                     wikipedia_result["suggested_business_type_name"] = suggested_name
@@ -530,7 +569,9 @@ def _run_business_type_lookup_job(
                         # เคสจริงที่เดาไปโดนธุรกิจคนละแบบเลย เช่น ค้าปลีกไปจับกับการผลิตกระดาษ) ให้
                         # แสดงรายการอันดับ 1/2/3 ที่ใกล้เคียงที่สุดแทน ให้ผู้ใช้เลือกเอง
                         suggested_code = None
-                        ranked = _rank_businesses_by_division(guessed_division_code, reference, limit=3)
+                        ranked = _rank_businesses_by_division(
+                            guessed_division_code, reference, limit=3, codes_with_real_data=codes_with_real_data
+                        )
                         ranked_is_same_division = any(bt.division_code == guessed_division_code for bt in ranked)
                         wikipedia_result["ranked_candidates"] = [
                             {

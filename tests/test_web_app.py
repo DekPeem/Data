@@ -421,6 +421,37 @@ def test_suggest_business_type_falls_back_to_section_when_no_division_match():
     assert "section" in explanation
 
 
+def test_suggest_business_type_prefers_candidate_with_real_amr_data():
+    """division "17" มี 2 ธุรกิจให้เลือก — "34111" (ไม่มีข้อมูล AMR จริง มาก่อนตามลำดับใน dict)
+    กับ "17012" (มีข้อมูล AMR จริงสะสมไว้แล้ว มาทีหลัง) ถ้าไม่ส่ง codes_with_real_data เลยต้องได้
+    ตัวแรกตามลำดับเดิม (34111 — พฤติกรรมเดิม) แต่พอส่ง codes_with_real_data มาระบุว่า "17012" มี
+    ข้อมูลจริง ต้องเลือก "17012" แทน ถึงจะมาทีหลังในลำดับก็ตาม — กันเคสแนะนำธุรกิจที่กดดู Boxplot
+    ไปแล้วไม่มีข้อมูลให้ดูเลย ทั้งที่มีตัวอื่นใน division เดียวกันที่มีข้อมูลจริงพร้อมอยู่แล้ว"""
+
+    from amr_mapping.models import BusinessType
+
+    reference = _FakeReference(
+        {
+            "34111": BusinessType(
+                code="34111", name_th="การผลิตเยื่อกระดาษ กระดาษ และกระดาษแข็งด้วยเครื่อง",
+                category="auto", section_code="C", division_code="17",
+            ),
+            "17012": BusinessType(
+                code="17012", name_th="การผลิตกระดาษและกระดาษแข็ง",
+                category="auto", section_code="C", division_code="17",
+            ),
+        }
+    )
+
+    code_no_hint, *_ = app_module._suggest_business_type_for_division("17011", "17", reference)
+    assert code_no_hint == "34111", "ไม่ส่ง codes_with_real_data มาต้องได้ตัวแรกตามลำดับเดิม"
+
+    code_with_hint, *_ = app_module._suggest_business_type_for_division(
+        "17011", "17", reference, {"17012"}
+    )
+    assert code_with_hint == "17012", "ต้องเลือกตัวที่มีข้อมูล AMR จริงก่อนเสมอ แม้จะมาทีหลังในลำดับ"
+
+
 def test_suggest_business_type_returns_none_when_no_division_or_section_match():
     """ไม่มีธุรกิจไหนในระบบอยู่ division หรือ section เดียวกันเลยแม้แต่ตัวเดียว — ต้องปล่อยว่าง
     (None) ให้ผู้ใช้เลือกเอง ไม่ควรเดาส่งเดชข้ามหมวดที่ไม่เกี่ยวข้องกันเลย"""

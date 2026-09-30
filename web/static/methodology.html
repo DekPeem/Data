@@ -112,7 +112,11 @@
           (<code>ranked_candidates</code>) ให้เลือกเอง แทนการเดาตัวเดียวแบบมั่นใจเกินจริง —
           ระบบลอง DIVISION_ONLY ก่อนเสมอ ลดชั้นไป SECTION_ONLY ก็ต่อเมื่อไม่มีธุรกิจไหนอยู่ division
           เดียวกันเลยจริงๆ (ดูฟังก์ชัน <code>_section_code_for_division()</code> ที่เดา section
-          จาก division ด้วยตารางช่วงมาตรฐาน TSIC 2009/ISIC Rev.4)
+          จาก division ด้วยตารางช่วงมาตรฐาน TSIC 2009/ISIC Rev.4) ถ้ามีธุรกิจที่เข้าเกณฑ์ระดับ
+          เดียวกันมากกว่า 1 ราย ระบบจะเลือกตัวที่มี<b>ข้อมูล AMR จริง</b>สะสมไว้แล้ว (อัปโหลดผ่าน
+          หน้า Admin) ขึ้นก่อนเสมอ (<code>_business_type_codes_with_real_amr_data()</code>) กันเคสแนะนำธุรกิจที่ยัง
+          ไม่มีใครอัปโหลดข้อมูลจริงไว้เลย ทั้งที่มีตัวอื่นใน division/section เดียวกันที่มีข้อมูลจริง
+          พร้อมให้ดู Boxplot ได้ทันทีอยู่แล้ว
         </p>
         <a class="back-to-top" href="#top">↑ กลับไปสารบัญ</a>
       </div>
