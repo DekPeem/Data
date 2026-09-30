@@ -168,13 +168,20 @@ def parse_amr_file(path: Union[str, Path]) -> List[ParsedInterval]:
     except Exception:  # noqa: BLE001 — ไฟล์เสีย/รูปแบบไม่ตรง ข้ามไปเฉยๆ
         return []
 
-    day = pd.to_datetime(df["ts"].str[:10], format="%d/%m/%Y", errors="coerce")
     # ไฟล์ AMR จริงบางไฟล์ (โดยเฉพาะรายงาน AMI) ใช้ปี พ.ศ. (เช่น 2569) ในคอลัมน์วันที่ แทน ค.ศ.
-    # (2026) ปนกับไฟล์รูปแบบอื่นที่ใช้ ค.ศ. ตรงๆ — เดาว่าเป็น พ.ศ. ถ้าปีที่ parse ได้เกิน 2400 (ปี
-    # ค.ศ. จริงยังไม่มีทางเกินหลักพันต้นๆ ไปอีกนาน) แปลงกลับเป็น ค.ศ. ด้วยการลบ 543 ปี — ปีอธิกสุรทิน
-    # ของไทยตรงกับปฏิทินสากลเป๊ะมาตั้งแต่ พ.ศ. 2484 ลบตรงๆ ได้เลยไม่ต้องกังวลวันที่ 29 ก.พ. เพี้ยน
-    is_be_year = day.dt.year > 2400
-    day = day.where(~is_be_year, day - pd.DateOffset(years=543))
+    # (2026) ปนกับไฟล์รูปแบบอื่นที่ใช้ ค.ศ. ตรงๆ — เดาว่าเป็น พ.ศ. ถ้าปีเกิน 2400 (ปี ค.ศ. จริงยังไม่มี
+    # ทางเกินหลักพันต้นๆ ไปอีกนาน) ต้องแปลงเป็น ค.ศ. "ก่อน" parse เป็น pd.Timestamp เสมอ (แก้ที่ตัว
+    # string ปีตรงๆ) ห้ามลบ 543 ปีออกจาก Timestamp ที่ parse ไปแล้วทีหลังเด็ดขาด เพราะ pandas ประเมิน
+    # ทั้งสอง branch ของ .where()/.mask() ล่วงหน้าเสมอ (ไม่ lazy) แถวที่เป็นปี ค.ศ. อยู่แล้ว (เช่น
+    # 2026) พอถูกลบ 543 เข้าจะกลายเป็นปี 1483 ซึ่งต่ำกว่าปีต่ำสุดที่ pd.Timestamp รองรับได้ (~1677)
+    # ทำให้ OverflowError ทั้งคอลัมน์ทันที ทั้งที่แถวนั้นไม่ควรถูกแตะเลยด้วยซ้ำ (เจอบั๊กนี้จริงจากไฟล์
+    # AMR จริงของผู้ใช้ที่ปีมีทั้ง พ.ศ./ค.ศ. ปนกันในไฟล์ชุดเดียวกัน) — ปีอธิกสุรทินของไทยตรงกับปฏิทิน
+    # สากลเป๊ะมาตั้งแต่ พ.ศ. 2484 ลบเลขปีตรงๆ ได้เลยไม่ต้องกังวลวันที่ 29 ก.พ. เพี้ยน
+    date_part = df["ts"].str[:6]  # "DD/MM/"
+    year_part = df["ts"].str[6:10].astype(int)
+    is_be_year = year_part > 2400
+    ce_year_part = (year_part - 543).where(is_be_year, year_part).astype(str).str.zfill(4)
+    day = pd.to_datetime(date_part + ce_year_part, format="%d/%m/%Y", errors="coerce")
     mins = df["ts"].str[11:13].astype(int) * 60 + df["ts"].str[14:16].astype(int)
     end = day + pd.to_timedelta(mins, unit="m")
     start = end - pd.Timedelta(minutes=15)
