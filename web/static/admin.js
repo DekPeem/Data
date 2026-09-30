@@ -760,9 +760,14 @@ function renderAmrBoxplotLogTable() {
         rows.length > 1
           ? `<a target="_blank" rel="noopener" href="/api/forecast-boxplot?business_type_code=${encodeURIComponent(tsicCode)}">📊 ดู Boxplot รวมทุกบัญชี →</a>`
           : "";
-      rowsHtml.push(`<tr class="amr-log-tsic-header"><td colspan="${AMR_LOG_COLUMN_COUNT}">
+      // ค่าเริ่มต้นพับเก็บ (collapsed) ทุกกลุ่ม TSIC ไว้ก่อนเสมอ — ผู้ใช้ฟีดแบ็กว่าตารางแสดงทุกบัญชี
+      // ของทุก TSIC พร้อมกันหมดลานตาเกินไป กดที่หัวกลุ่มเพื่อกางดูบัญชีของ TSIC นั้นทีละอันแทน (ไม่
+      // เก็บ state ข้ามการ render ใหม่ — พับกลับเป็นค่าเริ่มต้นทุกครั้งที่ข้อมูล/ตัวกรองเปลี่ยน ซึ่งเป็น
+      // พฤติกรรมที่ต้องการอยู่แล้ว ไม่ใช่บั๊ก)
+      const tsicGroupId = `${key}::${tsicCode}`;
+      rowsHtml.push(`<tr class="amr-log-tsic-header" data-tsic-group-toggle="${escapeHtml(tsicGroupId)}" style="cursor:pointer;"><td colspan="${AMR_LOG_COLUMN_COUNT}">
         <div class="amr-log-tsic-header-row">
-          <span class="amr-log-tsic-name">${tsicNameHtml}<span class="amr-log-tsic-count">(${rows.length} บัญชี)</span></span>
+          <span class="amr-log-tsic-name"><span class="amr-log-tsic-caret">▶</span> ${tsicNameHtml}<span class="amr-log-tsic-count">(${rows.length} บัญชี)</span></span>
           ${combinedLinkHtml}
         </div>
       </td></tr>`);
@@ -803,7 +808,7 @@ function renderAmrBoxplotLogTable() {
           const accountLabel = row.account_no ? escapeHtml(row.account_no) : `<span style="color:#8996ab;">ไม่ระบุบัญชี</span>`;
           const companyCellHtml = i === 0 ? `<td${rowspanAttr}>${companyLabel}</td>` : "";
           const regCellHtml = i === 0 ? `<td${rowspanAttr}>${regLabel}</td>` : "";
-          rowsHtml.push(`<tr class="${zebraClass}">
+          rowsHtml.push(`<tr class="${zebraClass}" data-tsic-group="${escapeHtml(tsicGroupId)}" style="display:none;">
             ${companyCellHtml}
             <td>${accountLabel}</td>
             ${regCellHtml}
@@ -826,6 +831,22 @@ function renderAmrBoxplotLogTable() {
       <thead><tr><th>บริษัท</th><th>เลขบัญชี</th><th>เลขนิติบุคคล</th><th class="num">จำนวนจุดข้อมูล</th><th class="num">จำนวนวัน</th><th></th></tr></thead>
       <tbody>${rowsHtml.join("")}</tbody>
     </table>`;
+
+  // กดที่หัวกลุ่ม TSIC เพื่อกาง/พับดูรายชื่อบัญชีของ TSIC นั้น (ค่าเริ่มต้นพับเก็บไว้หมดทุกกลุ่ม —
+  // ดูคอมเมนต์ตอนสร้างแถวหัวกลุ่มด้านบน) ไม่ใช้ event delegation ที่ tbody เพราะต้อง stopPropagation
+  // กันลิงก์ "ดู Boxplot รวมทุกบัญชี" ในแถวหัวกลุ่มเดียวกันโดนกดพับ/กางไปด้วยเวลาคลิกลิงก์นั้น
+  amrBoxplotLogTable.querySelectorAll("tr.amr-log-tsic-header").forEach((headerRow) => {
+    headerRow.addEventListener("click", (e) => {
+      if (e.target.closest("a")) return; // คลิกลิงก์ "ดู Boxplot รวมทุกบัญชี" ไม่ต้องพับ/กาง
+      const groupId = headerRow.dataset.tsicGroupToggle;
+      const expanding = headerRow.classList.toggle("expanded");
+      const caret = headerRow.querySelector(".amr-log-tsic-caret");
+      if (caret) caret.textContent = expanding ? "▼" : "▶";
+      amrBoxplotLogTable.querySelectorAll(`tr[data-tsic-group="${CSS.escape(groupId)}"]`).forEach((row) => {
+        row.style.display = expanding ? "" : "none";
+      });
+    });
+  });
 
   // ปุ่มลบต่อแถว — ลบข้อมูลจริงถาวร (เขียนทับไฟล์ CSV ตรงๆ ไม่มีทาง undo) ต้อง confirm() กับ
   // ผู้ใช้ก่อนเสมอ บอกให้ชัดว่ากำลังจะลบอะไร (TSIC + บัญชี + จำนวนจุดข้อมูล) กันกดพลาด
