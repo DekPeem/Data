@@ -259,6 +259,25 @@ def test_parse_amr_file_classifies_rate_correctly(amr_report_file):
     assert rates == {"P", "OP", "H"}
 
 
+def test_parse_amr_file_converts_buddhist_era_year_to_gregorian(tmp_path):
+    """ไฟล์ AMR จริงบางไฟล์ (โดยเฉพาะรายงาน AMI) ใช้ปี พ.ศ. (เช่น 2569) ในคอลัมน์วันที่แทน ค.ศ.
+    (2026) — ต้องแปลงกลับเป็น ค.ศ. ให้ถูกต้อง ไม่งั้นวันที่ที่เก็บไว้จะผิดไป 543 ปี"""
+
+    header = "<table><tr><td>Header info</td></tr></table>"
+    data_table = (
+        "<table><tr><td>ts</td><td>a1</td><td>a2</td><td>b1</td><td>b2</td><td>c1</td><td>c2</td></tr>"
+        "<tr><td>01/01/2569 09.15</td><td>400.00</td><td>400.00</td><td></td><td></td><td></td><td></td></tr>"
+        "</table>"
+    )
+    footer = "<table><tr><td>Footer info</td></tr></table>"
+    path = tmp_path / "report_be_year.xls"
+    path.write_text(header + data_table + footer, encoding="utf-8")
+
+    intervals = parse_amr_file(path)
+    assert len(intervals) == 1
+    assert intervals[0].date == "2026-01-01"
+
+
 def test_parse_amr_file_unreadable_returns_empty_list(tmp_path):
     bad_file = tmp_path / "not_amr.xls"
     bad_file.write_text("<html><body>not a real report</body></html>", encoding="utf-8")

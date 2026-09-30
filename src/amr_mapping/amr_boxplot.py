@@ -169,6 +169,12 @@ def parse_amr_file(path: Union[str, Path]) -> List[ParsedInterval]:
         return []
 
     day = pd.to_datetime(df["ts"].str[:10], format="%d/%m/%Y", errors="coerce")
+    # ไฟล์ AMR จริงบางไฟล์ (โดยเฉพาะรายงาน AMI) ใช้ปี พ.ศ. (เช่น 2569) ในคอลัมน์วันที่ แทน ค.ศ.
+    # (2026) ปนกับไฟล์รูปแบบอื่นที่ใช้ ค.ศ. ตรงๆ — เดาว่าเป็น พ.ศ. ถ้าปีที่ parse ได้เกิน 2400 (ปี
+    # ค.ศ. จริงยังไม่มีทางเกินหลักพันต้นๆ ไปอีกนาน) แปลงกลับเป็น ค.ศ. ด้วยการลบ 543 ปี — ปีอธิกสุรทิน
+    # ของไทยตรงกับปฏิทินสากลเป๊ะมาตั้งแต่ พ.ศ. 2484 ลบตรงๆ ได้เลยไม่ต้องกังวลวันที่ 29 ก.พ. เพี้ยน
+    is_be_year = day.dt.year > 2400
+    day = day.where(~is_be_year, day - pd.DateOffset(years=543))
     mins = df["ts"].str[11:13].astype(int) * 60 + df["ts"].str[14:16].astype(int)
     end = day + pd.to_timedelta(mins, unit="m")
     start = end - pd.Timedelta(minutes=15)
