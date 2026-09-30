@@ -817,6 +817,8 @@ function renderAmrBoxplotLogTable() {
             <td class="amr-log-action-cell">
               <a target="_blank" rel="noopener" href="/api/forecast-boxplot?business_type_code=${encodeURIComponent(row.business_type_code)}&account_no=${encodeURIComponent(row.account_no || "")}">ดู Boxplot →</a>
               &nbsp;·&nbsp;
+              <button type="button" class="amr-boxplot-log-edit-btn" data-code="${escapeHtml(row.business_type_code)}" data-account="${escapeHtml(row.account_no || "")}" data-company="${escapeHtml(row.company_name || "")}" data-reg="${escapeHtml(row.registration_no || "")}" style="border:none;background:none;color:#184f95;cursor:pointer;font-size:13px;padding:0;">✏️ แก้ไข</button>
+              &nbsp;·&nbsp;
               <button type="button" class="amr-boxplot-log-delete-btn" data-code="${escapeHtml(row.business_type_code)}" data-account="${escapeHtml(row.account_no || "")}" data-intervals="${row.intervals}" style="border:none;background:none;color:#d03b3b;cursor:pointer;font-size:13px;padding:0;">🗑️ ลบ</button>
             </td>
           </tr>`);
@@ -845,6 +847,45 @@ function renderAmrBoxplotLogTable() {
       amrBoxplotLogTable.querySelectorAll(`tr[data-tsic-group="${CSS.escape(groupId)}"]`).forEach((row) => {
         row.style.display = expanding ? "" : "none";
       });
+    });
+  });
+
+  // ปุ่มแก้ไขต่อแถว — แก้ชื่อบริษัท/เลขทะเบียนนิติบุคคลของบัญชีที่อัปโหลดไปแล้วโดยตรง ใช้ตอนไฟล์
+  // ต้นทางไม่มีชื่อบริษัทให้เลย (เช่นรายงาน "Custom kW Report") หรือกรอกผิดตอนอัปโหลดครั้งแรก — ไม่
+  // ต้องลบแล้วอัปโหลดใหม่ทั้งก้อน (append_intervals_local ไม่มี dedup ข้ามการอัปโหลด เสี่ยงข้อมูลซ้ำ)
+  amrBoxplotLogTable.querySelectorAll(".amr-boxplot-log-edit-btn").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const code = btn.dataset.code;
+      const accountNo = btn.dataset.account;
+      const companyName = prompt("ชื่อบริษัท (เว้นว่างไว้ได้ถ้าไม่ทราบ):", btn.dataset.company || "");
+      if (companyName === null) return; // กดยกเลิก
+      const registrationNo = prompt("เลขทะเบียนนิติบุคคล (DBD) — ไม่บังคับ เว้นว่างได้:", btn.dataset.reg || "");
+      if (registrationNo === null) return;
+
+      btn.disabled = true;
+      try {
+        const res = await fetch("/api/admin/amr-boxplot/data", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            business_type_code: code,
+            account_no: accountNo,
+            company_name: companyName.trim(),
+            registration_no: registrationNo.trim(),
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          alert(data.message || "แก้ไขไม่สำเร็จ");
+          btn.disabled = false;
+          return;
+        }
+        loadAmrBoxplotLog();
+      } catch (err) {
+        alert("เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ");
+        console.error(err);
+        btn.disabled = false;
+      }
     });
   });
 

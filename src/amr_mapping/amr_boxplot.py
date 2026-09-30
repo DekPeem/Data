@@ -399,6 +399,46 @@ def remove_interval_rows(path: Path, business_type_code: str, account_no: str) -
     return removed
 
 
+def update_account_metadata(
+    path: Path,
+    business_type_code: str,
+    account_no: str,
+    company_name: Optional[str] = None,
+    registration_no: Optional[str] = None,
+) -> int:
+    """แก้ชื่อบริษัท/เลขทะเบียนนิติบุคคลของบัญชีที่อัปโหลดไปแล้วโดยตรง ไม่ต้องลบแล้วอัปโหลดใหม่ทั้งก้อน
+    (append_intervals_local ไม่มี dedup ข้ามการอัปโหลด อัปโหลดซ้ำจะนับข้อมูลซ้ำ) — ใช้ตอนไฟล์ AMR
+    ต้นทางไม่มีชื่อบริษัทให้เลย (เช่นรายงาน "Custom kW Report") หรืออ่าน/กรอกผิดตอนอัปโหลดครั้งแรก
+    company_name/registration_no ไม่ส่งมา (None) คือไม่แก้ฟิลด์นั้น ส่งมาเป็น "" ได้ถ้าตั้งใจล้างค่าทิ้ง
+    คืนจำนวนแถวที่แก้ (0 ถ้าไม่มีไฟล์/ไม่มีแถวตรงเงื่อนไขเลย)"""
+
+    import csv
+
+    if not path.exists():
+        return 0
+    _migrate_intervals_file_header_if_needed(path)
+
+    with path.open("r", encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.DictReader(f))
+
+    updated = 0
+    for row in rows:
+        if row.get("business_type_code") == business_type_code and (row.get("account_no") or "") == account_no:
+            if company_name is not None:
+                row["company_name"] = company_name
+            if registration_no is not None:
+                row["registration_no"] = registration_no
+            updated += 1
+
+    if updated:
+        with path.open("w", encoding="utf-8", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=_INTERVAL_FIELDNAMES, lineterminator="\n")
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({name: row.get(name, "") for name in _INTERVAL_FIELDNAMES})
+    return updated
+
+
 def load_intervals_local(path: Path, business_type_code: Optional[str] = None, account_no: Optional[str] = None) -> pd.DataFrame:
     """โหลดข้อมูล interval จริงทั้งหมด (หรือกรองเฉพาะ business_type_code/account_no) คืน DataFrame
     ว่างถ้ายังไม่มีไฟล์เลย/ไม่มีข้อมูลตรงเงื่อนไข — account_no=None (ค่าเริ่มต้น) คือไม่กรองตามบัญชี

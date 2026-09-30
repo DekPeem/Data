@@ -843,6 +843,31 @@ def api_amr_boxplot_delete_data():
     return jsonify({"removed": removed})
 
 
+@app.route("/api/admin/amr-boxplot/data", methods=["PATCH"])
+def api_amr_boxplot_update_data():
+    """แก้ชื่อบริษัท/เลขทะเบียนนิติบุคคลของบัญชีที่อัปโหลดไปแล้วโดยตรง ไม่ต้องลบแล้วอัปโหลดใหม่ทั้งก้อน
+    (ไม่มี dedup ข้ามการอัปโหลด — ถ้าลบแล้วอัปโหลดซ้ำ ต้องอัปโหลดไฟล์เดิมใหม่ทั้งหมด เสี่ยงพิมพ์วันที่/
+    ไฟล์ผิดโดยไม่จำเป็น) ใช้ตอนไฟล์ต้นทางไม่มีชื่อบริษัทให้เลย (เช่นรายงาน "Custom kW Report") หรือ
+    กรอกผิดตอนอัปโหลดครั้งแรก — ส่งเฉพาะฟิลด์ที่อยากแก้มาก็ได้ ไม่ต้องส่งครบทั้งคู่"""
+
+    from amr_mapping.amr_boxplot import update_account_metadata
+
+    data = request.get_json(silent=True) or {}
+    business_type_code = (data.get("business_type_code") or "").strip()
+    account_no = data.get("account_no") or ""
+    if not business_type_code:
+        return jsonify({"error": "invalid_request", "message": "กรุณาระบุประเภทธุรกิจ (TSIC)"}), 400
+    if "company_name" not in data and "registration_no" not in data:
+        return jsonify({"error": "invalid_request", "message": "กรุณาระบุชื่อบริษัทหรือเลขทะเบียนนิติบุคคลที่จะแก้"}), 400
+
+    company_name = data.get("company_name").strip() if "company_name" in data and data.get("company_name") is not None else None
+    registration_no = data.get("registration_no").strip() if "registration_no" in data and data.get("registration_no") is not None else None
+
+    storage_path = DEFAULT_DATA_DIR / "amr_boxplot_intervals_local.csv"
+    updated = update_account_metadata(storage_path, business_type_code, account_no, company_name, registration_no)
+    return jsonify({"updated": updated})
+
+
 @app.route("/api/forecast-boxplot")
 def api_forecast_boxplot():
     """คืนกราฟ Boxplot (PNG) จากข้อมูล AMR จริงที่สะสมไว้สำหรับประเภทธุรกิจ (TSIC) หนึ่งรายการ —

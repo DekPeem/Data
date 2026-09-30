@@ -985,6 +985,51 @@ def test_amr_boxplot_delete_data_removes_only_matching_rows(client, monkeypatch,
     assert by_account[0]["account_no"] == "A1"
 
 
+def test_amr_boxplot_update_data_requires_business_type_code(client):
+    res = client.patch("/api/admin/amr-boxplot/data", json={"company_name": "x"})
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+
+def test_amr_boxplot_update_data_requires_at_least_one_field(client):
+    res = client.patch("/api/admin/amr-boxplot/data", json={"business_type_code": "86101", "account_no": "A1"})
+    assert res.status_code == 400
+    assert res.get_json()["error"] == "invalid_request"
+
+
+def test_amr_boxplot_update_data_sets_company_name(client, monkeypatch, tmp_path):
+    """ใช้ตอนไฟล์ต้นทางไม่มีชื่อบริษัทให้เลย (เช่นรายงาน "Custom kW Report") — ผู้ใช้กรอกชื่อบริษัท
+    เองทีหลังได้โดยไม่ต้องลบแล้วอัปโหลดใหม่ทั้งก้อน"""
+
+    import io
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+
+    client.post(
+        "/api/admin/amr-boxplot/upload",
+        data={
+            "business_type_code": "86101",
+            "account_no": "020027862234",
+            "files": (io.BytesIO(_make_amr_report_html(n_days=1).encode("utf-8")), "report.xls"),
+        },
+        content_type="multipart/form-data",
+    )
+
+    res = client.patch(
+        "/api/admin/amr-boxplot/data",
+        json={
+            "business_type_code": "86101",
+            "account_no": "020027862234",
+            "company_name": "บริษัท พริ้นซิเพิล เฮลท์แคร์ - มุกดาหาร จำกัด",
+        },
+    )
+    assert res.status_code == 200
+    assert res.get_json()["updated"] == 96
+
+    by_account = client.get("/api/admin/amr-boxplot/status-by-account").get_json()
+    assert by_account[0]["company_name"] == "บริษัท พริ้นซิเพิล เฮลท์แคร์ - มุกดาหาร จำกัด"
+
+
 def test_amr_boxplot_upload_rejects_zip_with_path_traversal(client, monkeypatch, tmp_path):
     """ป้องกัน zip slip — ชื่อไฟล์ในซิปที่มี "../" ปนอยู่ต้องถูกตัด path ย่อยทิ้งก่อนเขียนไฟล์เสมอ
     ไม่ยอมให้เขียนออกไปนอก upload_dir เด็ดขาด (เหมือนเทสต์เดิมของโหมดนำเข้า AMR ก่อนถูกลบไป)"""

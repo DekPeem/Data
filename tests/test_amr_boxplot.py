@@ -19,6 +19,7 @@ from amr_mapping.amr_boxplot import (
     render_boxplot_png,
     summarize_available,
     summarize_available_by_account,
+    update_account_metadata,
 )
 
 
@@ -519,6 +520,47 @@ def test_remove_interval_rows_no_match_returns_zero(amr_report_file, tmp_path):
 
 def test_remove_interval_rows_missing_file_returns_zero(tmp_path):
     assert remove_interval_rows(tmp_path / "nope.csv", "55101", "") == 0
+
+
+def test_update_account_metadata_sets_company_name_and_registration_no(amr_report_file, tmp_path):
+    """ใช้ตอนไฟล์ต้นทางไม่มีชื่อบริษัทให้เลย (เช่นรายงาน "Custom kW Report") — แก้ชื่อบริษัท/เลข
+    ทะเบียนของบัญชีที่อัปโหลดไปแล้วได้โดยตรง ไม่ต้องลบแล้วอัปโหลดใหม่ทั้งก้อน"""
+
+    storage = tmp_path / "storage.csv"
+    intervals = parse_amr_file(amr_report_file)
+    append_intervals_local("86101", intervals[:100], storage, account_no="020027862234")
+    append_intervals_local("86101", intervals[100:200], storage, account_no="A2")  # บัญชีอื่นไม่โดนแตะ
+
+    updated = update_account_metadata(
+        storage, "86101", "020027862234", company_name="บริษัท พริ้นซิเพิล เฮลท์แคร์ - มุกดาหาร จำกัด"
+    )
+    assert updated == 100
+
+    rows = {(r["business_type_code"], r["account_no"]): r for r in summarize_available_by_account(storage)}
+    assert rows[("86101", "020027862234")]["company_name"] == "บริษัท พริ้นซิเพิล เฮลท์แคร์ - มุกดาหาร จำกัด"
+    assert rows[("86101", "A2")]["company_name"] == ""  # บัญชีอื่นไม่โดนแก้
+
+
+def test_update_account_metadata_only_touches_given_fields(amr_report_file, tmp_path):
+    storage = tmp_path / "storage.csv"
+    intervals = parse_amr_file(amr_report_file)
+    append_intervals_local("86101", intervals[:50], storage, account_no="A1", registration_no="0105544000157")
+
+    update_account_metadata(storage, "86101", "A1", company_name="บริษัท ทดสอบ จำกัด")
+
+    rows = {(r["business_type_code"], r["account_no"]): r for r in summarize_available_by_account(storage)}
+    assert rows[("86101", "A1")]["company_name"] == "บริษัท ทดสอบ จำกัด"
+    assert rows[("86101", "A1")]["registration_no"] == "0105544000157"  # ไม่ส่งมา ต้องไม่ถูกแก้
+
+
+def test_update_account_metadata_no_match_returns_zero(amr_report_file, tmp_path):
+    storage = tmp_path / "storage.csv"
+    append_intervals_local("86101", parse_amr_file(amr_report_file), storage, account_no="A1")
+    assert update_account_metadata(storage, "99999", "A1", company_name="ไม่มีจริง") == 0
+
+
+def test_update_account_metadata_missing_file_returns_zero(tmp_path):
+    assert update_account_metadata(tmp_path / "nope.csv", "55101", "A1", company_name="x") == 0
 
 
 def test_summarize_available_reports_per_business_type(amr_report_file, tmp_path):
