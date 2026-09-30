@@ -518,6 +518,9 @@ loadBusinessTypesTable();
 // ── อัปโหลด AMR จริง สร้างฐานข้อมูล Boxplot ตาม TSIC (ดู src/amr_mapping/amr_boxplot.py) ──
 
 const amrBoxplotBizSelect = document.getElementById("amr-boxplot-biz-select");
+const amrBoxplotBizSearch = document.getElementById("amr-boxplot-biz-search");
+const amrBoxplotBizCombobox = document.getElementById("amr-boxplot-biz-combobox");
+const amrBoxplotBizDropdown = amrBoxplotBizCombobox.querySelector(".biz-type-dropdown");
 const amrBoxplotFiles = document.getElementById("amr-boxplot-files");
 const amrBoxplotAccountNo = document.getElementById("amr-boxplot-account-no");
 const amrBoxplotCompanyName = document.getElementById("amr-boxplot-company-name");
@@ -527,10 +530,11 @@ const amrBoxplotUploadStatus = document.getElementById("amr-boxplot-upload-statu
 
 const AMR_BIZ_SELECT_UNCLASSIFIED_KEY = "__unclassified__";
 
-// จัดกลุ่มตัวเลือกในดรอปดาวน์ประเภทธุรกิจเป็น <optgroup> ตาม TSIC Section (A-U) แทนรายการยาว
-// เรียงตามชื่ออย่างเดียว — ผู้ใช้ฟีดแบ็กว่ารายการแบบเดิมยาวลายตาเกินไป หาไม่เจอ (เลียนแบบการจัดกลุ่ม
-// ตาม section ที่ overview.js ใช้กับตารางลูกค้าอยู่แล้ว)
-function buildBizSelectOptionsHtml(types) {
+// จัดกลุ่มประเภทธุรกิจตาม TSIC Section (A-U) — ใช้ร่วมกันทั้งช่องอัปโหลด (biz-type-combobox พิมพ์
+// ค้นหาได้ทั้งชื่อ/รหัส TSIC — ผู้ใช้ฟีดแบ็กว่า <select>/<optgroup> เดิมพิมพ์หาไม่ได้เลย) และ
+// <select> เดิมของโหมด "ดึงจากเว็บ PEA อัตโนมัติ" (ยังไม่แปลงเป็น combobox เพราะมีตัวเลือกพิเศษ
+// "ตรวจจับอัตโนมัติ" ปนอยู่ด้วย)
+function groupBizTypesBySection(types) {
   const groups = new Map(); // section_code (หรือ UNCLASSIFIED) -> { label, items: [] }
   for (const t of types) {
     const key = t.section_code || AMR_BIZ_SELECT_UNCLASSIFIED_KEY;
@@ -542,31 +546,98 @@ function buildBizSelectOptionsHtml(types) {
     }
     groups.get(key).items.push(t);
   }
-
   const sortedKeys = Array.from(groups.keys()).sort((a, b) => {
     if (a === AMR_BIZ_SELECT_UNCLASSIFIED_KEY) return 1;
     if (b === AMR_BIZ_SELECT_UNCLASSIFIED_KEY) return -1;
     return a.localeCompare(b);
   });
+  for (const key of sortedKeys) {
+    groups.get(key).items.sort((a, b) => (a.name_th || "").localeCompare(b.name_th || "", "th"));
+  }
+  return sortedKeys.map((key) => groups.get(key));
+}
 
-  return sortedKeys
-    .map((key) => {
-      const group = groups.get(key);
-      const optionsHtml = group.items
-        .sort((a, b) => (a.name_th || "").localeCompare(b.name_th || "", "th"))
-        .map((t) => `<option value="${t.code}">${t.name_th} · ${t.code}</option>`)
-        .join("");
+function buildBizSelectOptionsHtml(types) {
+  return groupBizTypesBySection(types)
+    .map((group) => {
+      const optionsHtml = group.items.map((t) => `<option value="${t.code}">${t.name_th} · ${t.code}</option>`).join("");
       return `<optgroup label="${escapeHtml(group.label)}">${optionsHtml}</optgroup>`;
     })
     .join("");
+}
+
+// ช่องอัปโหลด: พิมพ์ค้นหาได้ (ชื่อหรือรหัส TSIC) แทน <select>/<optgroup> เดิมที่พิมพ์หาไม่ได้เลย
+// (เลือกได้แค่เลื่อนดู/กดตัวอักษรแรกแบบเบราว์เซอร์เดิม) ค่าจริงเก็บใน hidden input
+// #amr-boxplot-biz-select (โค้ดส่วนอื่นที่อ่าน .value ไม่ต้องแก้อะไรเลย)
+function buildBizDropdownItemsHtml(types) {
+  return (
+    groupBizTypesBySection(types)
+      .map(
+        (group) =>
+          `<div class="biz-type-dropdown-group">${escapeHtml(group.label)}</div>` +
+          group.items.map((t) => `<button type="button" class="biz-type-dropdown-item" data-code="${t.code}" data-label="${escapeHtml(t.name_th)} · ${t.code}">${escapeHtml(t.name_th)} · ${t.code}</button>`).join("")
+      )
+      .join("") + `<div class="biz-type-dropdown-empty" style="display:none;">ไม่พบประเภทธุรกิจที่ตรงกับคำค้นหา</div>`
+  );
+}
+
+// กรองรายการในดรอปดาวน์ตามคำค้นหา เหมือน filterComboboxDropdown แต่ต้องซ่อน/แสดงหัวข้อกลุ่ม
+// (.biz-type-dropdown-group) ตามด้วยว่ากลุ่มนั้นเหลือรายการที่ตรงคำค้นหาบ้างไหม — เขียนแยกจาก
+// filterComboboxDropdown ที่ใช้ร่วมกันที่อื่น (ไม่มีแนวคิดหัวข้อกลุ่มปนอยู่ในดรอปดาวน์) กันกระทบกัน
+function filterAmrBoxplotBizDropdown() {
+  const query = amrBoxplotBizSearch.value.trim().toLowerCase();
+  let anyVisible = false;
+  let currentGroup = null;
+  let currentGroupHasMatch = false;
+  for (const el of amrBoxplotBizDropdown.children) {
+    if (el.classList.contains("biz-type-dropdown-group")) {
+      if (currentGroup) currentGroup.style.display = currentGroupHasMatch ? "" : "none";
+      currentGroup = el;
+      currentGroupHasMatch = false;
+    } else if (el.classList.contains("biz-type-dropdown-item")) {
+      const match = !query || el.textContent.toLowerCase().includes(query);
+      el.style.display = match ? "" : "none";
+      if (match) {
+        anyVisible = true;
+        currentGroupHasMatch = true;
+      }
+    }
+  }
+  if (currentGroup) currentGroup.style.display = currentGroupHasMatch ? "" : "none";
+  const emptyMsg = amrBoxplotBizDropdown.querySelector(".biz-type-dropdown-empty");
+  if (emptyMsg) emptyMsg.style.display = anyVisible ? "none" : "block";
+}
+
+function selectAmrBoxplotBiz(code, label) {
+  amrBoxplotBizSelect.value = code;
+  amrBoxplotBizSearch.value = label;
+  amrBoxplotBizCombobox.classList.remove("open");
+  amrBoxplotBizDropdown.querySelectorAll(".biz-type-dropdown-item").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.code === code);
+  });
+}
+
+let amrBoxplotBizComboboxReady = false;
+
+function setupAmrBoxplotBizCombobox() {
+  amrBoxplotBizDropdown.querySelectorAll(".biz-type-dropdown-item").forEach((btn) => {
+    btn.addEventListener("click", () => selectAmrBoxplotBiz(btn.dataset.code, btn.dataset.label));
+  });
+
+  if (amrBoxplotBizComboboxReady) return; // ผูก event listener ของช่อง search ครั้งเดียวพอ
+  amrBoxplotBizComboboxReady = true;
+  amrBoxplotBizSearch.addEventListener("focus", () => amrBoxplotBizCombobox.classList.add("open"));
+  amrBoxplotBizSearch.addEventListener("input", filterAmrBoxplotBizDropdown);
 }
 
 async function loadAmrBoxplotBizOptions() {
   try {
     const res = await fetch("/api/business-types-full");
     const types = await res.json();
+    amrBoxplotBizDropdown.innerHTML = buildBizDropdownItemsHtml(types);
+    setupAmrBoxplotBizCombobox();
+
     const optionsHtml = buildBizSelectOptionsHtml(types);
-    amrBoxplotBizSelect.innerHTML = optionsHtml;
     // ช่องเดียวกันในโหมด "ดึงจากเว็บ PEA อัตโนมัติ" มีตัวเลือกแรกเป็น "ตรวจจับอัตโนมัติ" (value ว่าง)
     // เสมอ ต้องคงไว้ ไม่ใช่เขียนทับด้วย optionsHtml ตรงๆ
     amrFetchBizSelect.innerHTML = amrFetchBizSelect.options[0].outerHTML + optionsHtml;

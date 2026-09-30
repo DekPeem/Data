@@ -80,6 +80,11 @@
     .biz-type-dropdown-item:hover, .section-dropdown-item:hover { background: #eef3fa; }
     .biz-type-dropdown-item.active, .section-dropdown-item.active { background: #dbeafe; color: #0b3d91; }
     .biz-type-dropdown-empty, .section-dropdown-empty { padding: 8px 10px; font-size: 12.5px; color: #8996ab; }
+    .biz-type-dropdown-group {
+      padding: 6px 10px 3px; font-size: 11px; font-weight: 700; color: #8996ab;
+      text-transform: uppercase; letter-spacing: 0.03em;
+    }
+    .biz-type-dropdown-group:not(:first-child) { margin-top: 4px; border-top: 1px solid rgba(15,23,42,0.06); padding-top: 8px; }
     .biz-type-combobox { margin-bottom: 4px; }
     .section-combobox { max-width: 520px; margin-bottom: 4px; }
     .biz-card-wrap { display: flex; flex-direction: column; }
@@ -165,8 +170,12 @@
         <div id="amr-boxplot-upload-panel" style="display:flex;flex-direction:column;gap:16px;">
           <div class="form-grid">
             <div class="form-field">
-              <label for="amr-boxplot-biz-select">ประเภทธุรกิจ (TSIC)</label>
-              <select id="amr-boxplot-biz-select"></select>
+              <label for="amr-boxplot-biz-search">ประเภทธุรกิจ (TSIC)</label>
+              <div class="biz-type-combobox" id="amr-boxplot-biz-combobox">
+                <input type="text" id="amr-boxplot-biz-search" class="biz-type-search-input" placeholder="🔍 พิมพ์ชื่อหรือรหัส TSIC..." autocomplete="off">
+                <input type="hidden" id="amr-boxplot-biz-select">
+                <div class="biz-type-dropdown"></div>
+              </div>
             </div>
             <div class="form-field">
               <label for="amr-boxplot-files">ไฟล์ AMR (.xls/.zip, เลือกได้หลายไฟล์)</label>
