@@ -1106,7 +1106,25 @@ def render_boxplot_png(
         raise ValueError("ยังไม่มีข้อมูล AMR จริงสำหรับประเภทธุรกิจนี้เลย")
 
     peaks = {r: df.loc[df.rate == r, "kw"].max() for r in COLORS if (df.rate == r).any()}
+    means = {r: df.loc[df.rate == r, "kw"].mean() for r in COLORS if (df.rate == r).any()}
     ymax = (max(peaks.values()) if peaks else df["kw"].max()) * 1.18
+
+    # สรุปตัวเลข Peak/เฉลี่ยของแต่ละ rate (P/OP/H) เป็นข้อความใต้หัวเรื่องกราฟ — ผู้ใช้ยืนยันอยากเห็น
+    # ตัวเลขสรุปไปพร้อมกับกราฟเลย ไม่ต้องกะด้วยตาจาก box plot เอง (รูปแบบไหนก็ได้ตามที่ขอมา เลือกวาง
+    # เป็นบรรทัดข้อความใต้ชื่อกราฟเพราะทำง่ายสุด ไม่ต้องเปลี่ยน API/หน้าเว็บเพิ่ม)
+    rate_label = {
+        "P": "P (Peak)",
+        "OP": "OP (Off-Peak)",
+        "H": "H (วันหยุด)" if thai else "H (Holiday)",
+    }
+    stats_parts = []
+    for r in ("P", "OP", "H"):
+        if r in peaks:
+            if thai:
+                stats_parts.append(f"{rate_label[r]}: สูงสุด {peaks[r]:,.1f} kW · เฉลี่ย {means[r]:,.1f} kW")
+            else:
+                stats_parts.append(f"{rate_label[r]}: max {peaks[r]:,.1f} kW · avg {means[r]:,.1f} kW")
+    stats_line = "    |    ".join(stats_parts)
 
     fig, axes = plt.subplots(len(panels), 1, figsize=(12, 4.6 * len(panels)), sharey=True, squeeze=False)
     axes = axes[:, 0]
@@ -1134,10 +1152,18 @@ def render_boxplot_png(
             ax.spines[s].set_visible(False)
     axes[-1].set_xlabel(L["hour"])
     fig.suptitle(title, fontsize=14, weight="bold")
+    title_lines = 1 + title.count("\n")
+    top_margin = 0.97
+    if stats_line:
+        # วางบรรทัดสรุปตัวเลขไว้ใต้หัวเรื่อง (ซึ่งอาจมี subtitle บัญชี/บริษัทต่ออยู่แล้ว 1 บรรทัด)
+        # จึงต้องขยับตำแหน่ง y ลงตามจำนวนบรรทัดของหัวเรื่อง กันทับกัน
+        stats_y = 0.975 - title_lines * 0.045
+        fig.text(0.5, stats_y, stats_line, ha="center", fontsize=9.5, color="#333333")
+        top_margin -= 0.045
     fig.text(0.01, 0.005,
               "Box = Q1-Q3, bold line = median, whiskers = P5-P95, dot = max 15-min value. Real AMR data.",
               fontsize=8, color="gray")
-    fig.tight_layout(rect=(0, 0.02, 1, 0.97))
+    fig.tight_layout(rect=(0, 0.02, 1, top_margin))
 
     buf = io.BytesIO()
     try:

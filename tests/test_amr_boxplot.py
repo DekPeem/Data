@@ -843,6 +843,24 @@ def test_render_boxplot_png_with_subtitle_returns_valid_png(amr_report_file, tmp
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
 
 
+def test_render_boxplot_png_stats_line_handles_missing_rates(tmp_path):
+    """ถ้าข้อมูลมีแค่ rate เดียว (เช่น เฉพาะวันหยุด H) บรรทัดสรุป Peak/เฉลี่ยต้องไม่พังเพราะ
+    peaks/means dict มีแค่ key เดียว (ดู stats_parts loop ใน render_boxplot_png)"""
+
+    html = _make_amr_html(dt.datetime(2026, 1, 3), n_days=2)  # 3-4 ม.ค. 2569 = เสาร์-อาทิตย์ล้วน
+    path = tmp_path / "report.xls"
+    path.write_text(html, encoding="utf-8")
+
+    storage = tmp_path / "storage.csv"
+    intervals = parse_amr_file(path)
+    assert all(iv.rate == "H" for iv in intervals)
+    append_intervals_local("55101", intervals, storage)
+    df = load_intervals_local(storage, "55101")
+
+    png = render_boxplot_png(df, business_type_code="55101", business_type_name="โรงแรม")
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+
+
 def test_render_boxplot_png_empty_dataframe_raises(amr_report_file, tmp_path):
     storage = tmp_path / "storage.csv"
     df = load_intervals_local(storage, "55101")  # ไม่มีไฟล์เลย -> DataFrame ว่าง
