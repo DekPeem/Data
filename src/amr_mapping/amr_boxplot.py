@@ -357,16 +357,76 @@ def _extract_mea_wide_excel_customer_info(path: Union[str, Path]) -> Tuple[str, 
     return str(df.iloc[header_row_idx + 1, mea_col]).strip(), ""
 
 
+def _is_load_profile_detail_xlsx(path: Union[str, Path]) -> bool:
+    """เช็คว่าไฟล์เป็นรายงาน "Load Profile" รูปแบบ .xlsx จริง 1 ชีต หัวตารางแถวเดียว (แถว 0) ที่มี
+    คอลัมน์ "DateTime" + แยกกำลังไฟฟ้าเป็น 3 ช่วงเวลา (TOD rate — Time of Day): "kW (On-Peak)",
+    "kW (Off-Peak)", "kW (Partial-Peak)" — รูปแบบไฟล์ AMR จริงแบบที่ 8 ที่เจอ ต่างจากทุกแบบก่อนหน้า
+    ตรงที่เป็นไฟล์ "สรุปแล้ว" (ไม่ใช่ export ดิบจาก PEA/MEA ตรงๆ — ไม่มีคอลัมน์เลขบัญชี/ชื่อบริษัท
+    เลย ต้องกรอกเองเสมอ) น่าจะมาจากเครื่องมือ/ที่ปรึกษาพลังงานที่ประมวลผลไฟล์ดิบของผู้ใช้ไฟรายที่ถือ
+    สัญญาอัตรา TOD (3 ช่วงราคาต่อวัน ใช้เหมือนกันทุกวันในสัปดาห์ ไม่แยกวันหยุดสุดสัปดาห์แบบ TOU) มา
+    อีกที — เช็คจากชื่อคอลัมน์ตรงๆ ใน 1 แถวบนสุดพอ (ไม่ต้องสนใจชื่อไฟล์ ไฟล์ของลูกค้าคนอื่นที่ใช้
+    เครื่องมือเดียวกันก็ควรจะมีโครงสร้างคอลัมน์แบบนี้เหมือนกัน)"""
+
+    try:
+        raw = Path(path).read_bytes()
+    except OSError:
+        return False
+    if raw[:2] != b"PK":
+        return False
+    try:
+        df = pd.read_excel(io.BytesIO(raw), sheet_name=0, header=0, nrows=1)
+    except Exception:  # noqa: BLE001 — ไฟล์เสีย/อ่านไม่ได้/ไม่ใช่ .xlsx จริง ถือว่าไม่ใช่รูปแบบนี้
+        return False
+    cols = set(str(c) for c in df.columns)
+    return {"DateTime", "kW (On-Peak)", "kW (Off-Peak)"}.issubset(cols)
+
+
+def _parse_load_profile_detail_xlsx(path: Union[str, Path]) -> List[ParsedInterval]:
+    """แกะรายงาน "Load Profile" รูปแบบ .xlsx ที่มีคอลัมน์ "DateTime" + "kW" ตรงๆ (ดู
+    _is_load_profile_detail_xlsx) — ไฟล์นี้ให้กำลังไฟฟ้ารวม (คอลัมน์ "kW") ของแต่ละช่วง 15 นาที
+    มาตรงๆ อยู่แล้ว (เท่ากับผลรวมของ 3 คอลัมน์ On-Peak/Off-Peak/Partial-Peak เป๊ะ — ยืนยันจากไฟล์
+    ตัวอย่างจริง) จึงไม่ต้องรวมเอง อ่านคอลัมน์ "kW" ตรงๆ พอ ไม่สนใจคอลัมน์แยกตาม TOD rate
+    (On-Peak/Off-Peak/Partial-Peak/RATE_A/B/C) เลย เพราะ 3 ช่วงราคานี้เป็นสัญญาอัตรา TOD เฉพาะ
+    (ใช้เหมือนกันทุกวันในสัปดาห์ ไม่สนใจวันหยุดสุดสัปดาห์) ซึ่ง "ไม่ตรง" กับแนวคิด P/OP/H ของระบบนี้
+    ที่อิงวันหยุดสุดสัปดาห์เป็นหลัก (ดู COLORS/ParsedInterval.rate) — เลือกเดารหัส P/OP/H จากวัน/
+    เวลาเองแทนด้วย _classify_tou_rate (เหมือนที่ใช้กับรายงาน "Custom kW Report" ของ PEA ที่ไม่มี
+    rate ให้เหมือนกัน) ซึ่งหมายความว่าขอบเขตเวลา Peak (9:00-22:00 วันทำการ) อาจไม่ตรงกับขอบเขต TOD
+    rate จริงของสัญญานี้เป๊ะ แต่ก็ยังให้ผลลัพธ์ H (วันหยุดสุดสัปดาห์) ถูกต้องเสมอ ซึ่งเป็นสิ่งที่
+    Boxplot ใช้แยกกลุ่มจริงๆ (ดู render_boxplot_png — แยกแค่ H กับไม่ใช่ H เท่านั้น ส่วน P/OP ภายใน
+    panel วันทำการ Boxplot จะคำนวณจากชั่วโมงเองอยู่แล้วไม่ได้อิงค่า rate ที่เก็บไว้) "DateTime" บอก
+    เวลา "สิ้นสุด" ของช่วง 15 นาทีนั้น (เหมือนรายงานของ PEA/MEA ทุกแบบ) ต้องลบ 15 นาทีก่อน — ไฟล์นี้
+    ไม่มีเลขบัญชี/ชื่อบริษัทให้เลย (ดู _is_load_profile_detail_xlsx) ต้องกรอกเองในฟอร์มเสมอ"""
+
+    raw = Path(path).read_bytes()
+    df = pd.read_excel(io.BytesIO(raw), sheet_name=0, header=0)
+    if "DateTime" not in df.columns or "kW" not in df.columns:
+        return []
+
+    end = pd.to_datetime(df["DateTime"], errors="coerce")
+    start = end - pd.Timedelta(minutes=15)
+    kw = pd.to_numeric(df["kW"], errors="coerce")
+    rate = _classify_tou_rate(start)
+
+    out: List[ParsedInterval] = []
+    for s, r, k in zip(start, rate, kw):
+        if pd.isna(s) or pd.isna(k):
+            continue
+        out.append(ParsedInterval(date=s.strftime("%Y-%m-%d"), hour=int(s.hour), minute=int(s.minute), rate=str(r), kw=float(k)))
+    return out
+
+
 def parse_amr_file(path: Union[str, Path]) -> List[ParsedInterval]:
-    """อ่านไฟล์ AMR ดิบ 1 ไฟล์ (จาก PEA หรือ MEA) คืนรายการ interval ที่แกะแล้ว (rate=P/OP/H, kw,
-    date, hour) — คืน list ว่างถ้าอ่าน/แปลงไม่สำเร็จ (ไม่ raise ทำให้ไฟล์อื่นที่อัปโหลดมาพร้อมกันยัง
-    ประมวลผลต่อได้)"""
+    """อ่านไฟล์ AMR ดิบ 1 ไฟล์ (จาก PEA, MEA หรือไฟล์ "Load Profile" ที่สรุปแล้ว) คืนรายการ interval
+    ที่แกะแล้ว (rate=P/OP/H, kw, date, hour) — คืน list ว่างถ้าอ่าน/แปลงไม่สำเร็จ (ไม่ raise ทำให้
+    ไฟล์อื่นที่อัปโหลดมาพร้อมกันยังประมวลผลต่อได้)"""
 
     try:
         if _is_mea_csv(path):
             return _parse_mea_csv(path)
         if _is_mea_wide_excel(path):
             return _parse_mea_wide_excel(path)
+        if _is_load_profile_detail_xlsx(path):
+            return _parse_load_profile_detail_xlsx(path)
         df = _read_one(_load_report_tables(path))
     except Exception:  # noqa: BLE001 — ไฟล์เสีย/รูปแบบไม่ตรง ข้ามไปเฉยๆ
         return []
@@ -439,6 +499,10 @@ def extract_customer_info(path: Union[str, Path]) -> Tuple[str, str]:
         return _extract_mea_csv_customer_info(path)
     if _is_mea_wide_excel(path):
         return _extract_mea_wide_excel_customer_info(path)
+    if _is_load_profile_detail_xlsx(path):
+        # ไฟล์ "Load Profile" รูปแบบนี้ไม่มีคอลัมน์เลขบัญชี/ชื่อบริษัทเลย (ดู
+        # _is_load_profile_detail_xlsx) ต้องกรอกเองในฟอร์มเสมอ
+        return "", ""
 
     try:
         header = _load_report_tables(path)[0]

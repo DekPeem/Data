@@ -344,6 +344,48 @@ def _make_amr_mea_wide_excel(tmp_path, start_date: dt.datetime, n_days: int, mea
     return path
 
 
+def _make_amr_load_profile_detail_xlsx(tmp_path, start_date: dt.datetime, n_days: int, kw: float = 500.0) -> Path:
+    """สร้างไฟล์ .xlsx จริงจำลองรายงาน "Load Profile" (รูปแบบไฟล์ AMR จริงแบบที่ 8 ที่เจอ — ไฟล์
+    "สรุปแล้ว" ไม่ใช่ export ดิบจาก PEA/MEA ตรงๆ ไม่มีเลขบัญชี/ชื่อบริษัทเลย) หัวตารางแถวเดียว (แถว 0)
+    คอลัมน์ DateTime + kW รวม + แยกตาม TOD rate (On-Peak/Off-Peak/Partial-Peak) ที่รวมกันเท่ากับ
+    คอลัมน์ kW เป๊ะเหมือนไฟล์จริง — สัญญาอัตรา TOD ใช้ 3 ช่วงราคาเดียวกันทุกวันในสัปดาห์ (ไม่แยกวันหยุด
+    สุดสัปดาห์แบบ TOU) จึงตั้งทุกแถวเป็น On-Peak ล้วนให้ง่ายต่อการเทียบผลเทส (ระบบไม่ได้ใช้คอลัมน์นี้
+    อยู่แล้ว — ดู _parse_load_profile_detail_xlsx)"""
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+
+    ws.append(
+        [
+            "olf", "Date", "Time", "DateTime", "Month", "Days", "TimeGroup", "kW",
+            "RATE_A", "RATE_B", "RATE_C", "kW (On-Peak)", "kW (Off-Peak)", "kW (Partial-Peak)",
+            "kVAR (On-Peak)", "kVAR (Off-Peak)", "kVAR (Partial-Peak)",
+        ]
+    )
+
+    d = start_date
+    olf = 1
+    for _ in range(n_days):
+        for interval_i in range(96):
+            end = d + dt.timedelta(minutes=(interval_i + 1) * 15)
+            ws.append(
+                [
+                    olf, end.strftime("%d/%m/%Y"), end.strftime("%H:%M"), end.strftime("%Y-%m-%d %H:%M:%S"),
+                    end.strftime("%B"), end.strftime("%A"), end.strftime("%H:00"), kw,
+                    kw, 0, 0, kw, 0, 0, 0, 0, 0,
+                ]
+            )
+            olf += 1
+        d += dt.timedelta(days=1)
+
+    path = tmp_path / "load_profile_detail.xlsx"
+    wb.save(path)
+    return path
+
+
 def test_parse_amr_file_extracts_all_intervals(amr_report_file):
     intervals = parse_amr_file(amr_report_file)
     assert len(intervals) == 5 * 96  # 5 วัน x 96 จุดต่อวัน ไม่มีจุดไหนถูกทิ้ง
@@ -868,4 +910,39 @@ def test_extract_customer_info_supports_mea_wide_excel_reads_mea_no_no_company_n
     path = _make_amr_mea_wide_excel(tmp_path, dt.datetime(2026, 4, 1), n_days=1, mea_no="140002293")
     account_no, company_name = extract_customer_info(path)
     assert account_no == "140002293"
+    assert company_name == ""
+
+
+def test_parse_amr_file_supports_load_profile_detail_format(tmp_path):
+    """ไฟล์ .xlsx "Load Profile" (ไม่ใช่ export ดิบจาก PEA/MEA — ไม่มีเลขบัญชี/ชื่อบริษัทเลย) ต้อง
+    อ่านคอลัมน์ "kW" ตรงๆ ได้ถูกต้อง ไม่ต้องรวมเองจากคอลัมน์ TOD rate แยก"""
+
+    path = _make_amr_load_profile_detail_xlsx(tmp_path, dt.datetime(2026, 1, 1), n_days=5, kw=500.0)
+    intervals = parse_amr_file(path)
+    assert len(intervals) == 5 * 96
+    assert all(i.kw == 500.0 for i in intervals)
+
+
+def test_parse_amr_file_classifies_load_profile_detail_rate_from_date_time(tmp_path):
+    """ไฟล์นี้ไม่มีคอลัมน์ rate P/OP/H ให้เลย (คอลัมน์ TOD rate ของไฟล์ไม่ตรงกับแนวคิด P/OP/H ของ
+    ระบบนี้ — ดู _parse_load_profile_detail_xlsx) ต้องเดาจากวัน/เวลาเองเหมือนรายงาน "Custom kW
+    Report" ของ PEA — 1 ม.ค. 2569 เป็นวันพฤหัส (วันทำการ) ครอบคลุมทั้งวันทำการและวันหยุดสุดสัปดาห์"""
+
+    path = _make_amr_load_profile_detail_xlsx(tmp_path, dt.datetime(2026, 1, 1), n_days=5)
+    intervals = parse_amr_file(path)
+    assert {i.rate for i in intervals} == {"P", "OP", "H"}
+
+    by_key = {(i.date, i.hour): i.rate for i in intervals}
+    assert by_key[("2026-01-01", 10)] == "P"  # พฤหัส 10:00 -> วันทำการ ช่วง Peak (9-22)
+    assert by_key[("2026-01-01", 2)] == "OP"  # พฤหัส 02:00 -> วันทำการ นอกช่วง Peak
+    assert by_key[("2026-01-03", 10)] == "H"  # เสาร์ -> วันหยุด ไม่ว่าจะกี่โมง
+    assert by_key[("2026-01-04", 10)] == "H"  # อาทิตย์ -> วันหยุด
+
+
+def test_extract_customer_info_returns_empty_for_load_profile_detail_format(tmp_path):
+    """ไฟล์รูปแบบนี้ไม่มีเลขบัญชี/ชื่อบริษัทให้เลย — ต้องคืนค่าว่างทั้งคู่เสมอ ไม่ error"""
+
+    path = _make_amr_load_profile_detail_xlsx(tmp_path, dt.datetime(2026, 1, 1), n_days=1)
+    account_no, company_name = extract_customer_info(path)
+    assert account_no == ""
     assert company_name == ""
