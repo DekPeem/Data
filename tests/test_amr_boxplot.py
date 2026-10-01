@@ -401,8 +401,9 @@ def _make_amr_power_logger_csv(tmp_path, samples: list, delimiter: str = "\t") -
     """สร้างไฟล์ .csv จำลองไฟล์ log จากเครื่องวัดไฟฟ้า (power logger — รุ่น DW-680) จริง (รูปแบบไฟล์
     AMR จริงแบบที่ 10 ที่เจอ — คนละประเภทไฟล์โดยสิ้นเชิงจากรายงาน AMR ของ PEA/MEA: preamble ตั้งค่า
     เครื่องช่วงบนจำนวนคอลัมน์ต่อแถวไม่เท่ากันเลย ตามด้วยหัวตาราง 2 แถว (กลุ่ม/ชื่อฟิลด์) แล้วข้อมูล
-    วัดต่อเนื่องทุกไม่กี่วินาที ไม่ใช่ราย 15 นาที) samples คือ list ของ (date_str "D/M/YYYY",
-    time_str "H:M:S", psum_value) — ตั้งใจให้ทดสอบกำหนดเองได้ทั้งวันที่/เวลา/ค่า เพื่อเทียบผลลัพธ์
+    วัดต่อเนื่องทุกไม่กี่วินาที ไม่ใช่ราย 15 นาที) samples คือ list ของ (date_str "YYYY/MM/DD" —
+    ยืนยันจากไฟล์ตัวอย่างจริงตรงๆ ไม่ใช่รูปแบบที่ Excel แสดงผลใหม่ให้ตอนเปิดดู, time_str "H:M:S",
+    psum_value) — ตั้งใจให้ทดสอบกำหนดเองได้ทั้งวันที่/เวลา/ค่า เพื่อเทียบผลลัพธ์
     การเฉลี่ยรวมเป็นช่วง 15 นาที (ดู _parse_power_logger_csv) delimiter เลือกได้ทั้ง tab (ตามที่วาง
     จาก Excel ปกติ) หรือ comma (ไฟล์ .csv มาตรฐาน) ให้ทดสอบว่า csv.Sniffer เดาได้ถูกทั้งคู่"""
 
@@ -1064,11 +1065,11 @@ def test_parse_amr_file_averages_power_logger_samples_into_15min_buckets(tmp_pat
     เดียว (10:00) และ 2 ตัวอย่างในช่วง Off-Peak (02:00) เฉลี่ยรวมเป็นอีก bucket (02:00)"""
 
     samples = [
-        ("7/1/2026", "10:00:00", 100.0),
-        ("7/1/2026", "10:00:10", 200.0),
-        ("7/1/2026", "10:00:20", 300.0),
-        ("7/1/2026", "2:00:00", 50.0),
-        ("7/1/2026", "2:00:10", 150.0),
+        ("2026/01/07", "10:00:00", 100.0),
+        ("2026/01/07", "10:00:10", 200.0),
+        ("2026/01/07", "10:00:20", 300.0),
+        ("2026/01/07", "2:00:00", 50.0),
+        ("2026/01/07", "2:00:10", 150.0),
     ]
     path = _make_amr_power_logger_csv(tmp_path, samples)
     intervals = parse_amr_file(path)
@@ -1083,7 +1084,7 @@ def test_parse_amr_file_classifies_power_logger_holiday_from_date(tmp_path):
     """2026-01-10 เป็นวันเสาร์ — ต้องจัดเป็นวันหยุด (H) ไม่ว่าจะกี่โมง แม้จะอยู่ในช่วงเวลาที่ปกติ
     เป็น Peak (9-22) ของวันทำการก็ตาม"""
 
-    samples = [("10/1/2026", "10:00:00", 500.0)]
+    samples = [("2026/01/10", "10:00:00", 500.0)]
     path = _make_amr_power_logger_csv(tmp_path, samples)
     intervals = parse_amr_file(path)
     assert len(intervals) == 1
@@ -1095,7 +1096,7 @@ def test_parse_amr_file_supports_power_logger_csv_with_comma_delimiter(tmp_path)
     """ไฟล์ .csv บางไฟล์ใช้ comma คั่นจริงๆ (ไม่ใช่ tab ที่วางจาก Excel) — csv.Sniffer ต้องเดาถูก
     ทั้งคู่"""
 
-    samples = [("7/1/2026", "10:00:00", 400.0)]
+    samples = [("2026/01/07", "10:00:00", 400.0)]
     path = _make_amr_power_logger_csv(tmp_path, samples, delimiter=",")
     intervals = parse_amr_file(path)
     assert len(intervals) == 1
@@ -1106,7 +1107,7 @@ def test_parse_amr_file_supports_power_logger_csv_with_comma_delimiter(tmp_path)
 def test_extract_customer_info_returns_empty_for_power_logger_format(tmp_path):
     """ไฟล์รูปแบบนี้ไม่มีเลขบัญชี/ชื่อบริษัทที่เชื่อถือได้เลย — ต้องคืนค่าว่างทั้งคู่เสมอ ไม่ error"""
 
-    path = _make_amr_power_logger_csv(tmp_path, [("7/1/2026", "10:00:00", 100.0)])
+    path = _make_amr_power_logger_csv(tmp_path, [("2026/01/07", "10:00:00", 100.0)])
     account_no, company_name = extract_customer_info(path)
     assert account_no == ""
     assert company_name == ""
