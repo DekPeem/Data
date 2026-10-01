@@ -758,7 +758,7 @@ function renderAmrBoxplotLogTable() {
         : `${escapeHtml(tsicCode)} <span style="color:#d03b3b;">(ไม่พบชื่อในระบบ)</span>`;
       const combinedLinkHtml =
         rows.length > 1
-          ? `<a target="_blank" rel="noopener" href="/api/forecast-boxplot?business_type_code=${encodeURIComponent(tsicCode)}">📊 ดู Boxplot รวมทุกบัญชี →</a>`
+          ? `<button type="button" class="amr-boxplot-log-view-combined-btn" data-code="${escapeHtml(tsicCode)}" style="border:none;background:none;color:#184f95;cursor:pointer;font-size:13px;padding:0;">📊 ดู Boxplot รวมทุกบัญชี →</button>`
           : "";
       // ค่าเริ่มต้นพับเก็บ (collapsed) ทุกกลุ่ม TSIC ไว้ก่อนเสมอ — ผู้ใช้ฟีดแบ็กว่าตารางแสดงทุกบัญชี
       // ของทุก TSIC พร้อมกันหมดลานตาเกินไป กดที่หัวกลุ่มเพื่อกางดูบัญชีของ TSIC นั้นทีละอันแทน (ไม่
@@ -815,7 +815,9 @@ function renderAmrBoxplotLogTable() {
             <td class="num">${row.intervals.toLocaleString("th-TH")}</td>
             <td class="num">${row.days.toLocaleString("th-TH")}</td>
             <td class="amr-log-action-cell">
-              <a target="_blank" rel="noopener" href="/api/forecast-boxplot?business_type_code=${encodeURIComponent(row.business_type_code)}&account_no=${encodeURIComponent(row.account_no || "")}">ดู Boxplot →</a>
+              <button type="button" class="amr-boxplot-log-view-btn" data-code="${escapeHtml(row.business_type_code)}" data-account="${escapeHtml(row.account_no || "")}" style="border:none;background:none;color:#184f95;cursor:pointer;font-size:13px;padding:0;">📊 ดู Boxplot →</button>
+              &nbsp;·&nbsp;
+              <button type="button" class="amr-boxplot-log-quick-upload-btn" data-code="${escapeHtml(row.business_type_code)}" data-account="${escapeHtml(row.account_no || "")}" data-company="${escapeHtml(row.company_name || "")}" data-reg="${escapeHtml(row.registration_no || "")}" style="border:none;background:none;color:#184f95;cursor:pointer;font-size:13px;padding:0;">📤 อัปโหลดเพิ่ม</button>
               &nbsp;·&nbsp;
               <button type="button" class="amr-boxplot-log-edit-btn" data-code="${escapeHtml(row.business_type_code)}" data-account="${escapeHtml(row.account_no || "")}" data-company="${escapeHtml(row.company_name || "")}" data-reg="${escapeHtml(row.registration_no || "")}" style="border:none;background:none;color:#184f95;cursor:pointer;font-size:13px;padding:0;">✏️ แก้ไข</button>
               &nbsp;·&nbsp;
@@ -839,7 +841,7 @@ function renderAmrBoxplotLogTable() {
   // กันลิงก์ "ดู Boxplot รวมทุกบัญชี" ในแถวหัวกลุ่มเดียวกันโดนกดพับ/กางไปด้วยเวลาคลิกลิงก์นั้น
   amrBoxplotLogTable.querySelectorAll("tr.amr-log-tsic-header").forEach((headerRow) => {
     headerRow.addEventListener("click", (e) => {
-      if (e.target.closest("a")) return; // คลิกลิงก์ "ดู Boxplot รวมทุกบัญชี" ไม่ต้องพับ/กาง
+      if (e.target.closest("button")) return; // คลิกปุ่ม "ดู Boxplot รวมทุกบัญชี" ไม่ต้องพับ/กาง
       const groupId = headerRow.dataset.tsicGroupToggle;
       const expanding = headerRow.classList.toggle("expanded");
       const caret = headerRow.querySelector(".amr-log-tsic-caret");
@@ -847,6 +849,28 @@ function renderAmrBoxplotLogTable() {
       amrBoxplotLogTable.querySelectorAll(`tr[data-tsic-group="${CSS.escape(groupId)}"]`).forEach((row) => {
         row.style.display = expanding ? "" : "none";
       });
+    });
+  });
+
+  // ปุ่ม "ดู Boxplot รวมทุกบัญชี" ในแถวหัวกลุ่ม TSIC — วาดกราฟใหม่ทันทีในพื้นที่แสดงผลเดียวกับปุ่ม
+  // "ดูกราฟ Boxplot ของประเภทธุรกิจนี้" ด้านบนสุดของการ์ด (ดู renderAmrBoxplotPreview) ไม่ต้องเลือก
+  // TSIC จากช่องค้นหาเองอีกรอบ — ผู้ใช้ยืนยันอยากได้ปุ่มกดแล้ว "ทำกราฟใหม่ได้เลย" จากประวัติที่มีอยู่แล้ว
+  amrBoxplotLogTable.querySelectorAll(".amr-boxplot-log-view-combined-btn").forEach((btn) => {
+    btn.addEventListener("click", () => renderAmrBoxplotPreview(btn.dataset.code));
+  });
+
+  // ปุ่ม "ดู Boxplot" ต่อแถวบัญชี — เหมือนกันแต่กรองเหลือบัญชีเดียว (เดิมเป็นลิงก์ <a target="_blank">
+  // เปิดแท็บใหม่ เปลี่ยนเป็นปุ่มวาดในหน้าเดิมแทน อ่านง่ายกว่า ไม่ต้องสลับแท็บไปมา)
+  amrBoxplotLogTable.querySelectorAll(".amr-boxplot-log-view-btn").forEach((btn) => {
+    btn.addEventListener("click", () => renderAmrBoxplotPreview(btn.dataset.code, btn.dataset.account));
+  });
+
+  // ปุ่ม "อัปโหลดเพิ่ม" ต่อแถวบัญชี — เติม TSIC/เลขบัญชี/ชื่อบริษัท/เลขทะเบียนนิติบุคคลของแถวนั้นลง
+  // ในฟอร์มอัปโหลดด้านบนให้อัตโนมัติ (ดู prefillAmrBoxplotUploadForm) ผู้ใช้แค่เลือกไฟล์ใหม่แล้วกด
+  // อัปโหลด ไม่ต้องพิมพ์ TSIC/เลขบัญชี/ชื่อบริษัทซ้ำเองเหมือนอัปโหลดครั้งแรก
+  amrBoxplotLogTable.querySelectorAll(".amr-boxplot-log-quick-upload-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      prefillAmrBoxplotUploadForm(btn.dataset.code, btn.dataset.account, btn.dataset.company, btn.dataset.reg);
     });
   });
 
@@ -1249,9 +1273,12 @@ const amrBoxplotViewStatus = document.getElementById("amr-boxplot-view-status");
 const amrBoxplotViewImg = document.getElementById("amr-boxplot-view-img");
 let amrBoxplotViewImgObjectUrl = null;
 
-amrBoxplotViewBtn.addEventListener("click", async () => {
-  const activeSelect = amrBoxplotFetchPanel.style.display === "none" ? amrBoxplotBizSelect : amrFetchBizSelect;
-  const code = activeSelect.value;
+// วาดกราฟ Boxplot ใหม่จากข้อมูลที่สะสมไว้แล้ว ใช้พื้นที่แสดงผลเดียวกัน (amr-boxplot-view-status/
+// -img) ไม่ว่าจะกดมาจากปุ่ม "ดูกราฟ Boxplot ของประเภทธุรกิจนี้" ด้านบน หรือปุ่ม "ดู Boxplot"/"ดู
+// Boxplot รวมทุกบัญชี" ในตาราง log ด้านล่าง — เลือก TSIC/บัญชีจากประวัติที่มีอยู่แล้วแล้ววาดกราฟใหม่
+// ได้ทันที ไม่ต้องพิมพ์/เลือกอะไรซ้ำเอง (ผู้ใช้ยืนยันอยากได้แบบนี้) accountNo = undefined รวมทุกบัญชี
+// ของ TSIC นั้น, "" = เฉพาะกลุ่ม "ไม่ระบุบัญชี", ค่าอื่น = เฉพาะบัญชีนั้น
+async function renderAmrBoxplotPreview(code, accountNo) {
   if (!code) {
     amrBoxplotViewStatus.innerHTML = `<span style="color:#d03b3b;">กรุณาเลือกประเภทธุรกิจ (TSIC) ก่อน</span>`;
     amrBoxplotViewImg.style.display = "none";
@@ -1261,9 +1288,12 @@ amrBoxplotViewBtn.addEventListener("click", async () => {
   amrBoxplotViewBtn.disabled = true;
   amrBoxplotViewStatus.textContent = "⏳ กำลังโหลด...";
   amrBoxplotViewImg.style.display = "none";
+  amrBoxplotViewStatus.scrollIntoView({ behavior: "smooth", block: "center" });
 
   try {
-    const res = await fetch(`/api/forecast-boxplot?business_type_code=${encodeURIComponent(code)}`);
+    const params = new URLSearchParams({ business_type_code: code });
+    if (accountNo !== undefined) params.set("account_no", accountNo);
+    const res = await fetch(`/api/forecast-boxplot?${params.toString()}`);
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       amrBoxplotViewStatus.innerHTML = `<span style="color:#8996ab;">${data.message || "ไม่พบข้อมูล"}</span>`;
@@ -1282,7 +1312,31 @@ amrBoxplotViewBtn.addEventListener("click", async () => {
   } finally {
     amrBoxplotViewBtn.disabled = false;
   }
+}
+
+amrBoxplotViewBtn.addEventListener("click", () => {
+  const activeSelect = amrBoxplotFetchPanel.style.display === "none" ? amrBoxplotBizSelect : amrFetchBizSelect;
+  renderAmrBoxplotPreview(activeSelect.value);
 });
+
+// ปุ่ม "อัปโหลดเพิ่ม" ต่อแถวในตาราง log — เติม TSIC/เลขบัญชี/ชื่อบริษัท/เลขทะเบียนนิติบุคคลที่มีอยู่
+// แล้วลงฟอร์มอัปโหลดด้านบนให้อัตโนมัติ (ไม่แตะช่องไฟล์ — ให้ผู้ใช้เลือกไฟล์ใหม่เอง) สลับไปโหมด "แนบ
+// ไฟล์เอง" ให้ด้วยเผื่อผู้ใช้ค้างอยู่โหมดอื่น แล้วเลื่อนจอไปโฟกัสช่องเลือกไฟล์ทันที — ผู้ใช้ยืนยันอยาก
+// อัปโหลดไฟล์ AMR เพิ่มให้ TSIC/บัญชีที่มีอยู่แล้วแบบเร็ว ไม่ต้องพิมพ์ข้อมูลเดิมซ้ำทุกครั้ง
+function prefillAmrBoxplotUploadForm(code, accountNo, companyName, registrationNo) {
+  const name = (amrBoxplotLogTypeByCode.get(code) || {}).name_th || "";
+  const label = name ? `${name} · ${code}` : code;
+
+  showAmrBoxplotMode(amrBoxplotModeUploadBtn, amrBoxplotUploadPanel);
+  selectAmrBoxplotBiz(code, label);
+  amrBoxplotAccountNo.value = accountNo || "";
+  amrBoxplotCompanyName.value = companyName || "";
+  amrBoxplotRegistrationNo.value = registrationNo || "";
+  amrBoxplotFiles.value = "";
+  amrBoxplotUploadStatus.innerHTML = `<span style="color:#184f95;">เติมข้อมูล TSIC/บัญชีนี้ให้แล้ว เลือกไฟล์ AMR ที่จะเพิ่มแล้วกด "อัปโหลด" ได้เลย</span>`;
+  amrBoxplotFiles.scrollIntoView({ behavior: "smooth", block: "center" });
+  amrBoxplotFiles.focus();
+}
 
 // ── พยากรณ์เส้นโค้งการใช้ไฟ จากไฟล์ AMR จริงบนบิล (ไม่ต้องพิมพ์ Peak/หน่วยไฟ/จำนวนวันเอง — อ่านจาก
 // ไฟล์ที่แนบมาให้อัตโนมัติ เหลือแค่ % ลดตอนพักเที่ยง) — ย้ายมาจากหน้าแรก (เดิมอยู่ index.html/
