@@ -956,6 +956,49 @@ amrBoxplotLogFilterBar.addEventListener("click", (e) => {
 amrBoxplotLogRefreshBtn.addEventListener("click", loadAmrBoxplotLog);
 loadAmrBoxplotLog();
 
+// ── เช็คว่าบัญชีนี้ (เลขบัญชี PEA หรือ MEA No.) มีข้อมูล AMR จริงอยู่แล้วหรือยัง — ผู้ใช้ยืนยันไม่
+// อยากไล่หาเองในตาราง log ด้านล่าง (อาจยาวมาก) แค่พิมพ์เลขบัญชีแล้วรู้ผลทันที ค้นจาก
+// amrBoxplotLogRows ที่โหลดไว้แล้ว (ไม่ยิง request ใหม่ — ข้อมูลเดียวกับตาราง log ด้านล่างเป๊ะ รีเฟรช
+// พร้อมกันเสมอ) เทียบแบบ "ตรงกันพอดี" ก่อน (ตัดช่องว่างหัวท้าย) ถ้าไม่เจอค่อยลองแบบ "มีคำนี้อยู่ในเลข
+// บัญชี" ต่อ (เผื่อพิมพ์/จำเลขบัญชีมาไม่ครบ) — พิมพ์ทันทีเห็นผลทันที ไม่ต้องกดปุ่มแยก (debounce เล็ก
+// น้อยกันยิงค้นหาถี่เกินไปตอนพิมพ์เร็ว)
+const amrAccountCheckInput = document.getElementById("amr-account-check-input");
+const amrAccountCheckResult = document.getElementById("amr-account-check-result");
+let amrAccountCheckDebounceTimer = null;
+
+function renderAmrAccountCheckResult() {
+  const query = amrAccountCheckInput.value.trim();
+  if (!query) {
+    amrAccountCheckResult.innerHTML = "";
+    return;
+  }
+
+  const exact = amrBoxplotLogRows.filter((r) => (r.account_no || "").trim() === query);
+  const partial = exact.length ? [] : amrBoxplotLogRows.filter((r) => (r.account_no || "").includes(query));
+  const matches = exact.length ? exact : partial;
+
+  if (!matches.length) {
+    amrAccountCheckResult.innerHTML = `❌ ยังไม่มีข้อมูล AMR ของบัญชี "${escapeHtml(query)}" ในระบบเลย — อัปโหลด/ดึงข้อมูลได้จากฟอร์มด้านบน`;
+    return;
+  }
+
+  const rowsHtml = matches
+    .map((r) => {
+      const name = (amrBoxplotLogTypeByCode.get(r.business_type_code) || {}).name_th || "";
+      const tsicLabel = name ? `${escapeHtml(name)} · ${escapeHtml(r.business_type_code)}` : escapeHtml(r.business_type_code);
+      const companyPart = r.company_name ? ` — ${escapeHtml(r.company_name)}` : "";
+      return `<div>บัญชี ${escapeHtml(r.account_no)}${companyPart} — ${tsicLabel} (${Number(r.intervals).toLocaleString("th-TH")} จุด / ${r.days} วัน)</div>`;
+    })
+    .join("");
+  const foundLabel = exact.length ? "✅ มีข้อมูลแล้ว" : `✅ ไม่เจอตรงเป๊ะ แต่เจอเลขบัญชีที่มีคำนี้อยู่`;
+  amrAccountCheckResult.innerHTML = `<div style="display:flex;flex-direction:column;gap:4px;">${foundLabel}${rowsHtml}</div>`;
+}
+
+amrAccountCheckInput.addEventListener("input", () => {
+  clearTimeout(amrAccountCheckDebounceTimer);
+  amrAccountCheckDebounceTimer = setTimeout(renderAmrAccountCheckResult, 200);
+});
+
 amrBoxplotUploadBtn.addEventListener("click", async () => {
   const bizCode = amrBoxplotBizSelect.value;
   const files = amrBoxplotFiles.files;

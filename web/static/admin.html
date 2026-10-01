@@ -289,6 +289,13 @@
           </div>
           <button type="button" id="amr-boxplot-log-refresh-btn" class="day-type-btn">🔄 รีเฟรช</button>
         </div>
+        <div class="form-grid" style="align-items:flex-end;">
+          <div class="form-field" style="grid-column: 1 / -1; max-width:420px;">
+            <label for="amr-account-check-input">🔍 เช็คว่าบัญชีนี้มีข้อมูล AMR อยู่แล้วหรือยัง (พิมพ์เลขบัญชี PEA หรือ MEA No.)</label>
+            <input id="amr-account-check-input" type="text" autocomplete="off" placeholder="เช่น 0199000001 หรือ 140001877">
+          </div>
+        </div>
+        <div id="amr-account-check-result" class="hint"></div>
         <div id="amr-boxplot-log-filter-bar" class="amr-log-filter-bar"></div>
         <div id="amr-boxplot-log-status" class="hint"></div>
         <div id="amr-boxplot-log-table"></div>
