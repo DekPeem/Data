@@ -144,6 +144,59 @@ def _make_amr_xlsx(tmp_path, start_date: dt.datetime, n_days: int, account_no: s
     return path
 
 
+def _make_amr_interval_kwh_single_rate_xlsx(
+    tmp_path, start_date: dt.datetime, n_days: int, account_no: str = "", company_name: str = ""
+) -> Path:
+    """สร้างไฟล์ .xlsx จริงจำลองรายงาน "ข้อมูลกิโลวัตต์ชั่วโมงแบบช่วงเวลา" ของ PEA (รูปแบบไฟล์ AMR จริง
+    แบบที่ 9 ที่เจอ — 3 ชีต (header/ข้อมูลจริง/ท้ายรายงาน) เหมือน _make_amr_xlsx แต่ชีตข้อมูลจริงมีแค่
+    5 คอลัมน์ (ts, RATE A, RATE B, RATE C, ผลรวม — ค่าเดียวต่อ rate ไม่ใช่คู่แบบ _make_amr_xlsx ที่มี
+    7 คอลัมน์) และหน่วยข้อมูลเป็น kWh ต้องแปลง ×4 (เหมือน _make_amr_monthly_kwh_xlsx) มีแถวขยะ
+    "0,1,2,3,4" บนสุดของทุกชีตเหมือนไฟล์ตัวอย่างจริง"""
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    junk_row = list(range(5))
+
+    header_ws = wb.active
+    header_ws.title = "Sheet1"
+    header_ws.append(junk_row)
+    header_ws.append(["รายงานข้อมูลกิโลวัตต์ชั่วโมงแบบช่วงเวลา"] * 5)
+    header_ws.append(["[ระหว่างวันที่ : 01/01/2026 - 03/01/2026]"] * 5)
+    header_ws.append(["บัญชีผู้ใช้ไฟ :", account_no, "ชื่อผู้ใช้ไฟ :", company_name, None])
+    header_ws.append(["หมายเลขมิเตอร์ :", "METER123", "CT Ratio :", "100:5 A.", None])
+
+    data_ws = wb.create_sheet("Sheet2")
+    data_ws.append(junk_row)
+    data_ws.append([None, "RATE A", "RATE B", "RATE C", "ผลรวม"])
+    d = start_date
+    for _ in range(n_days):
+        for interval_i in range(96):
+            minutes = interval_i * 15
+            t = d + dt.timedelta(minutes=minutes) + dt.timedelta(minutes=15)
+            hour = (minutes // 60) % 24
+            # kWh สะสมของ 15 นาที (÷4 ของ kW เฉลี่ยที่ตั้งใจให้ได้หลังแปลง ×4 กลับ)
+            if d.weekday() >= 5:
+                col, kwh = 2, 25.0  # -> kW เฉลี่ยหลังแปลง = 100.0
+            elif 9 <= hour < 22:
+                col, kwh = 0, 100.0  # -> 400.0
+            else:
+                col, kwh = 1, 37.5  # -> 150.0
+            row_vals = [None, None, None]
+            row_vals[col] = kwh
+            data_ws.append([t.strftime("%d/%m/%Y %H.%M"), *row_vals, kwh])
+        d += dt.timedelta(days=1)
+
+    footer_ws = wb.create_sheet("Sheet3")
+    footer_ws.append(junk_row)
+    footer_ws.append(["***หมายเหตุ***"] * 5)
+    footer_ws.append([f"พิมพ์โดย : {account_no}", None, None, None, "วันที่พิมพ์ : 01/01/2026 00:00"])
+
+    path = tmp_path / "report_interval_kwh.xlsx"
+    wb.save(path)
+    return path
+
+
 def _make_amr_monthly_kwh_xlsx(
     tmp_path, start_date: dt.datetime, n_days: int, account_no: str = "", company_name: str = ""
 ) -> Path:
@@ -791,6 +844,31 @@ def test_extract_customer_info_supports_monthly_kwh_format(tmp_path):
     account_no, company_name = extract_customer_info(path)
     assert account_no == "0199000004"
     assert company_name == "บริษัท สี่ จำกัด"
+
+
+def test_parse_amr_file_supports_interval_kwh_single_rate_format_and_converts_to_kw(tmp_path):
+    """ไฟล์ .xlsx จริงรูปแบบที่ 9 "ข้อมูลกิโลวัตต์ชั่วโมงแบบช่วงเวลา" — 3 ชีตเหมือนรูปแบบที่ 2 เดิม
+    แต่ชีตข้อมูลจริงมีแค่ 5 คอลัมน์ (ts + RATE A/B/C ค่าเดียว + ผลรวม ไม่ใช่คู่ a1/a2 แบบรูปแบบที่ 2)
+    หน่วยเป็น kWh สะสมต่อช่วง 15 นาที ต้องถูกแปลงเป็น kW เฉลี่ย (×4)"""
+
+    path = _make_amr_interval_kwh_single_rate_xlsx(tmp_path, dt.datetime(2026, 1, 1), n_days=5)
+    intervals = parse_amr_file(path)
+    assert len(intervals) == 5 * 96
+    assert {i.rate for i in intervals} == {"P", "OP", "H"}
+
+    by_rate = {i.rate: i.kw for i in intervals}
+    assert by_rate["P"] == pytest.approx(400.0)
+    assert by_rate["OP"] == pytest.approx(150.0)
+    assert by_rate["H"] == pytest.approx(100.0)
+
+
+def test_extract_customer_info_supports_interval_kwh_single_rate_format(tmp_path):
+    path = _make_amr_interval_kwh_single_rate_xlsx(
+        tmp_path, dt.datetime(2026, 1, 1), n_days=1, account_no="0199000009", company_name="บริษัท เก้า จำกัด"
+    )
+    account_no, company_name = extract_customer_info(path)
+    assert account_no == "0199000009"
+    assert company_name == "บริษัท เก้า จำกัด"
 
 
 def test_parse_amr_file_supports_monthly_kw_format_without_unit_conversion(tmp_path):

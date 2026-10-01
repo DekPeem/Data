@@ -176,6 +176,28 @@ def _read_one_monthly_kwh(sheet: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def _read_one_interval_kwh_single_rate(tables: List[pd.DataFrame]) -> pd.DataFrame:
+    """แกะตารางข้อมูลจากไฟล์รายงาน "ข้อมูลกิโลวัตต์ชั่วโมงแบบช่วงเวลา" ของ PEA (รูปแบบไฟล์ AMR จริง
+    แบบที่ 9 ที่เจอ — .xlsx จริง 3 ชีตเหมือนรายงาน "ข้อมูลกิโลวัตต์แบบช่วงเวลา" เดิมที่รองรับอยู่แล้ว
+    แต่ต่างกันตรงที่ตารางข้อมูลจริง (ชีตกลาง) มีแค่ 5 คอลัมน์ (ts, RATE A, RATE B, RATE C, ผลรวม —
+    ค่าเดียวต่อ rate ไม่ใช่คู่ a1/a2/b1/b2/c1/c2 แบบเดิมที่มี 7 คอลัมน์) และหน่วยข้อมูลเป็น kWh
+    (พลังงานสะสมของช่วง 15 นาทีนั้น — ยืนยันจากชื่อรายงานที่มีคำว่า "กิโลวัตต์ชั่วโมง" ต่างจาก
+    "กิโลวัตต์" เฉยๆ หลักการเดียวกับ _read_one_monthly_kwh) ต้องแปลงเป็น kW เฉลี่ยก่อน (คูณ 4) คืน
+    DataFrame คอลัมน์ ts,a1,a2,b1,b2,c1,c2 มาตรฐานเดียวกับรายงานอื่นๆ (duplicate ค่าลงคู่คอลัมน์เอง
+    ให้โครงสร้างผลลัพธ์ตรงกัน เหมือน _read_one_monthly_kwh ทุกประการ แค่อ่านจาก tables[1] แทนชีต
+    เดียวรวมกัน)"""
+
+    d = tables[1].iloc[1:].copy()  # table 0 = ข้อมูลหัวรายงาน, 1 = ข้อมูลจริง, 2 = ท้ายรายงาน
+    d.columns = ["ts", "a", "b", "c", "total"]
+    d["ts"] = d["ts"].astype(str).str.replace("\xa0", "", regex=False).str.strip()
+    d = d[d["ts"].str.match(r"\d\d/\d\d/\d{4} \d\d\.\d\d")].copy()
+    for c in ("a", "b", "c"):
+        d[c] = pd.to_numeric(d[c], errors="coerce") * 4.0
+    return pd.DataFrame(
+        {"ts": d["ts"], "a1": d["a"], "a2": d["a"], "b1": d["b"], "b2": d["b"], "c1": d["c"], "c2": d["c"]}
+    )
+
+
 def _read_one(tables: List[pd.DataFrame]) -> pd.DataFrame:
     """แกะตารางข้อมูลจริงจากตารางทั้งหมดของไฟล์รายงาน 1 ไฟล์ (จาก _load_report_tables) คืน
     DataFrame คอลัมน์ ts,a1,a2,b1,b2,c1,c2 มาตรฐานเดียวกันเสมอ (kW เฉลี่ยของช่วง 15 นาที) ไม่ว่าไฟล์
@@ -185,8 +207,11 @@ def _read_one(tables: List[pd.DataFrame]) -> pd.DataFrame:
     กำหนดเองแบบใดแบบหนึ่ง แยกอีกชั้นจากชื่อรายงานที่พิมพ์ไว้ในไฟล์เอง: "Custom kW Report" (ไม่มี
     rate เลย ต้องเดาจากวัน/เวลาเอง), "กิโลวัตต์ชั่วโมงรายเดือน" (หน่วย kWh ต้องแปลง — ดู
     _read_one_monthly_kwh), หรือ "กิโลวัตต์รายเดือน" เฉยๆ (หน่วย kW ตรงอยู่แล้ว — ดู
-    _read_one_monthly_kw) ส่วนที่เหลือ (HTML-in-.xls เดิม หรือ .xlsx จริง 3 ชีตแยกกัน) คือรายงาน
-    "กิโลวัตต์แบบช่วงเวลา" แบบเดิม — เหมือน load_boxplot.py ต้นฉบับทุกประการ"""
+    _read_one_monthly_kw) — ไฟล์ที่มี 3 ชีต (header/ข้อมูล/ท้ายรายงาน) แยกอีกชั้นจากจำนวนคอลัมน์ของ
+    ชีตข้อมูลจริง (tables[1]): 5 คอลัมน์ (ts + RATE A/B/C + ผลรวม) คือรายงาน "กิโลวัตต์ชั่วโมงแบบ
+    ช่วงเวลา" หน่วย kWh ต้องแปลง (ดู _read_one_interval_kwh_single_rate) ส่วน 7 คอลัมน์ (ts +
+    a1/a2/b1/b2/c1/c2) คือรายงาน "กิโลวัตต์แบบช่วงเวลา" แบบเดิม หน่วย kW ตรงอยู่แล้ว ไม่ต้องแปลง —
+    เหมือน load_boxplot.py ต้นฉบับทุกประการ"""
 
     if len(tables) == 1:
         if _sheet_contains_text(tables[0], "Custom kW Report"):
@@ -194,6 +219,9 @@ def _read_one(tables: List[pd.DataFrame]) -> pd.DataFrame:
         if _sheet_contains_text(tables[0], "กิโลวัตต์ชั่วโมงรายเดือน"):
             return _read_one_monthly_kwh(tables[0])
         return _read_one_monthly_kw(tables[0])
+
+    if tables[1].shape[1] == 5:
+        return _read_one_interval_kwh_single_rate(tables)
 
     d = tables[1].iloc[1:].copy()  # table 0 = ข้อมูลหัวรายงาน, 1 = ข้อมูลจริง, 2 = ท้ายรายงาน
     d.columns = ["ts", "a1", "a2", "b1", "b2", "c1", "c2"]
