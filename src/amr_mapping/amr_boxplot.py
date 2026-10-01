@@ -547,6 +547,92 @@ def _parse_power_logger_csv(path: Union[str, Path]) -> List[ParsedInterval]:
     return out
 
 
+def _is_pea_monthly_combined_datetime_xls(path: Union[str, Path]) -> bool:
+    """เช็คว่าไฟล์เป็นรายงาน "รายงานใช้ไฟ - รายเดือน" ของ PEA รูปแบบ .xls ไบนารีเก่าจริง (BIFF/OLE2
+    Compound File — เปิดด้วย Excel 97-2003 ได้ตรงๆ) — คนละไบนารีฟอร์แมตโดยสิ้นเชิงจากทั้ง .xlsx จริง
+    (PK magic bytes) และ HTML-in-.xls แบบเดิมที่ตั้งนามสกุล .xls เฉยๆ แต่เนื้อหาจริงเป็น HTML table
+    (รองรับอยู่แล้วใน _load_report_tables — ไฟล์นี้ decode เป็น HTML ไม่ได้เลย ต้องใช้ library xlrd
+    อ่านเท่านั้น) เช็คจาก magic bytes ของ OLE2 Compound File (D0 CF 11 E0 A1 B1 1A E1 — ไฟล์ไบนารี
+    .xls เก่าทุกไฟล์ขึ้นต้นด้วยเสมอ) ร่วมกับข้อความ "วันที่/เวลา" (ชื่อคอลัมน์ที่รวมวันที่+เวลาไว้ด้วย
+    กัน — ต่างจากรายงานอื่นของ PEA ที่แยกคอลัมน์ ts ปกติ) ในชีตแรก กันไปชนกับไฟล์ไบนารี .xls เก่า
+    รูปแบบอื่นที่อาจเจอในอนาคต"""
+
+    try:
+        with open(path, "rb") as f:
+            magic = f.read(8)
+        if magic != b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+            return False
+        df = pd.read_excel(path, sheet_name=0, header=None, nrows=10, dtype=str, engine="xlrd")
+    except Exception:  # noqa: BLE001 — ไฟล์เสีย/อ่านไม่ได้/ไม่ใช่ .xls ไบนารีจริง ถือว่าไม่ใช่รูปแบบนี้
+        return False
+    return _sheet_contains_text(df, "วันที่/เวลา")
+
+
+def _parse_pea_monthly_combined_datetime_xls(path: Union[str, Path]) -> List[ParsedInterval]:
+    """แกะรายงาน "รายงานใช้ไฟ - รายเดือน" ของ PEA (.xls ไบนารีเก่าจริง — ดู
+    _is_pea_monthly_combined_datetime_xls) คอลัมน์ "วันที่/เวลา" รวมวันที่+เวลาไว้คอลัมน์เดียว
+    (ต่างจากรายงานอื่นที่แยกคอลัมน์) ปีเป็น พ.ศ. (เช่น 2569) ต้องแปลงเป็น ค.ศ. ก่อน parse เสมอ (แก้
+    ที่ตัว string ปีตรงๆ ก่อนแปลงเป็น Timestamp — ห้ามลบ 543 จาก Timestamp ที่ parse ไปแล้วทีหลัง
+    เด็ดขาด เหตุผลเดียวกับที่อธิบายไว้ใน parse_amr_file) เวลา "24:00" ของแถวสุดท้ายในแต่ละวันหมายถึง
+    เที่ยงคืนของวันถัดไป (pd.Timestamp ไม่รับ hour=24 ตรงๆ) ต้องแปลงเป็น 00:00 ของวันถัดไปเอง
+
+    มีแค่ 2 คอลัมน์ kW (On-Peak/Off-Peak) ไม่มีคอลัมน์ Holiday แยกให้เลย ต้องเดา H จากวันในสัปดาห์เอง
+    (ยืนยันจากไฟล์ตัวอย่างจริงแล้วว่า On-Peak เป็น 0 ทุกแถวในวันเสาร์-อาทิตย์เสมอ ไม่มีวันไหนที่ On-
+    Peak ไม่เป็น 0 เลยในวันหยุดสุดสัปดาห์ — หลักการเดียวกับ MEA CSV/MEA wide excel ที่มีแค่ ON/OFF 2
+    สถานะ) timestamp บอกเวลา "สิ้นสุด" ของช่วง 15 นาทีนั้น เหมือนรายงานของ PEA ทุกแบบ ต้องลบ 15 นาที
+    ก่อนหาว่าอยู่วัน/ชั่วโมงไหน — ไม่มีชื่อบริษัทให้เลย มีแค่ "เครื่องวัดฯ" (หมายเลขมิเตอร์ — คนละ
+    ความหมายกับเลขบัญชีผู้ใช้ไฟ "บัญชีผู้ใช้ไฟ"/"Contact Account" ที่รายงานอื่นใช้) จึงไม่ดึงมาใช้เป็น
+    account_no (เหมือนรายงานอื่นๆ ที่ไม่เคยใช้หมายเลขมิเตอร์แทนเลขบัญชีเช่นกัน) ต้องกรอกเองในฟอร์ม
+    เสมอ (ดู extract_customer_info)"""
+
+    df = pd.read_excel(path, sheet_name=0, header=None, dtype=str, engine="xlrd")
+    header_row_idx = None
+    for i in range(min(10, len(df))):
+        if "วันที่/เวลา" in df.iloc[i].astype(str).tolist():
+            header_row_idx = i
+            break
+    if header_row_idx is None:
+        return []
+
+    header = df.iloc[header_row_idx].tolist()
+    try:
+        ts_col = header.index("วันที่/เวลา")
+        on_peak_col = header.index("kW (On-Peak)")
+        off_peak_col = header.index("kW (Off-Peak)")
+    except ValueError:
+        return []
+
+    data = df.iloc[header_row_idx + 1 :]
+    ts_raw = data.iloc[:, ts_col].astype(str).str.strip()
+
+    parts = ts_raw.str.extract(r"^(\d\d)/(\d\d)/(\d{4}) (\d\d):(\d\d)$")
+    day, month, year, hour, minute = (parts[i] for i in range(5))
+    is_midnight_next_day = hour == "24"
+    hour = hour.where(~is_midnight_next_day, "00")
+    year_num = pd.to_numeric(year, errors="coerce")
+    ce_year = (year_num - 543).where(year_num > 2400, year_num)
+    ce_year_str = ce_year.astype("Int64").astype(str).str.zfill(4)
+
+    end = pd.to_datetime(
+        day + "/" + month + "/" + ce_year_str + " " + hour + ":" + minute, format="%d/%m/%Y %H:%M", errors="coerce"
+    )
+    end = end.where(~is_midnight_next_day.fillna(False), end + pd.Timedelta(days=1))
+    start = end - pd.Timedelta(minutes=15)
+
+    on_peak = pd.to_numeric(data.iloc[:, on_peak_col], errors="coerce")
+    off_peak = pd.to_numeric(data.iloc[:, off_peak_col], errors="coerce")
+    is_weekday = start.dt.weekday < 5
+    rate = np.select([on_peak.fillna(0) > 0, is_weekday], ["P", "OP"], "H")
+    kw = on_peak.fillna(0) + off_peak.fillna(0)
+
+    out: List[ParsedInterval] = []
+    for s, r, k in zip(start, rate, kw):
+        if pd.isna(s):
+            continue
+        out.append(ParsedInterval(date=s.strftime("%Y-%m-%d"), hour=int(s.hour), minute=int(s.minute), rate=str(r), kw=float(k)))
+    return out
+
+
 def parse_amr_file(path: Union[str, Path]) -> List[ParsedInterval]:
     """อ่านไฟล์ AMR ดิบ 1 ไฟล์ (จาก PEA, MEA หรือไฟล์ "Load Profile" ที่สรุปแล้ว) คืนรายการ interval
     ที่แกะแล้ว (rate=P/OP/H, kw, date, hour) — คืน list ว่างถ้าอ่าน/แปลงไม่สำเร็จ (ไม่ raise ทำให้
@@ -561,6 +647,8 @@ def parse_amr_file(path: Union[str, Path]) -> List[ParsedInterval]:
             return _parse_load_profile_detail_xlsx(path)
         if _is_power_logger_csv(path):
             return _parse_power_logger_csv(path)
+        if _is_pea_monthly_combined_datetime_xls(path):
+            return _parse_pea_monthly_combined_datetime_xls(path)
         df = _read_one(_load_report_tables(path))
     except Exception:  # noqa: BLE001 — ไฟล์เสีย/รูปแบบไม่ตรง ข้ามไปเฉยๆ
         return []
@@ -640,6 +728,10 @@ def extract_customer_info(path: Union[str, Path]) -> Tuple[str, str]:
     if _is_power_logger_csv(path):
         # ไฟล์ log จากเครื่องวัดไฟฟ้าไม่มีเลขบัญชี/ชื่อบริษัทที่เชื่อถือได้เลย (ดู
         # _parse_power_logger_csv) ต้องกรอกเองในฟอร์มเสมอ
+        return "", ""
+    if _is_pea_monthly_combined_datetime_xls(path):
+        # ไฟล์รูปแบบนี้มีแค่ "เครื่องวัดฯ" (หมายเลขมิเตอร์ คนละความหมายกับเลขบัญชีผู้ใช้ไฟ) ไม่มี
+        # ชื่อบริษัทให้เลย (ดู _parse_pea_monthly_combined_datetime_xls) ต้องกรอกเองในฟอร์มเสมอ
         return "", ""
 
     try:

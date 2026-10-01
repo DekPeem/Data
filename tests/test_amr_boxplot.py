@@ -429,6 +429,39 @@ def _make_amr_power_logger_csv(tmp_path, samples: list, delimiter: str = "\t") -
     return path
 
 
+def _make_amr_pea_monthly_combined_datetime_xls(tmp_path, rows: list) -> Path:
+    """สร้างไฟล์ .xls ไบนารีเก่าจริง (BIFF/OLE2 — ใช้ xlwt เขียน ไม่ใช่ openpyxl ที่เขียนได้แค่ .xlsx)
+    จำลองรายงาน "รายงานใช้ไฟ - รายเดือน" ของ PEA (รูปแบบไฟล์ AMR จริงแบบที่ 11 ที่เจอ — คนละไบนารี
+    ฟอร์แมตโดยสิ้นเชิงจากทั้ง .xlsx จริงและ HTML-in-.xls แบบเดิม) คอลัมน์ "วันที่/เวลา" รวมวันที่+
+    เวลาไว้คอลัมน์เดียว ปี พ.ศ. มีแค่ 2 คอลัมน์ kW (On-Peak/Off-Peak) ไม่มี Holiday แยก rows คือ
+    list ของ (date_str "DD/MM/YYYY" ปี พ.ศ., time_str "HH:MM" หรือ "24:00", on_peak, off_peak)"""
+
+    import xlwt
+
+    wb = xlwt.Workbook()
+    ws = wb.add_sheet("Sheet0")
+    ws.write(0, 0, "รายงานใช้ไฟ - รายเดือน")
+    ws.write(1, 0, "เครื่องวัดฯ: 73006874")
+    ws.write(2, 0, "เงื่อนไข: เดือน มกราคม 2569")
+    ws.write(4, 0, "วันที่/เวลา")
+    ws.write(4, 1, "kW (On-Peak)")
+    ws.write(4, 2, "kW (Off-Peak)")
+    ws.write(4, 3, "kVAR (On-Peak)")
+    ws.write(4, 4, "kVAR (Off-Peak)")
+    for i, (date_str, time_str, on_peak, off_peak) in enumerate(rows):
+        ws.write(5 + i, 0, f"{date_str} {time_str}")
+        ws.write(5 + i, 1, on_peak)
+        ws.write(5 + i, 2, off_peak)
+        ws.write(5 + i, 3, 0)
+        ws.write(5 + i, 4, 0)
+
+    wb.add_sheet("Sheet1")  # ชีตว่างเปล่า เหมือนไฟล์ตัวอย่างจริง (Sheet1 ไม่มีข้อมูลเลย)
+
+    path = tmp_path / "pea_monthly_combined.xls"
+    wb.save(str(path))
+    return path
+
+
 def _make_amr_load_profile_detail_xlsx(tmp_path, start_date: dt.datetime, n_days: int, kw: float = 500.0) -> Path:
     """สร้างไฟล์ .xlsx จริงจำลองรายงาน "Load Profile" (รูปแบบไฟล์ AMR จริงแบบที่ 8 ที่เจอ — ไฟล์
     "สรุปแล้ว" ไม่ใช่ export ดิบจาก PEA/MEA ตรงๆ ไม่มีเลขบัญชี/ชื่อบริษัทเลย) หัวตารางแถวเดียว (แถว 0)
@@ -1108,6 +1141,64 @@ def test_extract_customer_info_returns_empty_for_power_logger_format(tmp_path):
     """ไฟล์รูปแบบนี้ไม่มีเลขบัญชี/ชื่อบริษัทที่เชื่อถือได้เลย — ต้องคืนค่าว่างทั้งคู่เสมอ ไม่ error"""
 
     path = _make_amr_power_logger_csv(tmp_path, [("2026/01/07", "10:00:00", 100.0)])
+    account_no, company_name = extract_customer_info(path)
+    assert account_no == ""
+    assert company_name == ""
+
+
+def test_parse_amr_file_supports_pea_monthly_combined_datetime_xls(tmp_path):
+    """ไฟล์ .xls ไบนารีเก่าจริง (BIFF/OLE2) รายงาน "รายงานใช้ไฟ - รายเดือน" ของ PEA — คอลัมน์
+    "วันที่/เวลา" รวมกัน ปี พ.ศ. 2569 ต้องแปลงเป็น ค.ศ. 2026 ถูกต้อง 7 ม.ค. 2569(พ.ศ.) เป็นวันพุธ
+    (วันทำการ) — ครอบคลุมทั้งช่วง On-Peak/Off-Peak ของวันทำการ"""
+
+    rows = [
+        ("07/01/2569", "10:15", 200.0, 0),  # ts บอกจุดสิ้นสุดของช่วง -> เริ่ม 10:00 วันทำการ ช่วง Peak
+        ("07/01/2569", "02:15", 0, 80.0),  # เริ่ม 02:00 วันทำการ นอกช่วง Peak
+    ]
+    path = _make_amr_pea_monthly_combined_datetime_xls(tmp_path, rows)
+    intervals = parse_amr_file(path)
+    assert len(intervals) == 2
+    assert {i.rate for i in intervals} == {"P", "OP"}
+
+    by_key = {(i.date, i.hour): (i.rate, i.kw) for i in intervals}
+    assert by_key[("2026-01-07", 10)] == ("P", pytest.approx(200.0))
+    assert by_key[("2026-01-07", 2)] == ("OP", pytest.approx(80.0))
+
+
+def test_parse_amr_file_classifies_pea_monthly_combined_datetime_holiday_from_weekday(tmp_path):
+    """ไม่มีคอลัมน์ Holiday แยกให้เลย (มีแค่ On-Peak/Off-Peak) — ต้องเดา H จากวันในสัปดาห์เอง
+    10 ม.ค. 2569(พ.ศ.) เป็นวันเสาร์ — ต้องจัดเป็นวันหยุด (H) แม้ On-Peak จะเป็น 0 (ค่าทั้งหมดอยู่ใน
+    Off-Peak เพราะวันหยุดไม่มีช่วง Peak เลย)"""
+
+    rows = [("10/01/2569", "10:00", 0, 150.0)]
+    path = _make_amr_pea_monthly_combined_datetime_xls(tmp_path, rows)
+    intervals = parse_amr_file(path)
+    assert len(intervals) == 1
+    assert intervals[0].rate == "H"
+    assert intervals[0].date == "2026-01-10"
+    assert intervals[0].kw == pytest.approx(150.0)
+
+
+def test_parse_amr_file_handles_pea_monthly_combined_datetime_midnight_2400(tmp_path):
+    """เวลา "24:00" หมายถึงเที่ยงคืนของวันถัดไป (pd.Timestamp ไม่รับ hour=24 ตรงๆ) — ต้องแปลงวันที่
+    ให้ถูกต้อง ไม่ error/ตกหล่น"""
+
+    rows = [("31/01/2569", "24:00", 0, 90.0)]
+    path = _make_amr_pea_monthly_combined_datetime_xls(tmp_path, rows)
+    intervals = parse_amr_file(path)
+    assert len(intervals) == 1
+    # timestamp "31/01/2569 24:00" = เที่ยงคืนของ 1 ก.พ. 2569(พ.ศ.) = 2026-02-01 00:00 (ค.ศ.)
+    # ลบ 15 นาที (ts บอกจุดสิ้นสุดของช่วง) -> 2026-01-31 23:45 คือจุดเริ่มต้นของช่วงสุดท้าย
+    assert intervals[0].date == "2026-01-31"
+    assert intervals[0].hour == 23
+    assert intervals[0].minute == 45
+
+
+def test_extract_customer_info_returns_empty_for_pea_monthly_combined_datetime_xls(tmp_path):
+    """ไฟล์รูปแบบนี้มีแค่หมายเลขมิเตอร์ (เครื่องวัดฯ) ไม่มีเลขบัญชีผู้ใช้ไฟ/ชื่อบริษัทให้เลย — ต้อง
+    คืนค่าว่างทั้งคู่เสมอ ไม่ดึงหมายเลขมิเตอร์มาใช้แทนเลขบัญชี"""
+
+    path = _make_amr_pea_monthly_combined_datetime_xls(tmp_path, [("07/01/2569", "10:00", 200.0, 0)])
     account_no, company_name = extract_customer_info(path)
     assert account_no == ""
     assert company_name == ""
