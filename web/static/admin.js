@@ -1054,6 +1054,10 @@ amrBoxplotUploadBtn.addEventListener("click", async () => {
     amrBoxplotUploadStatus.innerHTML = `<span style="color:#006300;">✅ เพิ่มข้อมูลแล้ว ${data.added_intervals.toLocaleString("th-TH")} จุด (${data.days} วัน)${detectedNote}</span>`;
     amrBoxplotFiles.value = "";
     loadAmrBoxplotLog();
+    // อัปโหลดสำเร็จ = มีข้อมูลใหม่ของ (TSIC, บัญชี) นี้แล้ว วาดกราฟ Boxplot ใหม่ให้ดูทันทีที่ช่อง
+    // แสดงผลด้านบน ไม่ต้องกดปุ่ม "ดูกราฟ Boxplot" เองอีกรอบ (ผู้ใช้ยืนยันอยากได้แบบนี้ — "ถ้ามีข้อมูล
+    // ใหม่มา จะเปลี่ยนกราฟเลยโดยไม่ต้องไปกรอกใหม่") ใช้ bizCode/account_no ชุดเดียวกับที่เพิ่งอัปโหลด
+    renderAmrBoxplotPreview(bizCode, data.account_no || "");
   } catch (err) {
     amrBoxplotUploadStatus.innerHTML = `<span style="color:#d03b3b;">เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ</span>`;
     console.error(err);
