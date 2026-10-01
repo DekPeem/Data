@@ -268,6 +268,95 @@ def _extract_mea_csv_customer_info(path: Union[str, Path]) -> Tuple[str, str]:
     return str(df["MEA No."].iloc[0]).strip(), ""
 
 
+def _is_mea_wide_excel(path: Union[str, Path]) -> bool:
+    """เช็คว่าไฟล์เป็นรายงาน AMR ของ กฟน. (MEA) รูปแบบ .xlsx จริง "ตารางแสดงผลข้อมูลแบบสรุปแนวขวาง"
+    — คนละรูปแบบไฟล์กับ MEA CSV ที่รองรับอยู่ก่อนหน้า (ไฟล์นี้เป็น Excel 2007+ จริง มี "PK" magic
+    bytes เหมือนไฟล์ .xlsx จริงของ PEA แต่หัวตารางต่างกันโดยสิ้นเชิง) เป็น 1 ชีต มีหัวตาราง 4 แถวก่อน
+    ถึงแถวข้อมูลจริง: แถว 0 ชื่อรายงาน, แถว 1 ว่าง, แถว 2 "Value" (หัวกลุ่มคอลัมน์ตัวเลข), แถว 3 คือ
+    หัวตารางจริง — เช็คจากข้อความ "MEA No." ใน 10 แถวบนสุดพอ กันสับสนกับไฟล์ .xlsx จริงของ PEA ที่ไม่
+    เคยมีข้อความนี้เลย (อ่านแค่ sheet 0, 10 แถวแรกพอ ไม่ต้องโหลดทั้งไฟล์)"""
+
+    try:
+        raw = Path(path).read_bytes()
+    except OSError:
+        return False
+    if raw[:2] != b"PK":
+        return False
+    try:
+        df = pd.read_excel(io.BytesIO(raw), sheet_name=0, header=None, nrows=10, dtype=str)
+    except Exception:  # noqa: BLE001 — ไฟล์เสีย/อ่านไม่ได้/ไม่ใช่ .xlsx จริง ถือว่าไม่ใช่รูปแบบนี้
+        return False
+    return _sheet_contains_text(df, "MEA No.")
+
+
+def _find_mea_wide_excel_header_row(df: pd.DataFrame) -> Optional[int]:
+    """หาตำแหน่งแถวหัวตารางจริง (มีคำว่า "MEA No." อยู่) ใน DataFrame ที่โหลดมาแบบ header=None —
+    ใช้ร่วมกันทั้ง _parse_mea_wide_excel และ _extract_mea_wide_excel_customer_info"""
+
+    for i in range(len(df)):
+        if "MEA No." in df.iloc[i].astype(str).tolist():
+            return i
+    return None
+
+
+def _parse_mea_wide_excel(path: Union[str, Path]) -> List[ParsedInterval]:
+    """แกะรายงาน AMR ของ กฟน. (MEA) รูปแบบ .xlsx "ตารางแสดงผลข้อมูลแบบสรุปแนวขวาง" — ต่างจาก MEA CSV
+    (ดู _parse_mea_csv) ตรงที่ 1 แถวมีค่า kW/kVAR/kWh/kVARh ของช่วง 15 นาทีเดียวกันครบอยู่ในแถว
+    เดียวกันแล้ว (ไม่ต้องกรองแถวตามชนิดข้อมูลเหมือน CSV) อ่านแค่คอลัมน์ "E-MAX-KW-IMP" (กำลังไฟฟ้า
+    จริงสูงสุดของช่วง — ชื่อคอลัมน์เดียวกับที่ MEA CSV ใช้) ไม่สนใจคอลัมน์พลังงานสะสม (E-KWH-TOTAL-IMP/
+    E-KVARH-TOTAL-IMP) หรือ kVAR (E-MAX-KVAR-IMP) เลย — Date Time เป็นรูปแบบ ISO
+    "YYYY-MM-DD HH:MM:SS" ตรงๆ (ต่างจาก MEA CSV ที่เป็น M/D/YYYY H:MM ไม่เติมเลข 0 นำหน้า) ตรรกะ
+    แปลงคอลัมน์ TOU/TOD (ON/OFF) เป็น P/OP/H เหมือนกันเป๊ะกับ _parse_mea_csv (ดูคำอธิบายที่นั่น รวม
+    ข้อจำกัดเรื่องวันหยุดนักขัตฤกษ์ระหว่างสัปดาห์ด้วย — ยืนยันจากไฟล์ตัวอย่างจริงว่าวันหยุดนักขัตฤกษ์
+    ที่ตรงกับวันธรรมดา เช่น วันจักรี/สงกรานต์ คอลัมน์ TOU/TOD เป็น OFF ทั้งวันถูกต้องอยู่แล้ว แต่ด้วย
+    ข้อจำกัดเดียวกันนี้ ระบบจะจัดเป็น OP ไม่ใช่ H เพราะแยกจากวันในสัปดาห์เท่านั้น ไม่มีปฏิทินวันหยุด
+    นักขัตฤกษ์ให้เทียบ — ไม่กระทบค่า P เลย เพราะ ON ไม่เคยเกิดขึ้นในวันหยุดนักขัตฤกษ์เหล่านี้)"""
+
+    raw = Path(path).read_bytes()
+    df = pd.read_excel(io.BytesIO(raw), sheet_name=0, header=None, dtype=str)
+    header_row_idx = _find_mea_wide_excel_header_row(df)
+    if header_row_idx is None:
+        return []
+    df.columns = df.iloc[header_row_idx]
+    df = df.iloc[header_row_idx + 1 :].reset_index(drop=True)
+    if "Date Time" not in df.columns or "E-MAX-KW-IMP" not in df.columns or "TOU/TOD" not in df.columns:
+        return []
+
+    end = pd.to_datetime(df["Date Time"], errors="coerce")
+    start = end - pd.Timedelta(minutes=15)
+    kw = pd.to_numeric(df["E-MAX-KW-IMP"], errors="coerce")
+    tou = df["TOU/TOD"].astype(str).str.strip().str.upper()
+    is_weekday = start.dt.weekday < 5
+    rate = np.select([tou == "ON", is_weekday], ["P", "OP"], "H")
+
+    out: List[ParsedInterval] = []
+    for s, r, k in zip(start, rate, kw):
+        if pd.isna(s) or pd.isna(k):
+            continue
+        out.append(ParsedInterval(date=s.strftime("%Y-%m-%d"), hour=int(s.hour), minute=int(s.minute), rate=str(r), kw=float(k)))
+    return out
+
+
+def _extract_mea_wide_excel_customer_info(path: Union[str, Path]) -> Tuple[str, str]:
+    """หาเลขบัญชี (คอลัมน์ "MEA No.") จากรายงาน .xlsx แบบสรุปแนวขวางของ กฟน. — ไม่มีชื่อบริษัทให้เลย
+    ในไฟล์รูปแบบนี้เหมือนกัน (เหมือน MEA CSV — ดู _extract_mea_csv_customer_info) company_name
+    จะว่างเสมอ ต้องกรอกเองในฟอร์ม"""
+
+    try:
+        raw = Path(path).read_bytes()
+        df = pd.read_excel(io.BytesIO(raw), sheet_name=0, header=None, nrows=10, dtype=str)
+    except Exception:  # noqa: BLE001 — ไฟล์เสีย/อ่านไม่ได้ ถือว่าหาไม่เจอ
+        return "", ""
+    header_row_idx = _find_mea_wide_excel_header_row(df)
+    if header_row_idx is None:
+        return "", ""
+    header = df.iloc[header_row_idx].tolist()
+    if "MEA No." not in header or header_row_idx + 1 >= len(df):
+        return "", ""
+    mea_col = header.index("MEA No.")
+    return str(df.iloc[header_row_idx + 1, mea_col]).strip(), ""
+
+
 def parse_amr_file(path: Union[str, Path]) -> List[ParsedInterval]:
     """อ่านไฟล์ AMR ดิบ 1 ไฟล์ (จาก PEA หรือ MEA) คืนรายการ interval ที่แกะแล้ว (rate=P/OP/H, kw,
     date, hour) — คืน list ว่างถ้าอ่าน/แปลงไม่สำเร็จ (ไม่ raise ทำให้ไฟล์อื่นที่อัปโหลดมาพร้อมกันยัง
@@ -276,6 +365,8 @@ def parse_amr_file(path: Union[str, Path]) -> List[ParsedInterval]:
     try:
         if _is_mea_csv(path):
             return _parse_mea_csv(path)
+        if _is_mea_wide_excel(path):
+            return _parse_mea_wide_excel(path)
         df = _read_one(_load_report_tables(path))
     except Exception:  # noqa: BLE001 — ไฟล์เสีย/รูปแบบไม่ตรง ข้ามไปเฉยๆ
         return []
@@ -346,6 +437,8 @@ def extract_customer_info(path: Union[str, Path]) -> Tuple[str, str]:
 
     if _is_mea_csv(path):
         return _extract_mea_csv_customer_info(path)
+    if _is_mea_wide_excel(path):
+        return _extract_mea_wide_excel_customer_info(path)
 
     try:
         header = _load_report_tables(path)[0]

@@ -311,6 +311,39 @@ def _make_amr_mea_csv(tmp_path, start_date: dt.datetime, n_days: int, mea_no: st
     return path
 
 
+def _make_amr_mea_wide_excel(tmp_path, start_date: dt.datetime, n_days: int, mea_no: str = "140002293") -> Path:
+    """สร้างไฟล์ .xlsx จริงจำลองรายงาน AMR ของ กฟน. (MEA) รูปแบบ "ตารางแสดงผลข้อมูลแบบสรุปแนวขวาง"
+    (รูปแบบไฟล์ AMR จริงแบบที่ 7 ที่เจอ — คนละรูปแบบไฟล์กับ MEA CSV แม้จะเป็นหน่วยงานเดียวกัน) มีหัว
+    ตาราง 4 แถวก่อนถึงแถวข้อมูลจริง (ชื่อรายงาน/ว่าง/"Value"/หัวตารางจริง) 1 แถวมีค่า kW/kVAR/kWh/
+    kVARh ของช่วง 15 นาทีเดียวกันครบในแถวเดียว (ไม่ต้องกรองแถวตามชนิดข้อมูลเหมือน MEA CSV) Date Time
+    เป็นรูปแบบ ISO "YYYY-MM-DD HH:MM:SS" ตรงๆ (ต่างจาก MEA CSV ที่เป็น M/D/YYYY H:MM)"""
+
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+
+    ws.append(["ตารางแสดงผลข้อมูลแบบสรุปแนวขวาง"])
+    ws.append([])
+    ws.append([None, None, None, None, None, "Value", None, None, None])
+    ws.append(["MEA No.", "UI ID.", "Rate Category", "Date Time", "TOU/TOD", "E-KVARH-TOTAL-IMP", "E-KWH-TOTAL-IMP", "E-MAX-KVAR-IMP", "E-MAX-KW-IMP"])
+
+    d = start_date
+    for _ in range(n_days):
+        for interval_i in range(96):
+            end = d + dt.timedelta(minutes=(interval_i + 1) * 15)
+            start = end - dt.timedelta(minutes=15)
+            is_peak = start.weekday() < 5 and 9 <= start.hour < 22
+            tou = "ON" if is_peak else "OFF"
+            ws.append([mea_no, "0095856820", 3.2, end.strftime("%Y-%m-%d %H:%M:%S"), tou, 0, 30.886, 0, 123.544])
+        d += dt.timedelta(days=1)
+
+    path = tmp_path / "mea_wide_report.xlsx"
+    wb.save(path)
+    return path
+
+
 def test_parse_amr_file_extracts_all_intervals(amr_report_file):
     intervals = parse_amr_file(amr_report_file)
     assert len(intervals) == 5 * 96  # 5 วัน x 96 จุดต่อวัน ไม่มีจุดไหนถูกทิ้ง
@@ -801,4 +834,38 @@ def test_extract_customer_info_supports_mea_csv_reads_mea_no_no_company_name(tmp
     path = _make_amr_mea_csv(tmp_path, dt.datetime(2026, 4, 1), n_days=1, mea_no="140001877")
     account_no, company_name = extract_customer_info(path)
     assert account_no == "140001877"
+    assert company_name == ""
+
+
+def test_parse_amr_file_supports_mea_wide_excel_format(tmp_path):
+    """ไฟล์ .xlsx จริงรูปแบบ "ตารางแสดงผลข้อมูลแบบสรุปแนวขวาง" ของ กฟน. (MEA) — คนละรูปแบบไฟล์กับ
+    MEA CSV แม้จะเป็นหน่วยงานเดียวกัน ต้องอ่านคอลัมน์ "E-MAX-KW-IMP" ได้ถูกต้อง ไม่ใช่คอลัมน์พลังงาน
+    สะสม (kWh/kVARh) หรือ kVAR"""
+
+    path = _make_amr_mea_wide_excel(tmp_path, dt.datetime(2026, 4, 1), n_days=5)
+    intervals = parse_amr_file(path)
+    assert len(intervals) == 5 * 96
+    assert all(i.kw == 123.544 for i in intervals)
+
+
+def test_parse_amr_file_classifies_mea_wide_excel_rate_from_tou_and_weekday(tmp_path):
+    """1 เม.ย. 2026 เป็นวันพุธ (วันทำการ) — เหมือนเทส MEA CSV ทุกประการ แต่ใช้ไฟล์รูปแบบแนวขวางแทน"""
+
+    path = _make_amr_mea_wide_excel(tmp_path, dt.datetime(2026, 4, 1), n_days=6)
+    intervals = parse_amr_file(path)
+    assert {i.rate for i in intervals} == {"P", "OP", "H"}
+
+    by_key = {(i.date, i.hour): i.rate for i in intervals}
+    assert by_key[("2026-04-01", 10)] == "P"  # พุธ 10:00 -> วันทำการ ช่วง Peak (9-22)
+    assert by_key[("2026-04-01", 2)] == "OP"  # พุธ 02:00 -> วันทำการ นอกช่วง Peak
+    assert by_key[("2026-04-04", 10)] == "H"  # เสาร์ -> วันหยุด ไม่ว่าจะกี่โมง
+    assert by_key[("2026-04-05", 10)] == "H"  # อาทิตย์ -> วันหยุด
+
+
+def test_extract_customer_info_supports_mea_wide_excel_reads_mea_no_no_company_name(tmp_path):
+    """ไฟล์รูปแบบนี้ไม่มีชื่อบริษัทให้เลยเหมือน MEA CSV — company_name ต้องว่างเสมอ"""
+
+    path = _make_amr_mea_wide_excel(tmp_path, dt.datetime(2026, 4, 1), n_days=1, mea_no="140002293")
+    account_no, company_name = extract_customer_info(path)
+    assert account_no == "140002293"
     assert company_name == ""
