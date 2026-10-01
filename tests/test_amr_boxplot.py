@@ -462,6 +462,34 @@ def _make_amr_pea_monthly_combined_datetime_xls(tmp_path, rows: list) -> Path:
     return path
 
 
+def _make_amr_pea_monthly_combined_datetime_non_tou_xls(tmp_path, rows: list) -> Path:
+    """เหมือน _make_amr_pea_monthly_combined_datetime_xls ทุกประการ แต่จำลองบัญชีที่ถือสัญญาอัตรา
+    Non-TOU (ไม่มีการแยกช่วงเวลาเลย — เจอจากไฟล์ตัวอย่างจริงอีกบัญชีหนึ่ง) มีแค่คอลัมน์ "kW" เดี่ยวๆ
+    ไม่มี On-Peak/Off-Peak แยก rows คือ list ของ (date_str "DD/MM/YYYY" ปี พ.ศ., time_str "HH:MM"
+    หรือ "24:00", kw)"""
+
+    import xlwt
+
+    wb = xlwt.Workbook()
+    ws = wb.add_sheet("Sheet0")
+    ws.write(0, 0, "รายงานใช้ไฟ - รายเดือน")
+    ws.write(1, 0, "เครื่องวัดฯ: 55051721")
+    ws.write(2, 0, "เงื่อนไข: เดือน มกราคม 2569")
+    ws.write(4, 0, "วันที่/เวลา")
+    ws.write(4, 1, "kW")
+    ws.write(4, 2, "kVAR")
+    for i, (date_str, time_str, kw) in enumerate(rows):
+        ws.write(5 + i, 0, f"{date_str} {time_str}")
+        ws.write(5 + i, 1, kw)
+        ws.write(5 + i, 2, 0)
+
+    wb.add_sheet("Sheet1")
+
+    path = tmp_path / "pea_monthly_combined_non_tou.xls"
+    wb.save(str(path))
+    return path
+
+
 def _make_amr_load_profile_detail_xlsx(tmp_path, start_date: dt.datetime, n_days: int, kw: float = 500.0) -> Path:
     """สร้างไฟล์ .xlsx จริงจำลองรายงาน "Load Profile" (รูปแบบไฟล์ AMR จริงแบบที่ 8 ที่เจอ — ไฟล์
     "สรุปแล้ว" ไม่ใช่ export ดิบจาก PEA/MEA ตรงๆ ไม่มีเลขบัญชี/ชื่อบริษัทเลย) หัวตารางแถวเดียว (แถว 0)
@@ -1199,6 +1227,43 @@ def test_extract_customer_info_returns_empty_for_pea_monthly_combined_datetime_x
     คืนค่าว่างทั้งคู่เสมอ ไม่ดึงหมายเลขมิเตอร์มาใช้แทนเลขบัญชี"""
 
     path = _make_amr_pea_monthly_combined_datetime_xls(tmp_path, [("07/01/2569", "10:00", 200.0, 0)])
+    account_no, company_name = extract_customer_info(path)
+    assert account_no == ""
+    assert company_name == ""
+
+
+def test_parse_amr_file_supports_pea_monthly_combined_datetime_non_tou(tmp_path):
+    """บัญชีที่ถือสัญญาอัตรา Non-TOU ไม่มีคอลัมน์ On-Peak/Off-Peak แยกเลย มีแค่ "kW" เดี่ยวๆ — ต้อง
+    เดา P/OP/H จากวัน/เวลาเองทั้งหมด (เหมือน "Custom kW Report" ของ PEA) 7 ม.ค. 2569(พ.ศ.) เป็น
+    วันพุธ (วันทำการ) — ครอบคลุมทั้งช่วงที่ควรเป็น Peak/Off-Peak ตามเวลา แม้ไฟล์จะไม่บอกมาตรงๆ ก็ตาม"""
+
+    rows = [
+        ("07/01/2569", "10:15", 200.0),  # เริ่ม 10:00 วันทำการ ช่วง Peak (9-22)
+        ("07/01/2569", "02:15", 80.0),  # เริ่ม 02:00 วันทำการ นอกช่วง Peak
+    ]
+    path = _make_amr_pea_monthly_combined_datetime_non_tou_xls(tmp_path, rows)
+    intervals = parse_amr_file(path)
+    assert len(intervals) == 2
+    assert {i.rate for i in intervals} == {"P", "OP"}
+
+    by_key = {(i.date, i.hour): (i.rate, i.kw) for i in intervals}
+    assert by_key[("2026-01-07", 10)] == ("P", pytest.approx(200.0))
+    assert by_key[("2026-01-07", 2)] == ("OP", pytest.approx(80.0))
+
+
+def test_parse_amr_file_classifies_pea_monthly_combined_datetime_non_tou_holiday(tmp_path):
+    """10 ม.ค. 2569(พ.ศ.) เป็นวันเสาร์ — ต้องจัดเป็นวันหยุด (H) แม้จะอยู่ในช่วงเวลาที่ปกติเป็น Peak
+    ของวันทำการก็ตาม เพราะไฟล์ไม่มีข้อมูล rate ให้เลย ต้องอาศัยวันในสัปดาห์ล้วนๆ"""
+
+    path = _make_amr_pea_monthly_combined_datetime_non_tou_xls(tmp_path, [("10/01/2569", "10:15", 300.0)])
+    intervals = parse_amr_file(path)
+    assert len(intervals) == 1
+    assert intervals[0].rate == "H"
+    assert intervals[0].date == "2026-01-10"
+
+
+def test_extract_customer_info_returns_empty_for_pea_monthly_combined_datetime_non_tou(tmp_path):
+    path = _make_amr_pea_monthly_combined_datetime_non_tou_xls(tmp_path, [("07/01/2569", "10:15", 200.0)])
     account_no, company_name = extract_customer_info(path)
     assert account_no == ""
     assert company_name == ""

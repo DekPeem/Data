@@ -576,14 +576,24 @@ def _parse_pea_monthly_combined_datetime_xls(path: Union[str, Path]) -> List[Par
     เด็ดขาด เหตุผลเดียวกับที่อธิบายไว้ใน parse_amr_file) เวลา "24:00" ของแถวสุดท้ายในแต่ละวันหมายถึง
     เที่ยงคืนของวันถัดไป (pd.Timestamp ไม่รับ hour=24 ตรงๆ) ต้องแปลงเป็น 00:00 ของวันถัดไปเอง
 
-    มีแค่ 2 คอลัมน์ kW (On-Peak/Off-Peak) ไม่มีคอลัมน์ Holiday แยกให้เลย ต้องเดา H จากวันในสัปดาห์เอง
-    (ยืนยันจากไฟล์ตัวอย่างจริงแล้วว่า On-Peak เป็น 0 ทุกแถวในวันเสาร์-อาทิตย์เสมอ ไม่มีวันไหนที่ On-
-    Peak ไม่เป็น 0 เลยในวันหยุดสุดสัปดาห์ — หลักการเดียวกับ MEA CSV/MEA wide excel ที่มีแค่ ON/OFF 2
-    สถานะ) timestamp บอกเวลา "สิ้นสุด" ของช่วง 15 นาทีนั้น เหมือนรายงานของ PEA ทุกแบบ ต้องลบ 15 นาที
-    ก่อนหาว่าอยู่วัน/ชั่วโมงไหน — ไม่มีชื่อบริษัทให้เลย มีแค่ "เครื่องวัดฯ" (หมายเลขมิเตอร์ — คนละ
-    ความหมายกับเลขบัญชีผู้ใช้ไฟ "บัญชีผู้ใช้ไฟ"/"Contact Account" ที่รายงานอื่นใช้) จึงไม่ดึงมาใช้เป็น
-    account_no (เหมือนรายงานอื่นๆ ที่ไม่เคยใช้หมายเลขมิเตอร์แทนเลขบัญชีเช่นกัน) ต้องกรอกเองในฟอร์ม
-    เสมอ (ดู extract_customer_info)"""
+    มี 2 รูปแบบคอลัมน์ข้อมูลที่เจอจริง ขึ้นอยู่กับประเภทสัญญาอัตราค่าไฟของบัญชีนั้น — (1) บัญชีที่ถือ
+    สัญญาอัตรา TOU มีคอลัมน์ "kW (On-Peak)"/"kW (Off-Peak)" แยก 2 ช่วงแต่ไม่มีคอลัมน์ Holiday แยกให้
+    เลย ต้องเดา H จากวันในสัปดาห์เอง (ยืนยันจากไฟล์ตัวอย่างจริงแล้วว่า On-Peak เป็น 0 ทุกแถวในวัน
+    เสาร์-อาทิตย์เสมอ — หลักการเดียวกับ MEA CSV/MEA wide excel ที่มีแค่ ON/OFF 2 สถานะ) (2) บัญชีที่
+    ถือสัญญาอัตราปกติ (Non-TOU) ไม่มีการแยกช่วงเวลาเลย มีแค่คอลัมน์ "kW" เดี่ยวๆ (เจอจากไฟล์ตัวอย่าง
+    จริงอีกบัญชีหนึ่ง) ต้องเดา P/OP/H ทั้งหมดจากวัน/เวลาเองด้วย _classify_tou_rate (เหมือนรายงาน
+    "Custom kW Report" ของ PEA ที่ไม่มีข้อมูล rate ให้เลยเหมือนกัน) — เช็คว่าไฟล์เป็นแบบไหนจากคอลัมน์
+    ที่มีอยู่จริงในหัวตาราง ไม่ใช่เดาจากจำนวนคอลัมน์เฉยๆ
+
+    timestamp บอกเวลา "สิ้นสุด" ของช่วง 15 นาทีนั้น เหมือนรายงานของ PEA ทุกแบบ ต้องลบ 15 นาทีก่อนหา
+    ว่าอยู่วัน/ชั่วโมงไหน เวลา "24:00" ของแถวสุดท้ายในแต่ละวันหมายถึงเที่ยงคืนของวันถัดไป
+    (pd.Timestamp ไม่รับ hour=24 ตรงๆ) ต้องแปลงเป็น 00:00 ของวันถัดไปเอง ปีเป็น พ.ศ. (เช่น 2569)
+    ต้องแปลงเป็น ค.ศ. ก่อน parse เสมอ (แก้ที่ตัว string ปีตรงๆ ก่อนแปลงเป็น Timestamp — ห้ามลบ 543
+    จาก Timestamp ที่ parse ไปแล้วทีหลังเด็ดขาด เหตุผลเดียวกับที่อธิบายไว้ใน parse_amr_file) — ไม่มี
+    ชื่อบริษัทให้เลย มีแค่ "เครื่องวัดฯ" (หมายเลขมิเตอร์ — คนละความหมายกับเลขบัญชีผู้ใช้ไฟ
+    "บัญชีผู้ใช้ไฟ"/"Contact Account" ที่รายงานอื่นใช้) จึงไม่ดึงมาใช้เป็น account_no (เหมือนรายงาน
+    อื่นๆ ที่ไม่เคยใช้หมายเลขมิเตอร์แทนเลขบัญชีเช่นกัน) ต้องกรอกเองในฟอร์มเสมอ (ดู
+    extract_customer_info)"""
 
     df = pd.read_excel(path, sheet_name=0, header=None, dtype=str, engine="xlrd")
     header_row_idx = None
@@ -597,8 +607,6 @@ def _parse_pea_monthly_combined_datetime_xls(path: Union[str, Path]) -> List[Par
     header = df.iloc[header_row_idx].tolist()
     try:
         ts_col = header.index("วันที่/เวลา")
-        on_peak_col = header.index("kW (On-Peak)")
-        off_peak_col = header.index("kW (Off-Peak)")
     except ValueError:
         return []
 
@@ -619,11 +627,17 @@ def _parse_pea_monthly_combined_datetime_xls(path: Union[str, Path]) -> List[Par
     end = end.where(~is_midnight_next_day.fillna(False), end + pd.Timedelta(days=1))
     start = end - pd.Timedelta(minutes=15)
 
-    on_peak = pd.to_numeric(data.iloc[:, on_peak_col], errors="coerce")
-    off_peak = pd.to_numeric(data.iloc[:, off_peak_col], errors="coerce")
-    is_weekday = start.dt.weekday < 5
-    rate = np.select([on_peak.fillna(0) > 0, is_weekday], ["P", "OP"], "H")
-    kw = on_peak.fillna(0) + off_peak.fillna(0)
+    if "kW (On-Peak)" in header and "kW (Off-Peak)" in header:
+        on_peak = pd.to_numeric(data.iloc[:, header.index("kW (On-Peak)")], errors="coerce")
+        off_peak = pd.to_numeric(data.iloc[:, header.index("kW (Off-Peak)")], errors="coerce")
+        is_weekday = start.dt.weekday < 5
+        rate = np.select([on_peak.fillna(0) > 0, is_weekday], ["P", "OP"], "H")
+        kw = on_peak.fillna(0) + off_peak.fillna(0)
+    elif "kW" in header:
+        kw = pd.to_numeric(data.iloc[:, header.index("kW")], errors="coerce")
+        rate = _classify_tou_rate(start)
+    else:
+        return []
 
     out: List[ParsedInterval] = []
     for s, r, k in zip(start, rate, kw):
