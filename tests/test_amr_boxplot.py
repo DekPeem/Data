@@ -397,6 +397,37 @@ def _make_amr_mea_wide_excel(tmp_path, start_date: dt.datetime, n_days: int, mea
     return path
 
 
+def _make_amr_power_logger_csv(tmp_path, samples: list, delimiter: str = "\t") -> Path:
+    """สร้างไฟล์ .csv จำลองไฟล์ log จากเครื่องวัดไฟฟ้า (power logger — รุ่น DW-680) จริง (รูปแบบไฟล์
+    AMR จริงแบบที่ 10 ที่เจอ — คนละประเภทไฟล์โดยสิ้นเชิงจากรายงาน AMR ของ PEA/MEA: preamble ตั้งค่า
+    เครื่องช่วงบนจำนวนคอลัมน์ต่อแถวไม่เท่ากันเลย ตามด้วยหัวตาราง 2 แถว (กลุ่ม/ชื่อฟิลด์) แล้วข้อมูล
+    วัดต่อเนื่องทุกไม่กี่วินาที ไม่ใช่ราย 15 นาที) samples คือ list ของ (date_str "D/M/YYYY",
+    time_str "H:M:S", psum_value) — ตั้งใจให้ทดสอบกำหนดเองได้ทั้งวันที่/เวลา/ค่า เพื่อเทียบผลลัพธ์
+    การเฉลี่ยรวมเป็นช่วง 15 นาที (ดู _parse_power_logger_csv) delimiter เลือกได้ทั้ง tab (ตามที่วาง
+    จาก Excel ปกติ) หรือ comma (ไฟล์ .csv มาตรฐาน) ให้ทดสอบว่า csv.Sniffer เดาได้ถูกทั้งคู่"""
+
+    lines = [
+        delimiter.join(["Model", "DW-680"]),
+        delimiter.join(["Serial Number", "3524325002"]),
+        "",
+        delimiter.join(["User Name", "User01"]),
+        delimiter.join(["Location", "EK1"]),
+        "",
+        delimiter.join(["Wire Mode", "3P4W_3CT"]),
+        delimiter.join(["Frequency(Hz)", "50"]),
+        delimiter.join(["Nominal Voltage(V)", "220"]),
+        "",
+        delimiter.join(["Date", "Time", "Phase Voltage(V)"]),
+        delimiter.join(["", "", "UA", "UB", "UC", "PA", "PB", "PC", "PSum"]),
+    ]
+    for date_str, time_str, psum in samples:
+        lines.append(delimiter.join([date_str, time_str, "233", "236", "235", "100", "100", "100", str(psum)]))
+
+    path = tmp_path / "power_logger.csv"
+    path.write_text("\n".join(lines), encoding="utf-8-sig")
+    return path
+
+
 def _make_amr_load_profile_detail_xlsx(tmp_path, start_date: dt.datetime, n_days: int, kw: float = 500.0) -> Path:
     """สร้างไฟล์ .xlsx จริงจำลองรายงาน "Load Profile" (รูปแบบไฟล์ AMR จริงแบบที่ 8 ที่เจอ — ไฟล์
     "สรุปแล้ว" ไม่ใช่ export ดิบจาก PEA/MEA ตรงๆ ไม่มีเลขบัญชี/ชื่อบริษัทเลย) หัวตารางแถวเดียว (แถว 0)
@@ -1021,6 +1052,61 @@ def test_extract_customer_info_returns_empty_for_load_profile_detail_format(tmp_
     """ไฟล์รูปแบบนี้ไม่มีเลขบัญชี/ชื่อบริษัทให้เลย — ต้องคืนค่าว่างทั้งคู่เสมอ ไม่ error"""
 
     path = _make_amr_load_profile_detail_xlsx(tmp_path, dt.datetime(2026, 1, 1), n_days=1)
+    account_no, company_name = extract_customer_info(path)
+    assert account_no == ""
+    assert company_name == ""
+
+
+def test_parse_amr_file_averages_power_logger_samples_into_15min_buckets(tmp_path):
+    """ไฟล์ log จากเครื่องวัดไฟฟ้าวัดต่อเนื่องทุกไม่กี่วินาที (ไม่ใช่ราย 15 นาทีแบบรายงาน AMR) —
+    ต้องเฉลี่ยรวมเป็นช่วง 15 นาทีเอง ไม่ใช่เก็บทุกจุดดิบตรงๆ (ไม่งั้นถ่วงน้ำหนักสถิติ Boxplot ผิดเพี้ยน)
+    2026-01-07 เป็นวันพุธ (วันทำการ) — 3 ตัวอย่างในช่วง Peak (10:00-10:00:20) เฉลี่ยรวมเป็น bucket
+    เดียว (10:00) และ 2 ตัวอย่างในช่วง Off-Peak (02:00) เฉลี่ยรวมเป็นอีก bucket (02:00)"""
+
+    samples = [
+        ("7/1/2026", "10:00:00", 100.0),
+        ("7/1/2026", "10:00:10", 200.0),
+        ("7/1/2026", "10:00:20", 300.0),
+        ("7/1/2026", "2:00:00", 50.0),
+        ("7/1/2026", "2:00:10", 150.0),
+    ]
+    path = _make_amr_power_logger_csv(tmp_path, samples)
+    intervals = parse_amr_file(path)
+    assert len(intervals) == 2  # 5 จุดดิบ รวมเหลือ 2 bucket ไม่ใช่ 5 interval แยกกัน
+
+    by_key = {(i.date, i.hour, i.minute): (i.kw, i.rate) for i in intervals}
+    assert by_key[("2026-01-07", 10, 0)] == (pytest.approx(200.0), "P")  # เฉลี่ย (100+200+300)/3
+    assert by_key[("2026-01-07", 2, 0)] == (pytest.approx(100.0), "OP")  # เฉลี่ย (50+150)/2
+
+
+def test_parse_amr_file_classifies_power_logger_holiday_from_date(tmp_path):
+    """2026-01-10 เป็นวันเสาร์ — ต้องจัดเป็นวันหยุด (H) ไม่ว่าจะกี่โมง แม้จะอยู่ในช่วงเวลาที่ปกติ
+    เป็น Peak (9-22) ของวันทำการก็ตาม"""
+
+    samples = [("10/1/2026", "10:00:00", 500.0)]
+    path = _make_amr_power_logger_csv(tmp_path, samples)
+    intervals = parse_amr_file(path)
+    assert len(intervals) == 1
+    assert intervals[0].rate == "H"
+    assert intervals[0].date == "2026-01-10"
+
+
+def test_parse_amr_file_supports_power_logger_csv_with_comma_delimiter(tmp_path):
+    """ไฟล์ .csv บางไฟล์ใช้ comma คั่นจริงๆ (ไม่ใช่ tab ที่วางจาก Excel) — csv.Sniffer ต้องเดาถูก
+    ทั้งคู่"""
+
+    samples = [("7/1/2026", "10:00:00", 400.0)]
+    path = _make_amr_power_logger_csv(tmp_path, samples, delimiter=",")
+    intervals = parse_amr_file(path)
+    assert len(intervals) == 1
+    assert intervals[0].kw == pytest.approx(400.0)
+    assert intervals[0].rate == "P"
+
+
+def test_extract_customer_info_returns_empty_for_power_logger_format(tmp_path):
+    """ไฟล์รูปแบบนี้ไม่มีเลขบัญชี/ชื่อบริษัทที่เชื่อถือได้เลย — ต้องคืนค่าว่างทั้งคู่เสมอ ไม่ error"""
+
+    path = _make_amr_power_logger_csv(tmp_path, [("7/1/2026", "10:00:00", 100.0)])
     account_no, company_name = extract_customer_info(path)
     assert account_no == ""
     assert company_name == ""

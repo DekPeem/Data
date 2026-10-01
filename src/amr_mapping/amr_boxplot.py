@@ -23,6 +23,7 @@ PEA แต่มีเลขทะเบียนเดียว) — ไฟล�
 
 from __future__ import annotations
 
+import csv
 import io
 import zipfile
 from dataclasses import dataclass
@@ -443,6 +444,107 @@ def _parse_load_profile_detail_xlsx(path: Union[str, Path]) -> List[ParsedInterv
     return out
 
 
+def _is_power_logger_csv(path: Union[str, Path]) -> bool:
+    """เช็คว่าไฟล์เป็น log จากเครื่องวัดไฟฟ้า (power logger — เช่นรุ่น DW-680) โดยตรง — คนละประเภท
+    ไฟล์โดยสิ้นเชิงจากรายงาน AMR ของ PEA/MEA ทุกแบบที่รองรับอยู่ก่อนหน้านี้ (ไม่ใช่รายงานสรุปราย 15
+    นาทีจากการไฟฟ้า แต่เป็นข้อมูลวัดจริงต่อเนื่องทุกๆ ไม่กี่วินาทีจากเครื่องมือวัดของผู้ใช้เอง มีหัว
+    ตารางยาวมาก (Voltage/Current/Power Factor/Active-Reactive-Apparent Power/THD/ฯลฯ) นำหน้าด้วย
+    ข้อมูลตั้งค่าเครื่อง "Model"/"Serial Number"/"Wire Mode") เช็คจากข้อความ "Model" และ
+    "Wire Mode" ใน 10 บรรทัดบนสุดพอ (ไม่ต้องโหลดทั้งไฟล์ — ไฟล์พวกนี้มักใหญ่มาก เป็นหลักสิบ MB)"""
+
+    try:
+        with open(path, "r", encoding="utf-8-sig", errors="ignore") as f:
+            head_lines = [f.readline() for _ in range(10)]
+    except OSError:
+        return False
+    head = "".join(head_lines)
+    return "Model" in head and "Wire Mode" in head
+
+
+def _parse_power_logger_csv(path: Union[str, Path]) -> List[ParsedInterval]:
+    """แกะไฟล์ log จากเครื่องวัดไฟฟ้า (power logger) — วัดต่อเนื่องทุกไม่กี่วินาที (ต่างจากรายงาน AMR
+    ของ PEA/MEA ที่เป็นค่าเฉลี่ย/สะสมต่อช่วง 15 นาทีอยู่แล้ว) ความถี่สูงกว่ารายงานทั่วไปหลายสิบเท่า —
+    ถ้านำเข้าทุกจุดตรงๆ โดยไม่เฉลี่ยก่อน บัญชีนี้จะมีจุดข้อมูลมากกว่าบัญชีอื่นในกลุ่ม TSIC เดียวกัน
+    มหาศาล ถ่วงน้ำหนักสถิติ Boxplot ผิดเพี้ยนไปเลย จึงต้องเฉลี่ยรวมเป็นช่วง 15 นาทีเอง (floor ลงช่วง
+    15 นาที แล้วหาค่าเฉลี่ยของกำลังไฟฟ้าในช่วงนั้น) ก่อนเก็บเป็น interval เดียวต่อช่วง เหมือนรายงาน
+    อื่นๆ ทุกแบบ
+
+    หาแถวหัวตาราง (คอลัมน์แรกคือ "Date" คอลัมน์ที่สองคือ "Time") และคอลัมน์ "PSum" (กำลังไฟฟ้าจริง
+    รวม 3 เฟส หน่วย kW — อยู่แถวถัดจากแถวหัวตาราง) เองจากเนื้อหาไฟล์ตรงๆ แทนตำแหน่งแถวตายตัว กันพัง
+    ถ้า preamble ของรุ่นเครื่อง/เฟิร์มแวร์อื่นยาวไม่เท่ากัน — ชื่อคอลัมน์ "PSum" ปรากฏซ้ำอีกครั้งท้าย
+    ไฟล์ในกลุ่ม "Active Power Demand" (ไม่ใช่กำลังไฟฟ้าจริง ณ ขณะนั้น) ใช้ .index() หาตัวแรกที่เจอพอ
+    ไม่ใช่ตัวหลัง
+
+    รูปแบบวันที่เป็น D/M/YYYY (วันขึ้นก่อนเดือน — ยืนยันจากชื่อไฟล์ตัวอย่างจริงที่มีวันที่/เวลากำกับ
+    ไว้ในชื่อไฟล์เอง เช่น "..._20260905_122233_..." ตรงกับคอลัมน์ Time แถวแรกเป๊ะ "12:22:33" และตรง
+    กับ Date "5/9/2026" ถ้าอ่านเป็นวันที่ 5 กันยายน ไม่ใช่เดือนพฤษภาคมวันที่ 9 — ต่างจาก MEA CSV ที่
+    ยืนยันแล้วว่าเป็น M/D/YYYY กลับกัน) แต่ละแถวเป็นค่าที่วัด ณ ขณะนั้นจริง (point-in-time) ไม่ใช่
+    ค่าเฉลี่ย/สะสมของช่วงเวลาแบบรายงาน AMR จึงไม่ต้องลบ 15 นาทีแบบรูปแบบอื่นที่ timestamp บอกจุด
+    สิ้นสุดของช่วง — ไม่มีข้อมูล rate (P/OP/H) ให้เลย ต้องเดาจากวัน/เวลาเองด้วย _classify_tou_rate
+    (เหมือนรายงาน "Custom kW Report" ของ PEA) โดยใช้จุดเริ่มต้นของแต่ละช่วง 15 นาที (ผลลัพธ์จาก
+    .dt.floor("15min")) เป็นตัวเดา ไม่ใช่เวลาที่วัดแต่ละจุดดิบ — ไม่มีเลขบัญชี/ชื่อบริษัทที่เชื่อถือ
+    ได้ในไฟล์เลย ("User Name"/"Location" เป็นแค่ label ตั้งค่าเครื่องวัด ไม่ใช่ชื่อลูกค้าเสมอไป) ต้อง
+    กรอกเองในฟอร์มเสมอ (ดู extract_customer_info)"""
+
+    # อ่านด้วย csv.reader ตรงๆ (ไม่ใช่ pd.read_csv) เพราะ preamble ตั้งค่าเครื่องช่วงบนของไฟล์มี
+    # จำนวนคอลัมน์ต่อแถวไม่เท่ากันเลย (บางแถวมีแค่ 2 คอลัมน์ "Model\tDW-680" บางแถวว่างเปล่า บางแถว
+    # (หัวตารางกลุ่ม) มีหลายสิบคอลัมน์) ทำให้ pd.read_csv ที่ validate จำนวนคอลัมน์ต่อแถวให้เท่ากันทั้ง
+    # ไฟล์ raise ParserError ทันทีตั้งแต่แถวที่จำนวนคอลัมน์เปลี่ยน — csv.reader ไม่ validate อะไรแบบนี้
+    # เลย อ่านแถวแบบไหนก็ได้ผ่านหมด ตรงตามโครงสร้างไฟล์จริงพอดี
+    try:
+        with open(path, "r", encoding="utf-8-sig", errors="ignore", newline="") as f:
+            sample = f.read(4096)
+            f.seek(0)
+            try:
+                dialect = csv.Sniffer().sniff(sample, delimiters=",\t")
+            except csv.Error:
+                dialect = csv.excel_tab if "\t" in sample else csv.excel
+            rows = list(csv.reader(f, dialect))
+    except OSError:
+        return []
+
+    header_row_idx = None
+    for i, row in enumerate(rows[:30]):
+        if len(row) > 1 and row[0].strip() == "Date" and row[1].strip() == "Time":
+            header_row_idx = i
+            break
+    if header_row_idx is None or header_row_idx + 2 >= len(rows):
+        return []
+
+    field_row = [c.strip() for c in rows[header_row_idx + 1]]
+    try:
+        psum_col = field_row.index("PSum")
+    except ValueError:
+        return []
+
+    dates: List[str] = []
+    times: List[str] = []
+    kws: List[str] = []
+    for row in rows[header_row_idx + 2 :]:
+        if len(row) <= psum_col:
+            continue
+        dates.append(row[0].strip())
+        times.append(row[1].strip())
+        kws.append(row[psum_col])
+
+    ts = pd.to_datetime(pd.Series(dates) + " " + pd.Series(times), format="%d/%m/%Y %H:%M:%S", errors="coerce")
+    kw_raw = pd.to_numeric(pd.Series(kws), errors="coerce")
+
+    valid = ts.notna() & kw_raw.notna()
+    ts, kw_raw = ts[valid], kw_raw[valid]
+    if ts.empty:
+        return []
+
+    bucket_start = ts.dt.floor("15min")
+    kw_avg = kw_raw.groupby(bucket_start).mean()
+    rate = _classify_tou_rate(pd.Series(kw_avg.index))
+
+    out: List[ParsedInterval] = []
+    for t, k, r in zip(kw_avg.index, kw_avg.values, rate):
+        out.append(ParsedInterval(date=t.strftime("%Y-%m-%d"), hour=int(t.hour), minute=int(t.minute), rate=str(r), kw=float(k)))
+    return out
+
+
 def parse_amr_file(path: Union[str, Path]) -> List[ParsedInterval]:
     """อ่านไฟล์ AMR ดิบ 1 ไฟล์ (จาก PEA, MEA หรือไฟล์ "Load Profile" ที่สรุปแล้ว) คืนรายการ interval
     ที่แกะแล้ว (rate=P/OP/H, kw, date, hour) — คืน list ว่างถ้าอ่าน/แปลงไม่สำเร็จ (ไม่ raise ทำให้
@@ -455,6 +557,8 @@ def parse_amr_file(path: Union[str, Path]) -> List[ParsedInterval]:
             return _parse_mea_wide_excel(path)
         if _is_load_profile_detail_xlsx(path):
             return _parse_load_profile_detail_xlsx(path)
+        if _is_power_logger_csv(path):
+            return _parse_power_logger_csv(path)
         df = _read_one(_load_report_tables(path))
     except Exception:  # noqa: BLE001 — ไฟล์เสีย/รูปแบบไม่ตรง ข้ามไปเฉยๆ
         return []
@@ -530,6 +634,10 @@ def extract_customer_info(path: Union[str, Path]) -> Tuple[str, str]:
     if _is_load_profile_detail_xlsx(path):
         # ไฟล์ "Load Profile" รูปแบบนี้ไม่มีคอลัมน์เลขบัญชี/ชื่อบริษัทเลย (ดู
         # _is_load_profile_detail_xlsx) ต้องกรอกเองในฟอร์มเสมอ
+        return "", ""
+    if _is_power_logger_csv(path):
+        # ไฟล์ log จากเครื่องวัดไฟฟ้าไม่มีเลขบัญชี/ชื่อบริษัทที่เชื่อถือได้เลย (ดู
+        # _parse_power_logger_csv) ต้องกรอกเองในฟอร์มเสมอ
         return "", ""
 
     try:
