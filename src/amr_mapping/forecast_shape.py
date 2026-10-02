@@ -128,7 +128,13 @@ BOX_SPREAD_PCT = 0.10
 WHISKER_SPREAD_PCT = 0.15
 
 
-def _synthetic_box_stats(curve: Dict[int, float], ceiling_by_hour: Dict[int, float]) -> List[dict]:
+# ถ้า Peak สูงกว่าค่ามัธยฐานของเส้นโค้งทั้งหมดเกินกี่เท่า ถึงสลับไปใช้ log scale แทนแกน y เชิงเส้น —
+# พบจากผู้ใช้จริง: บางไซต์มีช่วงที่ใช้ไฟพุ่งสูงผิดปกติ 1-2 ชั่วโมง (เช่น Peak OP สูงกว่าค่าเฉลี่ย
+# ~12 เท่า) ทำให้กล่องของชั่วโมงอื่นๆ ทั้งหมดถูกบีบแบนติดเส้น 0 มองไม่เห็นรูปทรงเลยบนแกนเชิงเส้น
+LOG_SCALE_RATIO_THRESHOLD = 6
+
+
+def _synthetic_box_stats(curve: Dict[int, float], ceiling_by_hour: Dict[int, float], floor: float = 0.0) -> List[dict]:
     """สร้างค่าสถิติ box-and-whisker สมมติต่อชั่วโมง จากเส้นโค้งพยากรณ์ (เส้นกลาง/median = ค่าที่
     พยากรณ์ไว้เป๊ะ, กล่อง = ±BOX_SPREAD_PCT, whisker = ±WHISKER_SPREAD_PCT) รูปแบบ dict เดียวกับ
     matplotlib bxp ที่ amr_boxplot._box_stats ใช้ ไม่มี fliers เพราะไม่มีข้อมูลจริงให้หา outlier
@@ -136,17 +142,25 @@ def _synthetic_box_stats(curve: Dict[int, float], ceiling_by_hour: Dict[int, flo
     ceiling_by_hour (ชั่วโมง -> ค่า Peak ที่ผู้ใช้ประกาศไว้ของ rate ชั่วโมงนั้น) ใช้ clamp ขอบบนของ
     กล่อง/whisker ไม่ให้เกิน Peak ที่ประกาศไว้เด็ดขาด — ไม่งั้นที่ชั่วโมง peak เอง (median == peak
     พอดี) ส่วนบนของ box/whisker จะทะลุเส้นประ "Peak" ที่วาดกำกับไว้ ดูขัดแย้งกันเอง (เส้น Peak ควร
-    เป็นเพดานสูงสุดที่ไม่มีอะไรเกินได้) ขอบล่างไม่ clamp เพราะมีแต่ 0 เป็นขอบเขตอยู่แล้ว"""
+    เป็นเพดานสูงสุดที่ไม่มีอะไรเกินได้)
+
+    floor ใช้ clamp ขอบล่างแทน 0 ตอนวาดด้วย log scale (ดู LOG_SCALE_RATIO_THRESHOLD) เพราะ 0 วาด
+    บน log scale ไม่ได้เลย (ค่าเริ่มต้น 0.0 = ไม่ clamp พิเศษ ใช้ตอนวาดแกนเชิงเส้นปกติ) ชั่วโมงที่ไม่มี
+    เส้นโค้งเลย (v<=0 — rate ของชั่วโมงนั้นไม่ได้กรอก Peak มา) ก็ clamp ไว้ที่ floor เป็นเส้นบางๆ
+    เหมือนกัน กันค่า 0 หลุดเข้าไปในกราฟ log scale"""
 
     out = []
     for h in range(24):
         v = curve.get(h, 0.0)
+        if v <= 0:
+            out.append(dict(med=floor, q1=floor, q3=floor, whislo=floor, whishi=floor, fliers=[]))
+            continue
         ceiling = ceiling_by_hour.get(h, v)
         out.append(dict(
             med=v,
             q1=v * (1 - BOX_SPREAD_PCT),
             q3=min(ceiling, v * (1 + BOX_SPREAD_PCT)),
-            whislo=max(0.0, v * (1 - WHISKER_SPREAD_PCT)),
+            whislo=max(floor, v * (1 - WHISKER_SPREAD_PCT)),
             whishi=min(ceiling, v * (1 + WHISKER_SPREAD_PCT)),
             fliers=[],
         ))
@@ -188,6 +202,23 @@ def draw(curve_wd: Dict[int, float], curve_h: Dict[int, float], peaks: Dict[str,
     )
     ymax = max(peaks.values()) * (1 + WHISKER_SPREAD_PCT) * 1.15  # เผื่อที่ whisker บนสุด + ป้าย Peak
 
+    # สลับไปใช้ log scale ทั้งกราฟถ้า Peak สูงกว่าค่ามัธยฐานของเส้นโค้งทั้งหมดมากเกินไป (ดู
+    # LOG_SCALE_RATIO_THRESHOLD) — ใช้ค่ามัธยฐานรวมทั้ง 2 panel กันกราฟวันทำการ/วันหยุดสเกลไม่ตรงกัน
+    all_curve_values = [v for v in list(curve_wd.values()) + list(curve_h.values()) if v > 0]
+    use_log_scale = False
+    floor = 0.0
+    if all_curve_values:
+        median_v = float(np.median(all_curve_values))
+        if median_v > 0 and max(peaks.values()) / median_v > LOG_SCALE_RATIO_THRESHOLD:
+            use_log_scale = True
+            floor = max(0.5, min(all_curve_values) * 0.3)
+            # เผื่อหัวกราฟให้ Peak ไม่ไปสุดขอบบนพอดี (ป้าย "Peak X kW" มีกรอบ/padding ของตัวเอง ถ้า
+            # ค่า Peak อยู่ใกล้ ymax เกินไปบน log scale ป้ายจะโผล่ทะลุขึ้นไปทับหัวข้อ panel ด้านบน) ตั้ง
+            # ให้ Peak อยู่แค่ ~78% ของความสูงแกน (คำนวณจาก floor เพราะ floor ต่ำมากทำให้ค่าทั้งหมด
+            # ถูกบีบไปกองอยู่ใกล้ขอบบนของ log scale ถ้าไม่เผื่อสัดส่วนนี้ไว้)
+            target_fill_ratio = 0.78
+            ymax = floor * (max(peaks.values()) / floor) ** (1 / target_fill_ratio)
+
     panels = []
     if curve_wd:
         panels.append((curve_wd, lambda h: "P" if 9 <= h < 22 else "OP",
@@ -200,7 +231,7 @@ def draw(curve_wd: Dict[int, float], curve_h: Dict[int, float], peaks: Dict[str,
 
     def panel(ax, curve, rate_of, segs, name):
         ceiling_by_hour = {h: peaks[rate_of(h)] for h in range(24) if rate_of(h) in peaks}
-        stats = _synthetic_box_stats(curve, ceiling_by_hour)
+        stats = _synthetic_box_stats(curve, ceiling_by_hour, floor=floor if use_log_scale else 0.0)
         bp = ax.bxp(stats, positions=np.arange(24) + 0.5, widths=0.6, showfliers=False,
                     patch_artist=True, manage_ticks=False)
         for h in range(24):
@@ -226,11 +257,18 @@ def draw(curve_wd: Dict[int, float], curve_h: Dict[int, float], peaks: Dict[str,
 
         ax.set_title(name, loc="left", fontsize=12)
         ax.set_xlim(0, 24)
-        ax.set_ylim(0, ymax)
+        if use_log_scale:
+            from matplotlib.ticker import ScalarFormatter
+
+            ax.set_yscale("log")
+            ax.set_ylim(floor, ymax)
+            ax.yaxis.set_major_formatter(ScalarFormatter())
+        else:
+            ax.set_ylim(0, ymax)
         ax.set_xticks(np.arange(0, 24, 3) + 0.5)
         ax.set_xticklabels(range(0, 24, 3))
         ax.set_ylabel("kW")
-        ax.grid(axis="y", alpha=0.25)
+        ax.grid(axis="y", alpha=0.25, which="both" if use_log_scale else "major")
         ax.set_axisbelow(True)
         for s in ("top", "right"):
             ax.spines[s].set_visible(False)
@@ -241,10 +279,11 @@ def draw(curve_wd: Dict[int, float], curve_h: Dict[int, float], peaks: Dict[str,
 
     fig.suptitle(title, fontsize=14, weight="bold")
     top_margin = 0.965 - (0.045 if bill_total is not None else 0)
+    log_note = " Y-axis is log-scaled (Peak far above typical hours)." if use_log_scale else ""
     fig.text(
         0.01, 0.005,
         f"Forecast shape only - not a measurement. Median = forecast curve, "
-        f"box = ±{BOX_SPREAD_PCT:.0%} / whisker = ±{WHISKER_SPREAD_PCT:.0%} assumed spread (not real variability).",
+        f"box = ±{BOX_SPREAD_PCT:.0%} / whisker = ±{WHISKER_SPREAD_PCT:.0%} assumed spread (not real variability).{log_note}",
         fontsize=8, color="gray",
     )
     fig.tight_layout(rect=(0, 0.02, 1, top_margin), h_pad=3.5)

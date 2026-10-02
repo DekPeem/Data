@@ -62,3 +62,18 @@ def test_forecast_shape_png_with_bill_total_returns_valid_png():
 
     png = forecast_shape_png(peak_p=330, energy_p=63390, days_p=22, bill_total=597329.93)
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_forecast_shape_png_handles_extreme_peak_to_average_ratio():
+    """ผู้ใช้เจอจริง: บางไซต์มี Peak สูงกว่าค่าเฉลี่ยรายชั่วโมงมาก (เช่น Peak OP สูงกว่าทุกชั่วโมงอื่น
+    เกือบ 100 เท่า — เหมือน Peak OP 4,720 kW แต่ชั่วโมงอื่นแค่หลักสิบ kW) กรณีนี้ต้องสลับไปใช้ log
+    scale อัตโนมัติ (ดู LOG_SCALE_RATIO_THRESHOLD) ไม่งั้นกล่องของชั่วโมงอื่นจะถูกบีบแบนจนมองไม่เห็น
+    — เทสนี้แค่เช็คว่ายังวาดออกมาเป็น PNG ที่ใช้ได้ปกติ ไม่พัง/error เวลาค่าต่างกันสุดขั้วแบบนี้"""
+
+    png = forecast_shape_png(
+        peak_p=2260, energy_p=48660, days_p=21,
+        peak_op=4720, energy_op=86545, days_op=21,
+        peak_h=240, energy_h=20345, days_h=10,
+        drop_pct=43,
+    )
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
