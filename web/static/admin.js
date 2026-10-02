@@ -1356,8 +1356,30 @@ function prefillAmrBoxplotUploadForm(code, accountNo, companyName, registrationN
 const forecastFilesInput = document.getElementById("fc-files");
 const forecastDropPct = document.getElementById("fc-drop-pct");
 const forecastBtn = document.getElementById("forecast-shape-btn");
+const forecastManualBtn = document.getElementById("forecast-shape-manual-btn");
 const forecastStatus = document.getElementById("forecast-shape-status");
 const forecastImg = document.getElementById("forecast-shape-img");
+
+// สลับโหมด "แนบไฟล์ AMR" / "กรอกตัวเลขจากบิลเอง" — เหมือนแพทเทิร์น mode-tab-bar ของการ์ด AMR
+// Boxplot ด้านบนทุกประการ ใช้ status/img ช่องเดียวกันทั้งสองโหมด (ผลลัพธ์หน้าตาเหมือนกันเป๊ะ
+// ต่างกันแค่ว่าตัวเลข Peak/หน่วยไฟ/จำนวนวันมาจากไหน)
+const fcModeUploadBtn = document.getElementById("fc-mode-upload-btn");
+const fcModeManualBtn = document.getElementById("fc-mode-manual-btn");
+const fcUploadPanel = document.getElementById("fc-upload-panel");
+const fcManualPanel = document.getElementById("fc-manual-panel");
+
+function showForecastShapeMode(activeBtn, activePanel) {
+  for (const [btn, panel] of [
+    [fcModeUploadBtn, fcUploadPanel],
+    [fcModeManualBtn, fcManualPanel],
+  ]) {
+    btn.classList.toggle("active", btn === activeBtn);
+    panel.style.display = panel === activePanel ? "flex" : "none";
+  }
+}
+
+fcModeUploadBtn.addEventListener("click", () => showForecastShapeMode(fcModeUploadBtn, fcUploadPanel));
+fcModeManualBtn.addEventListener("click", () => showForecastShapeMode(fcModeManualBtn, fcManualPanel));
 
 let forecastImgObjectUrl = null; // ต้อง revoke ของเก่าทิ้งทุกครั้งก่อนสร้างใหม่ กัน memory leak
 
@@ -1415,5 +1437,62 @@ forecastBtn.addEventListener("click", async () => {
     console.error(err);
   } finally {
     forecastBtn.disabled = false;
+  }
+});
+
+// โหมด "กรอกตัวเลขจากบิลเอง" — เรียก GET /api/forecast-shape ตรงๆ (รับพารามิเตอร์ peak_*/energy_*/
+// days_* ผ่าน query string อยู่แล้วตั้งแต่แรก แค่ไม่เคยมีฟอร์มในหน้าเว็บให้กรอกเท่านั้น) ส่งเฉพาะช่อง
+// ที่มีค่า (เว้นว่างไว้ = ไม่ส่ง ให้ backend ใช้ค่ากลางเริ่มต้นของมันเอง — ดู forecast_shape.py
+// DEFAULT_DAYS) ต้องกรอก Peak อย่างน้อย 1 ช่วง (P, OP หรือ H) เหมือนโหมดแนบไฟล์
+const FC_MANUAL_FIELDS = [
+  { rate: "P", peak: "fc-peak-p", energy: "fc-energy-p", days: "fc-days-p" },
+  { rate: "OP", peak: "fc-peak-op", energy: "fc-energy-op", days: "fc-days-op" },
+  { rate: "H", peak: "fc-peak-h", energy: "fc-energy-h", days: "fc-days-h" },
+];
+
+forecastManualBtn.addEventListener("click", async () => {
+  const params = new URLSearchParams();
+  let hasPeak = false;
+  for (const { rate, peak, energy, days } of FC_MANUAL_FIELDS) {
+    const peakVal = document.getElementById(peak).value.trim();
+    const energyVal = document.getElementById(energy).value.trim();
+    const daysVal = document.getElementById(days).value.trim();
+    if (peakVal !== "") {
+      hasPeak = true;
+      params.set(`peak_${rate.toLowerCase()}`, peakVal);
+    }
+    if (energyVal !== "") params.set(`energy_${rate.toLowerCase()}`, energyVal);
+    if (daysVal !== "") params.set(`days_${rate.toLowerCase()}`, daysVal);
+  }
+  if (!hasPeak) {
+    forecastStatus.innerHTML = `<span style="color:#d03b3b;">กรุณากรอก Peak (kW) อย่างน้อย 1 ช่วง (P, OP หรือ H)</span>`;
+    return;
+  }
+  const dropPct = forecastDropPct.value.trim();
+  if (dropPct !== "") params.set("drop_pct", dropPct);
+
+  forecastManualBtn.disabled = true;
+  forecastStatus.textContent = "⏳ กำลังพยากรณ์...";
+  forecastImg.style.display = "none";
+
+  try {
+    const res = await fetch(`/api/forecast-shape?${params.toString()}`);
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      forecastStatus.innerHTML = `<span style="color:#d03b3b;">${data.message || "เกิดข้อผิดพลาด"}</span>`;
+      return;
+    }
+
+    const blob = await res.blob();
+    if (forecastImgObjectUrl) URL.revokeObjectURL(forecastImgObjectUrl);
+    forecastImgObjectUrl = URL.createObjectURL(blob);
+    forecastImg.src = forecastImgObjectUrl;
+    forecastImg.style.display = "block";
+    forecastStatus.textContent = "";
+  } catch (err) {
+    forecastStatus.innerHTML = `<span style="color:#d03b3b;">เชื่อมต่อเซิร์ฟเวอร์ไม่สำเร็จ</span>`;
+    console.error(err);
+  } finally {
+    forecastManualBtn.disabled = false;
   }
 });

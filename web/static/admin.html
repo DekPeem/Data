@@ -304,27 +304,69 @@
 
       <div class="card" style="padding: 28px; display: flex; flex-direction: column; gap: 16px;">
         <div>
-          <div style="font-size: 15px; font-weight: 700;">พยากรณ์เส้นโค้งการใช้ไฟ (จากไฟล์ AMR บนบิล)</div>
+          <div style="font-size: 15px; font-weight: 700;">พยากรณ์เส้นโค้งการใช้ไฟ (จากไฟล์ AMR หรือจากตัวเลขบนบิล)</div>
           <div class="hint">
-            แนบไฟล์ AMR จริง (รายงาน 15 นาทีจาก PEA — .xls/.zip หรือจาก MEA — .csv/.xlsx) ของช่วงเวลาที่ต้องการพยากรณ์ ระบบจะอ่าน Peak (kW)/หน่วยไฟ (kWh)/
-            จำนวนวันของแต่ละช่วง P/OP/H จากไฟล์ให้อัตโนมัติ (ไม่ต้องพิมพ์เอง) เหลือแค่กรอก % ลดตอนพักเที่ยง แล้วสร้าง "รูปทรง"
-            เส้นโค้งพยากรณ์ให้ดูสมเหตุสมผล — ไม่ใช่การวัดจริง ต่างจาก Boxplot ด้านบนตรงที่นี่ไม่ได้เก็บไฟล์ที่แนบมาไว้เลย (ใช้คำนวณ
-            ครั้งเดียวแล้วทิ้ง) และไม่เกี่ยวกับประเภทธุรกิจ/TSIC ใดๆ <a target="_blank" rel="noopener" href="/methodology">อ่านวิธีการคิด →</a>
+            สร้าง "รูปทรง" เส้นโค้งพยากรณ์การใช้ไฟรายชั่วโมงให้ดูสมเหตุสมผล จากแค่ Peak (kW)/หน่วยไฟ (kWh) ของแต่ละช่วง P/OP/H —
+            ไม่ใช่การวัดจริง ต่างจาก Boxplot ด้านบนตรงที่ไม่ได้เก็บข้อมูลที่กรอก/แนบมาไว้เลย (ใช้คำนวณครั้งเดียวแล้วทิ้ง) และไม่เกี่ยวกับ
+            ประเภทธุรกิจ/TSIC ใดๆ <a target="_blank" rel="noopener" href="/methodology">อ่านวิธีการคิด →</a>
           </div>
         </div>
 
-        <div class="form-grid">
-          <div class="form-field" style="grid-column: 1 / -1;">
-            <label for="fc-files">ไฟล์ AMR (.xls/.zip จาก PEA หรือ .csv/.xlsx จาก MEA, เลือกได้หลายไฟล์)</label>
-            <input id="fc-files" type="file" multiple accept=".xls,.xlsx,.html,.htm,.zip,.csv">
+        <div class="mode-tab-bar">
+          <button type="button" id="fc-mode-upload-btn" class="mode-tab-btn active">📎 แนบไฟล์ AMR</button>
+          <button type="button" id="fc-mode-manual-btn" class="mode-tab-btn">✍️ กรอกตัวเลขจากบิลเอง</button>
+        </div>
+
+        <div id="fc-upload-panel" style="display:flex;flex-direction:column;gap:16px;">
+          <div class="hint">
+            แนบไฟล์ AMR จริง (รายงาน 15 นาทีจาก PEA — .xls/.zip หรือจาก MEA — .csv/.xlsx) ของช่วงเวลาที่ต้องการพยากรณ์ ระบบจะอ่าน
+            Peak (kW)/หน่วยไฟ (kWh)/จำนวนวันของแต่ละช่วง P/OP/H จากไฟล์ให้อัตโนมัติ ไม่ต้องพิมพ์เอง
           </div>
+          <div class="form-grid">
+            <div class="form-field" style="grid-column: 1 / -1;">
+              <label for="fc-files">ไฟล์ AMR (.xls/.zip จาก PEA หรือ .csv/.xlsx จาก MEA, เลือกได้หลายไฟล์)</label>
+              <input id="fc-files" type="file" multiple accept=".xls,.xlsx,.html,.htm,.zip,.csv">
+            </div>
+          </div>
+          <button type="button" id="forecast-shape-btn" class="day-type-btn" style="align-self:flex-start;">พยากรณ์เส้นโค้ง</button>
+        </div>
+
+        <div id="fc-manual-panel" style="display:none;flex-direction:column;gap:16px;">
+          <div class="hint">
+            ใช้ตอนไม่มีไฟล์ AMR เลย มีแค่ใบแจ้งค่าไฟฟ้า (บิล) ธรรมดา — หาตัวเลขได้จากแถว "ยอดใช้ไฟฟ้าสูงสุด" (= Peak kW) และ
+            "ยอดใช้งานไฟฟ้า" (= หน่วยไฟ kWh) ของบิล ซึ่งปกติจะแยกตาม P/OP/H ไว้ให้อยู่แล้ว กรอกอย่างน้อย 1 ช่วงก็พยากรณ์ได้ ช่อง
+            "จำนวนวัน" ไม่กรอกก็ได้ (ใช้ค่ากลางของเดือนปกติ P/OP = 22 วัน, H = 8 วัน แทน)
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:16px;">
+            <div style="border:1px solid rgba(15,23,42,0.12);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:12px;">
+              <div style="font-weight:700;font-size:14px;">P (Peak)</div>
+              <div class="form-field"><label for="fc-peak-p">Peak (kW)</label><input id="fc-peak-p" type="number" step="any" min="0" placeholder="เช่น 330"></div>
+              <div class="form-field"><label for="fc-energy-p">หน่วยไฟ (kWh)</label><input id="fc-energy-p" type="number" step="any" min="0" placeholder="เช่น 63390"></div>
+              <div class="form-field"><label for="fc-days-p">จำนวนวัน (ไม่บังคับ)</label><input id="fc-days-p" type="number" step="1" min="1" placeholder="22"></div>
+            </div>
+            <div style="border:1px solid rgba(15,23,42,0.12);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:12px;">
+              <div style="font-weight:700;font-size:14px;">OP (Off-Peak)</div>
+              <div class="form-field"><label for="fc-peak-op">Peak (kW)</label><input id="fc-peak-op" type="number" step="any" min="0" placeholder="เช่น 279"></div>
+              <div class="form-field"><label for="fc-energy-op">หน่วยไฟ (kWh)</label><input id="fc-energy-op" type="number" step="any" min="0" placeholder="เช่น 42060"></div>
+              <div class="form-field"><label for="fc-days-op">จำนวนวัน (ไม่บังคับ)</label><input id="fc-days-op" type="number" step="1" min="1" placeholder="22"></div>
+            </div>
+            <div style="border:1px solid rgba(15,23,42,0.12);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:12px;">
+              <div style="font-weight:700;font-size:14px;">H (วันหยุด)</div>
+              <div class="form-field"><label for="fc-peak-h">Peak (kW)</label><input id="fc-peak-h" type="number" step="any" min="0" placeholder="เช่น 315"></div>
+              <div class="form-field"><label for="fc-energy-h">หน่วยไฟ (kWh)</label><input id="fc-energy-h" type="number" step="any" min="0" placeholder="เช่น 44190"></div>
+              <div class="form-field"><label for="fc-days-h">จำนวนวัน (ไม่บังคับ)</label><input id="fc-days-h" type="number" step="1" min="1" placeholder="8"></div>
+            </div>
+          </div>
+          <button type="button" id="forecast-shape-manual-btn" class="day-type-btn" style="align-self:flex-start;">พยากรณ์เส้นโค้ง</button>
+        </div>
+
+        <div class="form-grid">
           <div class="form-field" style="max-width:280px;">
             <label for="fc-drop-pct">% ลดตอนพักเที่ยง</label>
             <input id="fc-drop-pct" type="number" step="any" min="0" max="100" value="43">
           </div>
         </div>
 
-        <button type="button" id="forecast-shape-btn" class="day-type-btn" style="align-self:flex-start;">พยากรณ์เส้นโค้ง</button>
         <div id="forecast-shape-status" class="hint"></div>
         <img id="forecast-shape-img" alt="กราฟพยากรณ์เส้นโค้งการใช้ไฟ" style="max-width:100%;border-radius:10px;border:1px solid rgba(15,23,42,0.1);display:none;">
       </div>
