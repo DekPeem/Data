@@ -128,20 +128,26 @@ BOX_SPREAD_PCT = 0.10
 WHISKER_SPREAD_PCT = 0.15
 
 
-def _synthetic_box_stats(curve: Dict[int, float]) -> List[dict]:
+def _synthetic_box_stats(curve: Dict[int, float], ceiling_by_hour: Dict[int, float]) -> List[dict]:
     """สร้างค่าสถิติ box-and-whisker สมมติต่อชั่วโมง จากเส้นโค้งพยากรณ์ (เส้นกลาง/median = ค่าที่
     พยากรณ์ไว้เป๊ะ, กล่อง = ±BOX_SPREAD_PCT, whisker = ±WHISKER_SPREAD_PCT) รูปแบบ dict เดียวกับ
-    matplotlib bxp ที่ amr_boxplot._box_stats ใช้ ไม่มี fliers เพราะไม่มีข้อมูลจริงให้หา outlier"""
+    matplotlib bxp ที่ amr_boxplot._box_stats ใช้ ไม่มี fliers เพราะไม่มีข้อมูลจริงให้หา outlier
+
+    ceiling_by_hour (ชั่วโมง -> ค่า Peak ที่ผู้ใช้ประกาศไว้ของ rate ชั่วโมงนั้น) ใช้ clamp ขอบบนของ
+    กล่อง/whisker ไม่ให้เกิน Peak ที่ประกาศไว้เด็ดขาด — ไม่งั้นที่ชั่วโมง peak เอง (median == peak
+    พอดี) ส่วนบนของ box/whisker จะทะลุเส้นประ "Peak" ที่วาดกำกับไว้ ดูขัดแย้งกันเอง (เส้น Peak ควร
+    เป็นเพดานสูงสุดที่ไม่มีอะไรเกินได้) ขอบล่างไม่ clamp เพราะมีแต่ 0 เป็นขอบเขตอยู่แล้ว"""
 
     out = []
     for h in range(24):
         v = curve.get(h, 0.0)
+        ceiling = ceiling_by_hour.get(h, v)
         out.append(dict(
             med=v,
             q1=v * (1 - BOX_SPREAD_PCT),
-            q3=v * (1 + BOX_SPREAD_PCT),
+            q3=min(ceiling, v * (1 + BOX_SPREAD_PCT)),
             whislo=max(0.0, v * (1 - WHISKER_SPREAD_PCT)),
-            whishi=v * (1 + WHISKER_SPREAD_PCT),
+            whishi=min(ceiling, v * (1 + WHISKER_SPREAD_PCT)),
             fliers=[],
         ))
     return out
@@ -193,7 +199,8 @@ def draw(curve_wd: Dict[int, float], curve_h: Dict[int, float], peaks: Dict[str,
     axes = axes[:, 0]
 
     def panel(ax, curve, rate_of, segs, name):
-        stats = _synthetic_box_stats(curve)
+        ceiling_by_hour = {h: peaks[rate_of(h)] for h in range(24) if rate_of(h) in peaks}
+        stats = _synthetic_box_stats(curve, ceiling_by_hour)
         bp = ax.bxp(stats, positions=np.arange(24) + 0.5, widths=0.6, showfliers=False,
                     patch_artist=True, manage_ticks=False)
         for h in range(24):
