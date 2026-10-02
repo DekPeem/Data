@@ -826,6 +826,38 @@ def test_forecast_shape_from_files_returns_png_with_stats_header(client, monkeyp
     assert stats["OP"] == {"peak": 150.0, "energy_kwh": 3300.0, "days": 2}
     assert stats["H"] == {"peak": 100.0, "energy_kwh": 2400.0, "days": 1}
 
+
+def test_forecast_shape_from_files_multi_month_requires_month_selection(client, monkeypatch, tmp_path):
+    """ไฟล์ที่แนบมามีข้อมูลมากกว่า 1 เดือนปนกัน (เช่น .zip รวมหลายเดือน) ต้องไม่ fit กราฟรวมทุกเดือน
+    ทันที (Peak สูงสุดทั้งก้อน vs ค่าเฉลี่ยรวมทุกเดือน ห่างกันสุดขั้วจนกราฟผิดธรรมชาติ — ผู้ใช้เจอ
+    ปัญหานี้จริง) ต้องคืน JSON ขอให้เลือกเดือนก่อนแทน แล้วพอส่ง month มาด้วยต้องกรองเหลือเฉพาะเดือน
+    นั้นแล้วคืน PNG ตามปกติ"""
+
+    import io
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    multi_month_html = _make_amr_report_html(n_days=32)
+
+    res = client.post(
+        "/api/admin/forecast-shape-from-files",
+        data={"files": (io.BytesIO(multi_month_html.encode("utf-8")), "report.xls")},
+        content_type="multipart/form-data",
+    )
+    assert res.status_code == 200
+    assert res.headers["Content-Type"].startswith("application/json")
+    data = res.get_json()
+    assert data["needs_month_selection"] is True
+    assert data["months"] == ["2026-01", "2026-02"]
+
+    jan_res = client.post(
+        "/api/admin/forecast-shape-from-files",
+        data={"files": (io.BytesIO(multi_month_html.encode("utf-8")), "report.xls"), "month": "2026-01"},
+        content_type="multipart/form-data",
+    )
+    assert jan_res.status_code == 200
+    assert jan_res.headers["Content-Type"] == "image/png"
+    assert jan_res.data[:8] == b"\x89PNG\r\n\x1a\n"
+
     # ไฟล์ที่แนบมาใช้คำนวณครั้งเดียวแล้วทิ้งจริง ไม่เก็บสะสมไว้เหมือน amr-boxplot/upload
     assert not (tmp_path / "_amr_boxplot_uploads").exists() or not any((tmp_path / "_amr_boxplot_uploads").iterdir())
     assert not (tmp_path / "amr_boxplot_intervals_local.csv").exists()

@@ -710,7 +710,12 @@ def api_forecast_shape_from_files():
     amr_boxplot.compute_bill_stats_from_intervals) เหลือแค่ % ลดตอนพักเที่ยงที่ยังต้องกรอกเอง —
     ไม่เกี่ยวกับ/ไม่ต้องมีประเภทธุรกิจ (TSIC) ใดๆ เหมือน /api/forecast-shape เดิม (ต่างจาก
     /api/admin/amr-boxplot/upload ตรงที่ไฟล์ที่แนบมาที่นี่ใช้คำนวณครั้งเดียวแล้วทิ้ง ไม่ได้เก็บสะสม
-    ไว้เป็นข้อมูลอ้างอิงของ TSIC ไหนเลย)"""
+    ไว้เป็นข้อมูลอ้างอิงของ TSIC ไหนเลย)
+
+    ถ้าไฟล์ที่แนบมามีข้อมูลมากกว่า 1 เดือนปนกัน (เช่น .zip ที่รวมหลายเดือน) และยังไม่ได้ระบุ month
+    มา จะคืน JSON {"needs_month_selection": true, "months": [...]} แทน PNG ให้ฝั่งหน้าเว็บแสดง
+    ตัวเลือกเดือนให้ผู้ใช้เลือกก่อน แล้วส่งคำขอใหม่พร้อม month (รูปแบบ "YYYY-MM") มาด้วย — กันกรณี
+    Peak (สูงสุดทั้งก้อน) กับค่าเฉลี่ย (เฉลี่ยรวมทุกเดือน) ห่างกันสุดขั้วจนกราฟที่ fit ออกมาผิดธรรมชาติ"""
 
     from amr_mapping.amr_boxplot import compute_bill_stats_from_intervals, parse_amr_files
     from amr_mapping.forecast_shape import forecast_shape_png
@@ -749,6 +754,21 @@ def api_forecast_shape_from_files():
         return jsonify(
             {"error": "invalid_request", "message": "อ่านไฟล์ที่แนบมาไม่ได้เลย (รูปแบบอาจไม่ตรงกับรายงาน AMR ของ PEA)"}
         ), 400
+
+    # ฟีเจอร์นี้ตั้งใจออกแบบมาสำหรับข้อมูล 1 รอบบิล/1 เดือนเท่านั้น (Peak vs ค่าเฉลี่ยของเดือนเดียว
+    # สมเหตุสมผล) — ถ้าไฟล์ที่แนบมา (เช่น .zip ที่รวมหลายเดือน) มีข้อมูลมากกว่า 1 เดือนปนกัน ต้องให้
+    # เลือกเดือนก่อนเสมอ ไม่งั้น peak (สูงสุดทั้งก้อน) กับค่าเฉลี่ย (เฉลี่ยรวมทุกเดือน) จะห่างกันสุดขั้ว
+    # จนกราฟที่ fit ออกมาผิดธรรมชาติ (ผู้ใช้เจอปัญหานี้จริง — peak สูงกว่าค่าเฉลี่ยเกือบ 20 เท่า)
+    months = sorted({iv.date[:7] for iv in intervals})
+    selected_month = (request.form.get("month") or "").strip()
+    if len(months) > 1 and not selected_month:
+        return jsonify({"needs_month_selection": True, "months": months})
+    if selected_month:
+        intervals = [iv for iv in intervals if iv.date[:7] == selected_month]
+        if not intervals:
+            return jsonify(
+                {"error": "invalid_request", "message": f"ไม่มีข้อมูลของเดือน {selected_month} ในไฟล์ที่แนบมาเลย"}
+            ), 400
 
     stats = compute_bill_stats_from_intervals(intervals)
     if not stats:

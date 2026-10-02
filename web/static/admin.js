@@ -1362,6 +1362,8 @@ function prefillAmrBoxplotUploadForm(code, accountNo, companyName, registrationN
 const forecastFilesInput = document.getElementById("fc-files");
 const forecastDropPct = document.getElementById("fc-drop-pct");
 const forecastBillTotal = document.getElementById("fc-bill-total");
+const forecastMonthPicker = document.getElementById("fc-month-picker");
+const forecastMonthSelect = document.getElementById("fc-month-select");
 const forecastBtn = document.getElementById("forecast-shape-btn");
 const forecastManualBtn = document.getElementById("forecast-shape-manual-btn");
 const forecastStatus = document.getElementById("forecast-shape-status");
@@ -1409,6 +1411,13 @@ function formatForecastStats(rawHeader) {
   return parts.length ? `อ่านจากไฟล์ได้: ${parts.join(" — ")}` : "";
 }
 
+// ไฟล์ใหม่ที่เลือก (เช่น .zip ที่รวมหลายเดือน) อาจมีช่วงเดือนไม่เหมือนไฟล์ก่อนหน้า — ซ่อนตัวเลือก
+// เดือนเก่าทิ้งไปก่อนเสมอ กันเลือกเดือนที่ไม่มีอยู่ในไฟล์ใหม่ค้างอยู่โดยไม่รู้ตัว
+forecastFilesInput.addEventListener("change", () => {
+  forecastMonthPicker.style.display = "none";
+  forecastMonthSelect.innerHTML = "";
+});
+
 forecastBtn.addEventListener("click", async () => {
   if (!forecastFilesInput.files.length) {
     forecastStatus.innerHTML = `<span style="color:#d03b3b;">กรุณาแนบไฟล์ AMR อย่างน้อย 1 ไฟล์</span>`;
@@ -1421,6 +1430,10 @@ forecastBtn.addEventListener("click", async () => {
   if (dropPct !== "") formData.append("drop_pct", dropPct);
   const billTotal = forecastBillTotal.value.trim();
   if (billTotal !== "") formData.append("bill_total", billTotal);
+  // มีตัวเลือกเดือนโผล่มาแล้วจากรอบก่อน (ไฟล์มีหลายเดือนปนกัน) ก็ส่งเดือนที่เลือกไว้ไปด้วยเสมอ
+  if (forecastMonthPicker.style.display !== "none" && forecastMonthSelect.value) {
+    formData.append("month", forecastMonthSelect.value);
+  }
 
   forecastBtn.disabled = true;
   forecastStatus.textContent = "⏳ กำลังอ่านไฟล์และพยากรณ์...";
@@ -1428,10 +1441,24 @@ forecastBtn.addEventListener("click", async () => {
 
   try {
     const res = await fetch("/api/admin/forecast-shape-from-files", { method: "POST", body: formData });
-    if (!res.ok) {
+    const contentType = res.headers.get("Content-Type") || "";
+
+    if (contentType.includes("application/json")) {
+      // ทั้ง error ปกติ และกรณี "พบหลายเดือน ต้องเลือกก่อน" ตอบกลับมาเป็น JSON เหมือนกัน (คนละ
+      // status code — เลือกเดือนคืน 200 ส่วน error จริงคืน 400) แยกกันด้วยคีย์ needs_month_selection
       const data = await res.json().catch(() => ({}));
-      forecastStatus.innerHTML = `<span style="color:#d03b3b;">${data.message || "เกิดข้อผิดพลาด"}</span>`;
-      return;
+      if (data.needs_month_selection) {
+        forecastMonthSelect.innerHTML = data.months
+          .map((m) => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`)
+          .join("");
+        forecastMonthPicker.style.display = "grid";
+        forecastStatus.innerHTML = `<span style="color:#184f95;">พบข้อมูลหลายเดือนในไฟล์ที่แนบมา — เลือกเดือนที่ต้องการพยากรณ์จากช่องด้านบน แล้วกด "พยากรณ์เส้นโค้ง" อีกครั้ง (ไม่ต้องแนบไฟล์ใหม่)</span>`;
+        return;
+      }
+      if (!res.ok) {
+        forecastStatus.innerHTML = `<span style="color:#d03b3b;">${data.message || "เกิดข้อผิดพลาด"}</span>`;
+        return;
+      }
     }
 
     const statsHeader = res.headers.get("X-Forecast-Stats");
