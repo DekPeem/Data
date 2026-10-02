@@ -119,22 +119,32 @@ def _setup_font() -> bool:
     return False
 
 
-LINE = "#333333"  # สีเส้น/จุดที่ลากต่อยอดแท่งกราฟ
+# กล่อง (Q1-Q3) / whisker ของ box-and-whisker เป็นแค่ "ช่วงสมมติ" รอบเส้นโค้งที่พยากรณ์ไว้เท่านั้น
+# (ข้อมูลตรงนี้มีแค่ 1 ค่าต่อชั่วโมง ไม่มีการกระจายตัวจริงให้คำนวณ Q1/Q3 ได้) ผู้ใช้ยืนยันอยากให้
+# กราฟหน้าตาเป็นกล่อง Boxplot จริงเหมือน amr_boxplot.render_boxplot_png ไม่ใช่แค่ปรับสี — ใช้ตัวเลข
+# เหล่านี้สร้างกล่องขึ้นมาล้วนๆ ต้องติดป้ายบนกราฟเสมอว่าเป็นช่วงสมมติ กันเข้าใจผิดว่าเป็นค่าแปรปรวน
+# ที่วัดได้จริง
+BOX_SPREAD_PCT = 0.10
+WHISKER_SPREAD_PCT = 0.15
 
 
-def _rounded_bar(ax, x: float, height: float, width: float, color: str, alpha: float = 0.88) -> None:
-    """แท่งกราฟมุมมนด้านบน (ฐานเรียบ) — สวยกว่า ax.bar() เหลี่ยมธรรมดา (ต้นฉบับ forecast_load.py
-    เวอร์ชันล่าสุดของผู้ใช้ใช้แบบนี้ ดู README/git history ของสคริปต์นั้นถ้าอยากดูเทียบ)"""
+def _synthetic_box_stats(curve: Dict[int, float]) -> List[dict]:
+    """สร้างค่าสถิติ box-and-whisker สมมติต่อชั่วโมง จากเส้นโค้งพยากรณ์ (เส้นกลาง/median = ค่าที่
+    พยากรณ์ไว้เป๊ะ, กล่อง = ±BOX_SPREAD_PCT, whisker = ±WHISKER_SPREAD_PCT) รูปแบบ dict เดียวกับ
+    matplotlib bxp ที่ amr_boxplot._box_stats ใช้ ไม่มี fliers เพราะไม่มีข้อมูลจริงให้หา outlier"""
 
-    from matplotlib.patches import FancyBboxPatch
-
-    if height <= 0:
-        return
-    ax.add_patch(FancyBboxPatch(
-        (x - width / 2, 0), width, height,
-        boxstyle=f"round,pad=0,rounding_size={width * 0.16}",
-        linewidth=0, facecolor=color, alpha=alpha, mutation_aspect=1, zorder=3,
-    ))
+    out = []
+    for h in range(24):
+        v = curve.get(h, 0.0)
+        out.append(dict(
+            med=v,
+            q1=v * (1 - BOX_SPREAD_PCT),
+            q3=v * (1 + BOX_SPREAD_PCT),
+            whislo=max(0.0, v * (1 - WHISKER_SPREAD_PCT)),
+            whishi=v * (1 + WHISKER_SPREAD_PCT),
+            fliers=[],
+        ))
+    return out
 
 
 def draw(curve_wd: Dict[int, float], curve_h: Dict[int, float], peaks: Dict[str, float], bill_total: Optional[float] = None):
@@ -144,11 +154,11 @@ def draw(curve_wd: Dict[int, float], curve_h: Dict[int, float], peaks: Dict[str,
     ที่ไม่ได้กรอกมา) เลือกภาษาไทย/อังกฤษของข้อความในกราฟเองตามฟอนต์ที่มีอยู่จริงบนเซิร์ฟเวอร์ (กัน
     ตัวอักษรไทยกลายเป็นกล่องว่างถ้าเซิร์ฟเวอร์ไม่มีฟอนต์ไทยติดตั้งไว้)
 
-    สไตล์การวาด (พื้นหลัง/กริด/เส้นขอบ/ขนาดฟอนต์หัวเรื่อง) จงใจทำให้ตรงกับ render_boxplot_png ใน
-    amr_boxplot.py ทุกจุด (ผู้ใช้ยืนยันอยากให้กราฟ 2 แบบนี้ "หน้าตาเหมือนกัน" เป็นตระกูลเดียวกัน แม้
-    เนื้อหาจะต่างกัน — อันนี้เป็นกราฟพยากรณ์สมมติ ไม่ใช่ข้อมูลวัดจริง) ต่างกันแค่ตรงที่ยังเป็นกราฟ
-    เส้น+แท่งแบบเดิม ไม่ได้เปลี่ยนเป็น box-and-whisker จริงเหมือน amr_boxplot เพราะข้อมูลที่นี่มีแค่
-    1 ค่าต่อชั่วโมง (เส้นโค้งที่สร้างขึ้น) ไม่มีการกระจายตัวให้คำนวณ Q1-Q3 ได้จริง
+    วาดเป็นกล่อง box-and-whisker แบบเดียวกับ render_boxplot_png ใน amr_boxplot.py ทุกจุด (สี/
+    พื้นหลัง/กริด/เส้นขอบ/ขนาดฟอนต์หัวเรื่อง) ให้กราฟ 2 แบบในระบบเป็นตระกูลเดียวกัน — ต่างกันแค่ว่า
+    กล่อง/whisker ตรงนี้เป็น "ช่วงสมมติ" ที่สร้างขึ้นรอบเส้นโค้งที่พยากรณ์ไว้เท่านั้น (ดู
+    _synthetic_box_stats) เพราะข้อมูลมีแค่ 1 ค่าต่อชั่วโมง ไม่มีการกระจายตัวจริงให้คำนวณ Q1-Q3 ได้
+    เหมือน amr_boxplot ที่ใช้ข้อมูล AMR จริงหลายวัน — ต้องติดป้ายกำกับบนกราฟเสมอว่าเป็นช่วงสมมติ
 
     bill_total (ไม่บังคับ) ใส่ยอดเงินรวมตามบิลจริงได้ แสดงกำกับเป็นข้อความอ้างอิงใต้หัวเรื่องเฉยๆ
     (ไม่ได้เอาไปคำนวณอะไรเลย — เหตุผลเดียวกับ subtitle บัญชี/บริษัทใน amr_boxplot.render_boxplot_png
@@ -170,7 +180,7 @@ def draw(curve_wd: Dict[int, float], curve_h: Dict[int, float], peaks: Dict[str,
         hour="ชั่วโมงของวัน" if thai else "Hour of day",
         peak="Peak",
     )
-    ymax = max(peaks.values()) * 1.28
+    ymax = max(peaks.values()) * (1 + WHISKER_SPREAD_PCT) * 1.15  # เผื่อที่ whisker บนสุด + ป้าย Peak
 
     panels = []
     if curve_wd:
@@ -183,19 +193,22 @@ def draw(curve_wd: Dict[int, float], curve_h: Dict[int, float], peaks: Dict[str,
     axes = axes[:, 0]
 
     def panel(ax, curve, rate_of, segs, name):
-        xs = np.arange(24)
-        ys = np.array([curve.get(h, 0) for h in range(24)], dtype=float)
-        width = 0.64
+        stats = _synthetic_box_stats(curve)
+        bp = ax.bxp(stats, positions=np.arange(24) + 0.5, widths=0.6, showfliers=False,
+                    patch_artist=True, manage_ticks=False)
         for h in range(24):
-            _rounded_bar(ax, h, ys[h], width, COLORS[rate_of(h)])
-        ax.plot(xs, ys, color=LINE, linewidth=1.3, alpha=0.55, zorder=4)
-        ax.scatter(xs, ys, color=LINE, s=15, zorder=5, linewidths=0)
+            c = COLORS[rate_of(h)]
+            bp["boxes"][h].set(facecolor=c, alpha=0.35, edgecolor=c)
+            bp["medians"][h].set(color=c, linewidth=2.5)
+            for k in (2 * h, 2 * h + 1):
+                bp["whiskers"][k].set(color=c)
+                bp["caps"][k].set(color=c)
 
         for a, b, r in segs:
             if r not in peaks:
                 continue
             pk = peaks[r]
-            ax.hlines(pk, a, b, colors=COLORS[r], linestyles=(0, (5, 3)), linewidth=2, zorder=2)
+            ax.hlines(pk, a, b, colors=COLORS[r], linestyles=(0, (5, 3)), linewidth=2, zorder=5)
             if b - a >= 4:
                 ax.annotate(
                     f"{L['peak']} {r}: {pk:,.0f} kW", ((a + b) / 2, pk),
@@ -205,9 +218,10 @@ def draw(curve_wd: Dict[int, float], curve_h: Dict[int, float], peaks: Dict[str,
                 )
 
         ax.set_title(name, loc="left", fontsize=12)
-        ax.set_xlim(-0.6, 23.6)
+        ax.set_xlim(0, 24)
         ax.set_ylim(0, ymax)
-        ax.set_xticks(range(0, 24, 3))
+        ax.set_xticks(np.arange(0, 24, 3) + 0.5)
+        ax.set_xticklabels(range(0, 24, 3))
         ax.set_ylabel("kW")
         ax.grid(axis="y", alpha=0.25)
         ax.set_axisbelow(True)
@@ -222,7 +236,8 @@ def draw(curve_wd: Dict[int, float], curve_h: Dict[int, float], peaks: Dict[str,
     top_margin = 0.965 - (0.045 if bill_total is not None else 0)
     fig.text(
         0.01, 0.005,
-        "Forecast shape only - not a measurement. Built from Peak + energy (kWh) + lunch-dip %.",
+        f"Forecast shape only - not a measurement. Median = forecast curve, "
+        f"box = ±{BOX_SPREAD_PCT:.0%} / whisker = ±{WHISKER_SPREAD_PCT:.0%} assumed spread (not real variability).",
         fontsize=8, color="gray",
     )
     fig.tight_layout(rect=(0, 0.02, 1, top_margin), h_pad=3.5)
