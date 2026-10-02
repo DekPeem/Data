@@ -977,7 +977,10 @@ def api_forecast_boxplot():
     ไม่ระบุ account_no (ค่าเริ่มต้น — ปุ่ม "ดูกราฟ Boxplot ของประเภทธุรกิจนี้" หน้าอัปโหลดใช้แบบนี้)
     จะรวมทุกบัญชีของ TSIC นั้นเข้าด้วยกัน ให้เป็นข้อมูลอ้างอิงกลางสำหรับลูกค้าที่ยังไม่มี AMR เอง —
     ถ้าระบุ account_no มา (ใส่ "" ได้เพื่อดูเฉพาะกลุ่ม "ไม่ระบุบัญชี" — ดูปุ่ม "ดู Boxplot" รายแถวใน
-    ตาราง log ของหน้า Admin) จะกรองเหลือเฉพาะบัญชีนั้นบัญชีเดียว ไม่รวมกับบัญชีอื่นของ TSIC เดียวกัน"""
+    ตาราง log ของหน้า Admin) จะกรองเหลือเฉพาะบัญชีนั้นบัญชีเดียว ไม่รวมกับบัญชีอื่นของ TSIC เดียวกัน
+
+    start_date/end_date (ไม่บังคับ "YYYY-MM-DD") กรองดูเฉพาะช่วงวันที่/เดือนที่ต้องการแทนการรวม
+    ทุกวันที่สะสมไว้เสมอ (ผู้ใช้ยืนยันอยากเลือกดูเฉพาะเดือน/วันได้ — ดู load_intervals_local)"""
 
     from amr_mapping.amr_boxplot import load_intervals_local, render_boxplot_png
 
@@ -985,12 +988,16 @@ def api_forecast_boxplot():
     if not business_type_code:
         return jsonify({"error": "invalid_request", "message": "กรุณาระบุประเภทธุรกิจ (TSIC)"}), 400
     account_no = request.args.get("account_no")  # None = ไม่กรอง (รวมทุกบัญชี), "" = เฉพาะกลุ่มไม่ระบุบัญชี
+    start_date = (request.args.get("start_date") or "").strip() or None
+    end_date = (request.args.get("end_date") or "").strip() or None
 
     storage_path = DEFAULT_DATA_DIR / "amr_boxplot_intervals_local.csv"
-    df = load_intervals_local(storage_path, business_type_code, account_no=account_no)
+    df = load_intervals_local(storage_path, business_type_code, account_no=account_no, start_date=start_date, end_date=end_date)
     if df.empty:
         message = (
-            "ยังไม่มีข้อมูล AMR จริงของบัญชีนี้เลย (อัปโหลดได้จากหน้า Admin)"
+            "ยังไม่มีข้อมูล AMR จริงของบัญชีนี้ในช่วงวันที่ที่เลือกเลย"
+            if (start_date or end_date)
+            else "ยังไม่มีข้อมูล AMR จริงของบัญชีนี้เลย (อัปโหลดได้จากหน้า Admin)"
             if account_no is not None
             else "ยังไม่มีข้อมูล AMR จริงสำหรับประเภทธุรกิจนี้เลย (อัปโหลดได้จากหน้า Admin)"
         )
@@ -1000,11 +1007,14 @@ def api_forecast_boxplot():
     bt = reference.business_types.get(business_type_code)
     business_type_name = bt.name_th if bt else ""
 
-    subtitle = ""
+    subtitle_parts = []
     if account_no is not None:
         company_name = next((c for c in df["company_name"] if c), "")
         account_label = account_no or "ไม่ระบุบัญชี"
-        subtitle = f"บัญชี {account_label} — {company_name}" if company_name else f"บัญชี {account_label}"
+        subtitle_parts.append(f"บัญชี {account_label} — {company_name}" if company_name else f"บัญชี {account_label}")
+    if start_date or end_date:
+        subtitle_parts.append(f"ช่วงวันที่ {start_date or '…'} ถึง {end_date or '…'}")
+    subtitle = "\n".join(subtitle_parts)
 
     try:
         png_bytes = render_boxplot_png(df, business_type_code, business_type_name, subtitle=subtitle)

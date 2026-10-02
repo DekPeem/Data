@@ -1275,13 +1275,17 @@ amrBulkBtn.addEventListener("click", async () => {
 const amrBoxplotViewBtn = document.getElementById("amr-boxplot-view-btn");
 const amrBoxplotViewStatus = document.getElementById("amr-boxplot-view-status");
 const amrBoxplotViewImg = document.getElementById("amr-boxplot-view-img");
+const amrBoxplotViewStartDate = document.getElementById("amr-boxplot-view-start-date");
+const amrBoxplotViewEndDate = document.getElementById("amr-boxplot-view-end-date");
 let amrBoxplotViewImgObjectUrl = null;
 
 // วาดกราฟ Boxplot ใหม่จากข้อมูลที่สะสมไว้แล้ว ใช้พื้นที่แสดงผลเดียวกัน (amr-boxplot-view-status/
 // -img) ไม่ว่าจะกดมาจากปุ่ม "ดูกราฟ Boxplot ของประเภทธุรกิจนี้" ด้านบน หรือปุ่ม "ดู Boxplot"/"ดู
 // Boxplot รวมทุกบัญชี" ในตาราง log ด้านล่าง — เลือก TSIC/บัญชีจากประวัติที่มีอยู่แล้วแล้ววาดกราฟใหม่
 // ได้ทันที ไม่ต้องพิมพ์/เลือกอะไรซ้ำเอง (ผู้ใช้ยืนยันอยากได้แบบนี้) accountNo = undefined รวมทุกบัญชี
-// ของ TSIC นั้น, "" = เฉพาะกลุ่ม "ไม่ระบุบัญชี", ค่าอื่น = เฉพาะบัญชีนั้น
+// ของ TSIC นั้น, "" = เฉพาะกลุ่ม "ไม่ระบุบัญชี", ค่าอื่น = เฉพาะบัญชีนั้น — ช่วงวันที่ (ถ้ากรอกไว้ใน
+// amr-boxplot-view-start-date/-end-date) ใช้กรองกับทุกปุ่ม "ดู Boxplot" ในหน้านี้เหมือนกันหมด ผู้ใช้
+// ยืนยันอยากเลือกดูเฉพาะเดือน/วันได้ ไม่อยากเห็นแค่ข้อมูลรวมทุกวันเสมอ
 async function renderAmrBoxplotPreview(code, accountNo) {
   if (!code) {
     amrBoxplotViewStatus.innerHTML = `<span style="color:#d03b3b;">กรุณาเลือกประเภทธุรกิจ (TSIC) ก่อน</span>`;
@@ -1297,6 +1301,8 @@ async function renderAmrBoxplotPreview(code, accountNo) {
   try {
     const params = new URLSearchParams({ business_type_code: code });
     if (accountNo !== undefined) params.set("account_no", accountNo);
+    if (amrBoxplotViewStartDate.value) params.set("start_date", amrBoxplotViewStartDate.value);
+    if (amrBoxplotViewEndDate.value) params.set("end_date", amrBoxplotViewEndDate.value);
     const res = await fetch(`/api/forecast-boxplot?${params.toString()}`);
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));

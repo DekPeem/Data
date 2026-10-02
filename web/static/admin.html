@@ -271,6 +271,21 @@
           </div>
         </div>
 
+        <div class="form-grid" style="max-width:600px;">
+          <div class="form-field">
+            <label for="amr-boxplot-view-start-date">ดูเฉพาะตั้งแต่วันที่ (ไม่บังคับ)</label>
+            <input id="amr-boxplot-view-start-date" type="date">
+          </div>
+          <div class="form-field">
+            <label for="amr-boxplot-view-end-date">ถึงวันที่ (ไม่บังคับ)</label>
+            <input id="amr-boxplot-view-end-date" type="date">
+          </div>
+        </div>
+        <div class="hint" style="margin-top:-8px;">
+          เว้นว่างทั้งคู่ไว้ = ดูรวมทุกวันที่สะสมไว้เหมือนเดิม ใส่แค่ช่องเดียวก็ได้ (เช่นใส่แค่ "ถึงวันที่" = ดูข้อมูลถึงวันนั้นย้อนหลังทั้งหมด)
+          ใส่วันเดียวกันทั้ง 2 ช่อง = ดูเฉพาะวันนั้นวันเดียว — มีผลกับปุ่ม "ดู Boxplot" ทุกปุ่มในหน้านี้ (ทั้งด้านบนและในตาราง log ด้านล่าง)
+        </div>
+
         <button type="button" id="amr-boxplot-view-btn" class="day-type-btn" style="align-self:flex-start;">📊 ดูกราฟ Boxplot ของประเภทธุรกิจนี้</button>
         <div id="amr-boxplot-view-status" class="hint"></div>
         <img id="amr-boxplot-view-img" alt="กราฟ Boxplot การใช้ไฟจริงของประเภทธุรกิจที่เลือก" style="max-width:100%;border-radius:10px;border:1px solid rgba(15,23,42,0.1);display:none;">

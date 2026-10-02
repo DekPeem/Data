@@ -913,11 +913,23 @@ def update_account_metadata(
     return updated
 
 
-def load_intervals_local(path: Path, business_type_code: Optional[str] = None, account_no: Optional[str] = None) -> pd.DataFrame:
-    """โหลดข้อมูล interval จริงทั้งหมด (หรือกรองเฉพาะ business_type_code/account_no) คืน DataFrame
-    ว่างถ้ายังไม่มีไฟล์เลย/ไม่มีข้อมูลตรงเงื่อนไข — account_no=None (ค่าเริ่มต้น) คือไม่กรองตามบัญชี
-    เลย (รวมทุกบัญชี) ส่วน account_no="" คือกรองเฉพาะกลุ่ม "ไม่ระบุบัญชี" เท่านั้น (คนละความหมายกับ
-    None — ดู remove_interval_rows ที่ใช้ธรรมเนียมเดียวกันอยู่แล้ว)"""
+def load_intervals_local(
+    path: Path,
+    business_type_code: Optional[str] = None,
+    account_no: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> pd.DataFrame:
+    """โหลดข้อมูล interval จริงทั้งหมด (หรือกรองเฉพาะ business_type_code/account_no/ช่วงวันที่) คืน
+    DataFrame ว่างถ้ายังไม่มีไฟล์เลย/ไม่มีข้อมูลตรงเงื่อนไข — account_no=None (ค่าเริ่มต้น) คือไม่กรอง
+    ตามบัญชีเลย (รวมทุกบัญชี) ส่วน account_no="" คือกรองเฉพาะกลุ่ม "ไม่ระบุบัญชี" เท่านั้น (คนละ
+    ความหมายกับ None — ดู remove_interval_rows ที่ใช้ธรรมเนียมเดียวกันอยู่แล้ว)
+
+    start_date/end_date (ไม่บังคับ) เป็นสตริง "YYYY-MM-DD" แบบเดียวกับคอลัมน์ date เป๊ะ (เทียบแบบ
+    string ตรงๆ ได้เลยเพราะ ISO format เรียงลำดับตัวอักษรตรงกับลำดับเวลาอยู่แล้ว ไม่ต้อง parse เป็น
+    datetime) ใช้กรองดูเฉพาะเดือน/วันที่ต้องการแทนการรวมข้อมูลทุกวันที่สะสมไว้เสมอ — ส่งแค่ start_date
+    อย่างเดียวก็ได้ (กรองตั้งแต่วันนั้นเป็นต้นไป) หรือ end_date อย่างเดียว (กรองถึงวันนั้น) หรือทั้งคู่
+    เท่ากัน (ดูเฉพาะวันเดียว)"""
 
     if not path.exists():
         return pd.DataFrame(columns=_INTERVAL_FIELDNAMES)
@@ -935,6 +947,10 @@ def load_intervals_local(path: Path, business_type_code: Optional[str] = None, a
         df = df[df["business_type_code"] == business_type_code]
     if account_no is not None:
         df = df[df["account_no"] == account_no]
+    if start_date:
+        df = df[df["date"] >= start_date]
+    if end_date:
+        df = df[df["date"] <= end_date]
     return df
 
 

@@ -1278,6 +1278,36 @@ def test_forecast_boxplot_account_no_not_found_returns_404(client, monkeypatch, 
     assert res.status_code == 404
 
 
+def test_forecast_boxplot_filters_by_date_range(client, monkeypatch, tmp_path):
+    """start_date/end_date (ไม่บังคับ) ต้องกรองกราฟให้เหลือเฉพาะช่วงวันที่ที่ขอ — ผู้ใช้ยืนยันอยาก
+    เลือกดูเฉพาะเดือน/วันได้ ไม่อยากเห็นแค่ข้อมูลรวมทุกวันที่สะสมไว้เสมอ"""
+
+    import io
+
+    monkeypatch.setattr(app_module, "DEFAULT_DATA_DIR", tmp_path)
+    client.post(
+        "/api/admin/amr-boxplot/upload",
+        data={
+            "business_type_code": "55101",
+            "files": (io.BytesIO(_make_amr_report_html(n_days=5).encode("utf-8")), "report.xls"),
+        },
+        content_type="multipart/form-data",
+    )
+
+    ranged_res = client.get(
+        "/api/forecast-boxplot",
+        query_string={"business_type_code": "55101", "start_date": "2026-01-02", "end_date": "2026-01-03"},
+    )
+    assert ranged_res.status_code == 200
+    assert ranged_res.data[:8] == b"\x89PNG\r\n\x1a\n"
+
+    out_of_range_res = client.get(
+        "/api/forecast-boxplot",
+        query_string={"business_type_code": "55101", "start_date": "2027-01-01"},
+    )
+    assert out_of_range_res.status_code == 404
+
+
 def test_amr_boxplot_fetch_missing_credentials_returns_400(client):
     res = client.post("/api/admin/amr-boxplot/fetch", json={})
     assert res.status_code == 400

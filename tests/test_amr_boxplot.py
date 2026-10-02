@@ -645,6 +645,32 @@ def test_load_intervals_local_filters_unspecified_account_group(amr_report_file,
     assert (unspecified_df["account_no"] == "").all()
 
 
+def test_load_intervals_local_filters_by_date_range(amr_report_file, tmp_path):
+    """start_date/end_date (ไม่บังคับ) กรองดูเฉพาะช่วงวันที่ที่ต้องการ — amr_report_file มีข้อมูล 5 วัน
+    ติดกัน (1-5 ม.ค. 2569) กรองเหลือ 2 วันกลางๆ ต้องได้แค่แถวของ 2 วันนั้น ไม่รวมวันอื่น"""
+
+    storage = tmp_path / "storage.csv"
+    intervals = parse_amr_file(amr_report_file)
+    append_intervals_local("55101", intervals, storage)
+
+    all_df = load_intervals_local(storage, "55101")
+    all_dates = sorted(all_df["date"].unique())
+    assert all_dates == ["2026-01-01", "2026-01-02", "2026-01-03", "2026-01-04", "2026-01-05"]
+
+    ranged_df = load_intervals_local(storage, "55101", start_date="2026-01-02", end_date="2026-01-03")
+    assert sorted(ranged_df["date"].unique()) == ["2026-01-02", "2026-01-03"]
+    assert len(ranged_df) < len(all_df)
+
+    from_df = load_intervals_local(storage, "55101", start_date="2026-01-04")
+    assert sorted(from_df["date"].unique()) == ["2026-01-04", "2026-01-05"]
+
+    until_df = load_intervals_local(storage, "55101", end_date="2026-01-01")
+    assert sorted(until_df["date"].unique()) == ["2026-01-01"]
+
+    single_day_df = load_intervals_local(storage, "55101", start_date="2026-01-03", end_date="2026-01-03")
+    assert sorted(single_day_df["date"].unique()) == ["2026-01-03"]
+
+
 def test_append_intervals_local_stores_account_and_company_name(amr_report_file, tmp_path):
     storage = tmp_path / "storage.csv"
     intervals = parse_amr_file(amr_report_file)
