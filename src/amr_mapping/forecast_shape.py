@@ -119,8 +119,6 @@ def _setup_font() -> bool:
     return False
 
 
-BG = "#FAFAFA"  # สีพื้นหลังของแต่ละ panel
-GRID = "#FFFFFF"  # สีเส้น gridline (โผล่เป็นเส้นจางๆ บนพื้นสีเทาอ่อน)
 LINE = "#333333"  # สีเส้น/จุดที่ลากต่อยอดแท่งกราฟ
 
 
@@ -139,17 +137,33 @@ def _rounded_bar(ax, x: float, height: float, width: float, color: str, alpha: f
     ))
 
 
-def draw(curve_wd: Dict[int, float], curve_h: Dict[int, float], peaks: Dict[str, float]):
+def draw(curve_wd: Dict[int, float], curve_h: Dict[int, float], peaks: Dict[str, float], bill_total: Optional[float] = None):
     """คืน matplotlib Figure — วาดเฉพาะ panel ที่มีข้อมูลจริง (ข้าม weekday panel ถ้าไม่มีทั้ง P/OP,
     ข้าม holiday panel ถ้าไม่มี H — ต่างจาก forecast_load.py ต้นฉบับที่วาดทั้ง 2 panel เสมอ เพราะเว็บนี้
     รองรับกรอกแค่บางช่วง P/OP/H ก็พยากรณ์ได้ ถ้าวาดครบ 2 panel เสมอจะ error ตอนหา peaks[r] ของช่วง
     ที่ไม่ได้กรอกมา) เลือกภาษาไทย/อังกฤษของข้อความในกราฟเองตามฟอนต์ที่มีอยู่จริงบนเซิร์ฟเวอร์ (กัน
-    ตัวอักษรไทยกลายเป็นกล่องว่างถ้าเซิร์ฟเวอร์ไม่มีฟอนต์ไทยติดตั้งไว้)"""
+    ตัวอักษรไทยกลายเป็นกล่องว่างถ้าเซิร์ฟเวอร์ไม่มีฟอนต์ไทยติดตั้งไว้)
+
+    สไตล์การวาด (พื้นหลัง/กริด/เส้นขอบ/ขนาดฟอนต์หัวเรื่อง) จงใจทำให้ตรงกับ render_boxplot_png ใน
+    amr_boxplot.py ทุกจุด (ผู้ใช้ยืนยันอยากให้กราฟ 2 แบบนี้ "หน้าตาเหมือนกัน" เป็นตระกูลเดียวกัน แม้
+    เนื้อหาจะต่างกัน — อันนี้เป็นกราฟพยากรณ์สมมติ ไม่ใช่ข้อมูลวัดจริง) ต่างกันแค่ตรงที่ยังเป็นกราฟ
+    เส้น+แท่งแบบเดิม ไม่ได้เปลี่ยนเป็น box-and-whisker จริงเหมือน amr_boxplot เพราะข้อมูลที่นี่มีแค่
+    1 ค่าต่อชั่วโมง (เส้นโค้งที่สร้างขึ้น) ไม่มีการกระจายตัวให้คำนวณ Q1-Q3 ได้จริง
+
+    bill_total (ไม่บังคับ) ใส่ยอดเงินรวมตามบิลจริงได้ แสดงกำกับเป็นข้อความอ้างอิงใต้หัวเรื่องเฉยๆ
+    (ไม่ได้เอาไปคำนวณอะไรเลย — เหตุผลเดียวกับ subtitle บัญชี/บริษัทใน amr_boxplot.render_boxplot_png
+    ไม่ต้องกะด้วยตาว่าบิลใบไหนตรงกับกราฟไหน)"""
 
     import matplotlib.pyplot as plt
 
     thai = _setup_font()
     title = "พยากรณ์รูปทรงการใช้ไฟ (ไม่มี AMR)" if thai else "Forecast load shape (no-AMR estimate)"
+    if bill_total is not None:
+        bill_line = (
+            f"ยอดเงินตามบิล: {bill_total:,.2f} บาท (ข้อมูลอ้างอิง ไม่ได้ใช้คำนวณ)"
+            if thai else f"Bill total: {bill_total:,.2f} THB (reference only, not used in the forecast)"
+        )
+        title = f"{title}\n{bill_line}"
     L = dict(
         wd="วันทำการ (OP + P) - คาดการณ์" if thai else "Weekday (OP + P) - forecast",
         hd="วันหยุด (H) - คาดการณ์" if thai else "Holiday (H) - forecast",
@@ -169,7 +183,6 @@ def draw(curve_wd: Dict[int, float], curve_h: Dict[int, float], peaks: Dict[str,
     axes = axes[:, 0]
 
     def panel(ax, curve, rate_of, segs, name):
-        ax.set_facecolor(BG)
         xs = np.arange(24)
         ys = np.array([curve.get(h, 0) for h in range(24)], dtype=float)
         width = 0.64
@@ -191,28 +204,28 @@ def draw(curve_wd: Dict[int, float], curve_h: Dict[int, float], peaks: Dict[str,
                     bbox=dict(boxstyle="round,pad=0.35", fc="white", ec=COLORS[r], lw=1.3),
                 )
 
-        ax.set_title(name, loc="left", fontsize=13, fontweight="bold", color="#222", pad=14)
+        ax.set_title(name, loc="left", fontsize=12)
         ax.set_xlim(-0.6, 23.6)
         ax.set_ylim(0, ymax)
         ax.set_xticks(range(0, 24, 3))
-        ax.set_ylabel("kW", fontsize=10, color="#555")
-        ax.grid(axis="y", color=GRID, linewidth=1.6, zorder=0)
+        ax.set_ylabel("kW")
+        ax.grid(axis="y", alpha=0.25)
         ax.set_axisbelow(True)
-        for s in ax.spines.values():
-            s.set_visible(False)
-        ax.tick_params(colors="#777", labelsize=9.5)
+        for s in ("top", "right"):
+            ax.spines[s].set_visible(False)
 
     for ax, (curve, rate_of, segs, name) in zip(axes, panels):
         panel(ax, curve, rate_of, segs, name)
-    axes[-1].set_xlabel(L["hour"], fontsize=10, color="#555")
+    axes[-1].set_xlabel(L["hour"])
 
-    fig.suptitle(title, fontsize=15, fontweight="bold", color="#111", y=0.995)
+    fig.suptitle(title, fontsize=14, weight="bold")
+    top_margin = 0.965 - (0.045 if bill_total is not None else 0)
     fig.text(
         0.01, 0.005,
         "Forecast shape only - not a measurement. Built from Peak + energy (kWh) + lunch-dip %.",
-        fontsize=8, color="#999",
+        fontsize=8, color="gray",
     )
-    fig.tight_layout(rect=(0, 0.02, 1, 0.965), h_pad=3.5)
+    fig.tight_layout(rect=(0, 0.02, 1, top_margin), h_pad=3.5)
     return fig
 
 
@@ -244,10 +257,11 @@ def forecast_shape_png(
     energy_h: Optional[float] = None,
     days_h: Optional[int] = None,
     drop_pct: float = DEFAULT_LUNCH_DROP_PCT,
+    bill_total: Optional[float] = None,
 ) -> bytes:
     """สร้างกราฟพยากรณ์เส้นโค้ง PNG จากพารามิเตอร์ระดับบิล — ต้องมีอย่างน้อย 1 คู่ peak+energy
     (P, OP หรือ H) raise ValueError ถ้าไม่มีเลยสักคู่ ช่วงที่ไม่ได้กรอก (peak<=0 หรือไม่ส่งมา) จะถูก
-    ข้ามไปเฉยๆ ไม่ error"""
+    ข้ามไปเฉยๆ ไม่ error — bill_total (ไม่บังคับ) แสดงกำกับบนกราฟเป็นข้อมูลอ้างอิงเฉยๆ ดู draw()"""
 
     curve_wd: Dict[int, float] = {}
     curve_h: Dict[int, float] = {}
@@ -267,5 +281,5 @@ def forecast_shape_png(
     if not peaks:
         raise ValueError("ต้องกรอก Peak อย่างน้อย 1 ช่วง (P, OP หรือ H)")
 
-    fig = draw(curve_wd, curve_h, peaks)
+    fig = draw(curve_wd, curve_h, peaks, bill_total=bill_total)
     return render_png(fig)

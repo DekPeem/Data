@@ -365,6 +365,14 @@
             <label for="fc-drop-pct">% ลดตอนพักเที่ยง</label>
             <input id="fc-drop-pct" type="number" step="any" min="0" max="100" value="43">
           </div>
+          <div class="form-field" style="max-width:280px;">
+            <label for="fc-bill-total">ยอดเงินรวมตามบิล (บาท) — ไม่บังคับ</label>
+            <input id="fc-bill-total" type="number" step="any" min="0" placeholder="เช่น 597329.93">
+          </div>
+        </div>
+        <div class="hint" style="margin-top:-8px;">
+          ใส่ยอดเงินรวมที่ต้องชำระตามบิลได้ (ไม่บังคับ) — แสดงกำกับไว้บนกราฟเป็นข้อมูลอ้างอิงเฉยๆ ไม่ได้ถูกนำไปคำนวณอะไรเลย
+          (ระบบนี้ยังไม่มีการคำนวณค่าไฟฟ้าจากอัตรา/ค่า Ft)
         </div>
 
         <div id="forecast-shape-status" class="hint"></div>

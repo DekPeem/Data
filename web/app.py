@@ -684,6 +684,7 @@ def api_forecast_shape():
         energy_h = _parse_optional_float(args.get("energy_h"), "หน่วยไฟ H")
         days_h = _parse_optional_int(args.get("days_h"), "จำนวนวัน H")
         drop_pct = _parse_optional_float(args.get("drop_pct"), "% ลดตอนพักเที่ยง")
+        bill_total = _parse_optional_float(args.get("bill_total"), "ยอดเงินรวมตามบิล")
     except ValueError as e:
         return jsonify({"error": "invalid_request", "message": str(e)}), 400
 
@@ -693,6 +694,7 @@ def api_forecast_shape():
             peak_op=peak_op, energy_op=energy_op, days_op=days_op,
             peak_h=peak_h, energy_h=energy_h, days_h=days_h,
             drop_pct=drop_pct if drop_pct is not None else 43.0,
+            bill_total=bill_total,
         )
     except ValueError as e:
         return jsonify({"error": "invalid_request", "message": str(e)}), 400
@@ -719,6 +721,7 @@ def api_forecast_shape_from_files():
 
     try:
         drop_pct = _parse_optional_float(request.form.get("drop_pct"), "% ลดตอนพักเที่ยง")
+        bill_total = _parse_optional_float(request.form.get("bill_total"), "ยอดเงินรวมตามบิล")
     except ValueError as e:
         return jsonify({"error": "invalid_request", "message": str(e)}), 400
 
@@ -763,6 +766,7 @@ def api_forecast_shape_from_files():
             energy_h=stats.get("H", {}).get("energy_kwh"),
             days_h=stats.get("H", {}).get("days"),
             drop_pct=drop_pct if drop_pct is not None else 43.0,
+            bill_total=bill_total,
         )
     except ValueError as e:
         return jsonify({"error": "invalid_request", "message": str(e)}), 400

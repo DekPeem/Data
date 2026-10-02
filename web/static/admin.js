@@ -1355,6 +1355,7 @@ function prefillAmrBoxplotUploadForm(code, accountNo, companyName, registrationN
 // โชว์ให้แอดมินตรวจสอบว่าอ่านไฟล์ถูกไหม ไม่ใช่กล่องดำ
 const forecastFilesInput = document.getElementById("fc-files");
 const forecastDropPct = document.getElementById("fc-drop-pct");
+const forecastBillTotal = document.getElementById("fc-bill-total");
 const forecastBtn = document.getElementById("forecast-shape-btn");
 const forecastManualBtn = document.getElementById("forecast-shape-manual-btn");
 const forecastStatus = document.getElementById("forecast-shape-status");
@@ -1412,6 +1413,8 @@ forecastBtn.addEventListener("click", async () => {
   for (const f of forecastFilesInput.files) formData.append("files", f);
   const dropPct = forecastDropPct.value.trim();
   if (dropPct !== "") formData.append("drop_pct", dropPct);
+  const billTotal = forecastBillTotal.value.trim();
+  if (billTotal !== "") formData.append("bill_total", billTotal);
 
   forecastBtn.disabled = true;
   forecastStatus.textContent = "⏳ กำลังอ่านไฟล์และพยากรณ์...";
@@ -1470,6 +1473,8 @@ forecastManualBtn.addEventListener("click", async () => {
   }
   const dropPct = forecastDropPct.value.trim();
   if (dropPct !== "") params.set("drop_pct", dropPct);
+  const billTotal = forecastBillTotal.value.trim();
+  if (billTotal !== "") params.set("bill_total", billTotal);
 
   forecastManualBtn.disabled = true;
   forecastStatus.textContent = "⏳ กำลังพยากรณ์...";

@@ -55,3 +55,10 @@ def test_forecast_shape_png_skips_segments_without_peak():
 
     png = forecast_shape_png(peak_p=500, energy_p=50000)
     assert png[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_forecast_shape_png_with_bill_total_returns_valid_png():
+    """bill_total (ยอดเงินรวมตามบิล) เป็นแค่ข้อความกำกับบนกราฟ ไม่บังคับ และต้องไม่ทำให้วาดกราฟพัง"""
+
+    png = forecast_shape_png(peak_p=330, energy_p=63390, days_p=22, bill_total=597329.93)
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
